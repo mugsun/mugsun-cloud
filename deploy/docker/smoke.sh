@@ -217,8 +217,8 @@ for svc in ${APP_SERVICES}; do
 	done
 done
 # shellcheck disable=SC2086
-[ -z "$(printf '%s\n' ${machine_numbers} | sort | uniq -d)" ] || fail "有实例领到了相同的机器号：${machine_numbers}"
-echo ">> 四个业务服务的每个实例各领到一个机器号，各不相同：${machine_numbers}"
+[ -z "$(printf '%s\n' ${machine_numbers} | sort | uniq -d)" ] || fail "有实例领到了相同的机器号：${machine_numbers# }"
+echo ">> 四个业务服务的每个实例各领到一个机器号，各不相同：${machine_numbers# }"
 
 # ---- 登录、上报埋点、服务之间互相调用：在编排网络里的一次性容器里执行 ----
 # Python 依赖的版本和 sha256 都写死在清单里（--require-hashes）。
