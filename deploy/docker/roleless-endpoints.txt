@@ -1,0 +1,137 @@
+# 没有任何角色的账号（登录了，但一个角色都没分配）进得去的接口。
+# 自检的最后一步（smoke-sweep.py roleless）拿这份清单和实际核对，多一个、少一个都不通过。
+#
+# 「进得去」指请求没有被权限拦在外面，也就是返回的不是 403。进去以后接口自己还会校验，
+# 比如只给这个人自己的数据，或者要他是这条待办的办理人。那一层这里不查。
+#
+# 自检报「比清单多出」时不要直接照着补。/system 下的写接口（POST、PUT、DELETE）没写权限码时另有一道兜底，
+# 默认拒绝；读接口和别的前缀下的接口没有，忘了写权限码就会出现在这里。先看这个接口给任何登录的人用对不对、
+# 给出的是不是只有这个人自己的东西：该要权限的去补权限码；确认可以的，加在说明它为什么可以的那一组下面。
+#
+# 一行一个「方法 路径」，路径照接口文档里的写法。# 开头的是注释。
+
+# ---- 自己的登录和账号 ----
+POST /app/auth/logout
+GET /app/auth/me
+GET /auth/info
+POST /auth/update-password
+POST /auth/update-info
+POST /auth/update-avatar
+POST /auth/avatar/upload
+POST /auth/social/bind
+GET /auth/social/bind-render/{source}
+DELETE /auth/social/unbind/{source}
+# 接口传输用的那把密钥：页面都要用，所有人拿到的是同一把，登录了才给，按人限流
+GET /crypto/bootstrap
+
+# ---- 切换租户视图：切过去只让平台超级管理员做，别人会被告知不行；复位只是把自己的视图恢复原样 ----
+POST /auth/switch-tenant/reset
+POST /auth/switch-tenant/{tenantId}
+
+# ---- 同意第三方应用的授权：任何登录的人都可以替自己同意 ----
+GET /oauth2/authorize/info
+POST /oauth2/authorize/confirm
+
+# ---- 自己的菜单、首页、工作台和表格列设置 ----
+GET /v3/system/menus
+GET /system/top-menu/mine
+GET /app/home
+GET /system/workbench/shortcuts
+POST /system/workbench/shortcuts
+GET /system/table-column/get
+POST /system/table-column/save
+POST /system/table-column/reset/{tableKey}
+
+# ---- 自己的消息和通知公告：公告只给看得到它的人 ----
+GET /system/message/my/page
+GET /system/message/recent
+GET /system/message/unread-count
+POST /system/message/read-all
+POST /system/message/read/{messageId}
+POST /system/message/remove
+GET /system/notice/my/page
+GET /system/notice/my/unread-count
+GET /system/notice/top
+GET /system/notice/detail
+POST /system/notice/read/{noticeId}
+GET /app/inbox/messages
+GET /app/inbox/messages/{id}
+POST /app/inbox/messages/{messageId}/read
+GET /app/inbox/notices
+GET /app/inbox/notices/{id}
+POST /app/inbox/notices/{id}/read
+
+# ---- 流程：发起、办自己的待办、看自己参与的。是不是办理人、参与人由接口里面校验 ----
+GET /system/flow/my-todo
+GET /system/flow/my-done
+GET /system/flow/my-started
+GET /system/flow/my-copy
+GET /system/flow/claim-list
+POST /system/flow/claim/{taskId}
+POST /system/flow/start/{businessId}
+POST /system/flow/start-by/{flowCode}/{businessId}
+POST /system/flow/leave/start
+GET /system/flow/instance
+GET /system/flow/history
+GET /system/flow/progress
+GET /system/flow/form/start
+GET /system/flow/form/task
+GET /system/flow/form/instance
+GET /system/flow/task-buttons
+GET /system/flow/back-nodes
+GET /system/flow/next-approvers
+GET /system/flow/task/user-select
+POST /system/flow/task/handle/{taskId}
+POST /system/flow/task/operation/{taskId}
+POST /system/flow/task/reject/{taskId}
+POST /system/flow/task/reject-node/{taskId}
+POST /system/flow/task/terminate/{taskId}
+POST /system/flow/task/revoke/{instanceId}
+POST /system/flow/task/copy/{taskId}
+GET /app/todos
+GET /app/todos/{taskId}
+POST /app/todos/{taskId}/handle
+
+# ---- 表单：填写，看自己填过的 ----
+GET /system/form/by-key/{formKey}
+GET /system/form/data/{formKey}
+POST /system/form/submit-data/{formKey}
+
+# ---- 文件下载：接口里按文件校验这个人能不能下 ----
+GET /system/file/download/{id}
+GET /system/file/download-stream/{id}
+
+# ---- 页面都要用的公共数据：字典、帮助文档、更新日志，还有提意见 ----
+GET /system/dict/dictionary
+GET /system/dict/detail
+GET /system/dict/tree
+POST /system/dict/batch
+GET /system/dict-biz/dictionary
+GET /system/dict-biz/detail
+GET /system/dict-biz/tree
+GET /system/help/catalog/tree
+GET /system/help/doc/page
+GET /system/help/doc/detail
+GET /system/help/page-docs
+GET /system/help/binding/list
+POST /system/help/view/{id}
+GET /system/changelog/recent
+POST /system/feedback/submit
+
+# ---- 地图的展示和地名查询 ----
+GET /system/gis/status
+GET /system/gis/provider/list
+GET /system/gis/search
+GET /system/gis/reverse
+GET /system/gis/tile/{provider}/{layer}/{z}/{x}/{y}
+GET /system/gis/tileset/{code}/tileset.json
+GET /system/gis/tileset/{code}/{file}
+
+# ---- 现在给得比需要的多，要不要收紧还没定 ----
+# 整棵菜单树和每个菜单的详情，里面有各个按钮的权限码
+GET /system/menu/tree
+GET /system/menu/detail
+# 全局搜索：用户查不到（受数据权限限制），部门名、角色名和角色码按关键字查得到
+GET /system/search/suggest
+# 工作台概览：除了自己的待办数和未读数，还有本租户的总人数、部门数、角色数，启用和停用各多少人
+GET /system/workbench/overview

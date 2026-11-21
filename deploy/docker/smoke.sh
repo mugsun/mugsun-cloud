@@ -3,12 +3,14 @@
 # 各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
 # 服务之间互相调用 → 两个 system 实例之间保持一致，从空库一起启动都没有重启过，正常停掉一个的过程中经网关的访问不能有失败
 # → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复
-# → 把每个接口都请求一遍：不登录进不去，不用登录的接口和清单一致，网关转给了有这个接口的服务 → 清理。
+# → 把每个接口都请求一遍：不登录进不去，不用登录的接口和清单一致，网关转给了有这个接口的服务，
+# 没有任何角色的账号进得去的接口和清单一致 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
 # 镜像和正式那一套是同一组标签（mugsun-cloud-*:local），这里会按当前的源码重新构建它们，
 # 正式那一套下次执行 up 时会换成新构建的镜像。正式那一套在运行时执行这个脚本，没有实测过。
 #   deploy/docker/smoke.sh            本地或 CI
-#   KEEP=1 deploy/docker/smoke.sh     检查完不清理，留着现场（走到了最后一步的话，现场里四个业务服务的接口文档是开着的）
+#   KEEP=1 deploy/docker/smoke.sh     检查完不清理，留着现场（走到了最后一步的话，现场里四个业务服务的接口文档是开着的；
+#                                     那个没有角色的账号的登录令牌也留在交接用的卷里，可以接着拿它查）
 #   MUGSUN_SYSTEM_REPLICAS=1 deploy/docker/smoke.sh    system 只起一个实例，跳过两个实例之间的检查
 # 需要 Docker（Compose v2.17 以上）和 curl。内存要求见 docs/deployment.md。
 set -euo pipefail
@@ -34,14 +36,17 @@ PYTHON_IMAGE="python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7
 URL="http://127.0.0.1:${MUGSUN_HTTP_PORT}"
 # 最后一步放临时编排片段的目录，退出时删掉
 sweep_dir=""
+# 交接用的卷：smoke-check.py 建一个没有任何角色的账号并登录，把登录令牌放在里面，最后一步取出来用。
+# 它不在编排文件里，down -v 删不到它，开头和退出时单独删；KEEP=1 时和现场一起留着
+handoff="${COMPOSE_PROJECT_NAME}_smoke-handoff"
 
 fail() {
 	echo "FAIL ${*}" >&2
 	exit 1
 }
-# 最后一步要挂进容器的三个文件，开头就查：缺了的话不要等前面几分钟都跑完才报错。这时还没动过任何容器
+# 最后一步要挂进容器的四个文件，开头就查：缺了的话不要等前面几分钟都跑完才报错。这时还没动过任何容器
 public_paths="$(cd ../.. && pwd)/mugsun-cloud-common/src/boot/java/com/mugsun/boot/security/LoginPublicPaths.java"
-for needed in "${public_paths}" "${PWD}/smoke-sweep.py" "${PWD}/public-endpoints.txt"; do
+for needed in "${public_paths}" "${PWD}/smoke-sweep.py" "${PWD}/public-endpoints.txt" "${PWD}/roleless-endpoints.txt"; do
 	[ -f "${needed}" ] || fail "找不到最后一步要用的文件：${needed}"
 done
 # 没通过时先把各容器的状态和最后的日志打出来，再清理
@@ -54,6 +59,7 @@ finish() {
 	fi
 	if [ "${KEEP:-0}" != 1 ]; then
 		"${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+		docker volume rm -f "${handoff}" >/dev/null 2>&1 || true
 	fi
 	[ -z "${sweep_dir}" ] || rm -rf "${sweep_dir}"
 	exit "${code}"
@@ -112,6 +118,7 @@ wait_serving() {
 }
 
 "${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+docker volume rm -f "${handoff}" >/dev/null 2>&1 || true
 start=$(date +%s)
 # 管理后台的前端构建很吃内存，和 Maven 打包分开做：两个一起跑，内存小的 Docker 上会有一个被杀掉
 "${DC[@]}" build pc
@@ -289,9 +296,11 @@ echo ">> 四个业务服务的每个实例各领到一个机器号，各不相�
 # shellcheck disable=SC2207
 system_addrs=($(ip_of system))
 [ "${#system_addrs[@]}" -eq "${MUGSUN_SYSTEM_REPLICAS}" ] || fail "system 的容器不是 ${MUGSUN_SYSTEM_REPLICAS} 个：${system_addrs[*]}"
+# 它最后建一个没有任何角色的账号并登录，登录令牌放进交接用的卷，留给最后一步
+docker volume create "${handoff}" >/dev/null
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_default" \
 	-e SYSTEM_ADDRS="${system_addrs[*]}" \
-	-v "${COMPOSE_PROJECT_NAME}_secrets-service:/secrets/service:ro" \
+	-v "${COMPOSE_PROJECT_NAME}_secrets-service:/secrets/service:ro" -v "${handoff}:/handoff" \
 	-v "${PWD}/boot/smoke.py:/smoke.py:ro" -v "${PWD}/boot/smoke-requirements.txt:/req.txt:ro" \
 	-v "${PWD}/smoke-check.py:/smoke-check.py:ro" \
 	"${PYTHON_IMAGE}" \
@@ -405,8 +414,9 @@ echo ">> 全部容器停掉、打乱顺序重新启动以后 $(($(date +%s) - re
 # ---- 把每个接口都请求一遍：不登录进不去，网关转给了有这个接口的服务 ----
 # 接口清单从各服务自己的接口文档里取。文档默认不提供（前面检查过），这里用一份临时的编排片段把它打开、
 # 重新创建四个业务服务；片段不放进仓库，免得被当成正式环境的开关用。前面的检查都要跑在默认配置上，所以这一步放在最后。
-# 分两步（smoke-sweep.py）：先在编排网络里把每个接口请求一遍，要登录的不带登录令牌，必须返回 401，
-# 不用登录的接口必须和 public-endpoints.txt 里的一模一样；再拿网关的访问日志核对，每个请求都转给了文档里有这个接口的服务
+# 分三步（smoke-sweep.py）：先在编排网络里把每个接口请求一遍，要登录的不带登录令牌，必须返回 401，
+# 不用登录的接口必须和 public-endpoints.txt 里的一模一样；再拿网关的访问日志核对，每个请求都转给了文档里有这个接口的服务；
+# 最后带着前面那个没有任何角色的账号的登录令牌，把要登录的接口再请求一遍，进得去的必须和 roleless-endpoints.txt 里的一模一样
 swept=$(date +%s)
 sweep_dir=$(mktemp -d)
 {
@@ -435,6 +445,10 @@ for _ in 1 2 3 4 5; do
 done
 printf '%s\n%s\n' "${asked}" "${access}" | docker run --rm -i -v "${PWD}/smoke-sweep.py:/smoke-sweep.py:ro" \
 	"${PYTHON_IMAGE}" python /smoke-sweep.py routed
+docker run --rm --network "${COMPOSE_PROJECT_NAME}_default" -e APP_SERVICES="${APP_SERVICES}" \
+	-v "${PWD}/smoke-sweep.py:/smoke-sweep.py:ro" -v "${public_paths}:/LoginPublicPaths.java:ro" \
+	-v "${PWD}/roleless-endpoints.txt:/roleless-endpoints.txt:ro" -v "${handoff}:/handoff:ro" \
+	"${PYTHON_IMAGE}" python /smoke-sweep.py roleless
 echo ">> 打开接口文档、重新创建四个业务服务，把每个接口请求了一遍，用了 $(($(date +%s) - swept)) 秒"
 
 end=$(date +%s)

@@ -10,7 +10,8 @@
 - 内部接口经网关访问不到；绕过网关直接访问服务，没有签名会被拒绝；
 - Nacos 不接受没带账号的请求；
 - 接口文档默认不提供：经管理后台取不到，直连每个服务也取不到；
-- system 有两个实例时：登录态在两个实例上都有效；在一个实例上保存、删除的数据权限规则，另一个实例几秒内跟上。
+- system 有两个实例时：登录态在两个实例上都有效；在一个实例上保存、删除的数据权限规则，另一个实例几秒内跟上；
+- 建一个没有任何角色的账号并登录，登录令牌留给 smoke.sh 的最后一步：那一步看它进得去哪些接口。
 
 上面的登录经网关轮流转给两个 system 实例：取验证码、校验验证码、登录这几步落在不同的实例上也要能过。
 """
@@ -196,3 +197,53 @@ if len(SYSTEM_ADDRS) > 1:
         if removed is None:
             fail("在实例 %s 上删除的数据权限规则，5 秒后实例 %s 上还在生效" % (saver, other))
         print("OK 实例 %s 上保存、删除数据权限规则，实例 %s 分别在 %.1f 秒、%.1f 秒后跟上" % (saver, other, saved, removed))
+
+# 9. 建一个没有任何角色的账号并登录，把登录令牌留给 smoke.sh 的最后一步（smoke-sweep.py roleless）：
+#    那一步带着它把每个接口请求一遍，看没有角色的人进得去哪些。接口清单要到那时打开接口文档才有，
+#    建账号又要用管理员的登录态，所以账号在这里建。令牌只写进交接用的卷，不打印。
+#    这里登录两次，加上 smoke.py 的两次一共四次：行为验证码的键盘方式按来源地址限每分钟 6 次，再加登录要先看这个上限
+HANDOFF = "/handoff"
+
+
+def login_as(username, password):
+    """用 smoke.py 的登录流程登录另一个账号。它的登录函数把用户名写死成了 admin，这里在登录请求发出去之前换掉。"""
+    original = boot_smoke.call
+
+    def call(method, path, body=None, token=None):
+        if path == "/api/auth/login":
+            body = dict(body, username=username)
+        return original(method, path, body, token)
+
+    boot_smoke.call = call
+    try:
+        return boot_smoke.login_with_password(password)
+    except AssertionError as err:
+        fail("账号 %s 登录失败：%s" % (username, err))
+    finally:
+        boot_smoke.call = original
+
+
+if os.path.isdir(HANDOFF):
+    roleless = "smoke_roleless_" + os.urandom(4).hex()
+    initial = (api("POST", "/api/system/user/submit", {"username": roleless, "nickname": "自检：没有角色"}) or {}).get("initialPassword")
+    if not initial:
+        fail("新建账号 %s 的应答里没有初始口令" % roleless)
+    # 新账号第一次登录以后只能先改口令；改完旧的登录令牌失效，用新口令再登录一次
+    first = login_as(roleless, initial)
+    changed = "Smk-" + os.urandom(6).hex() + "aZ9"
+    status, res = fetch("POST", BASE + "/api/auth/update-password",
+                        {"oldPassword": boot_smoke.sm2enc(initial), "newPassword": boot_smoke.sm2enc(changed)}, first)
+    if status != 200 or not isinstance(res, dict) or res.get("code") != 200:
+        fail("账号 %s 第一次登录后改口令没有成功：HTTP %s，%s" % (roleless, status, (res or {}).get("msg")))
+    roleless_token = login_as(roleless, changed)
+    status, res = fetch("GET", BASE + "/api/auth/info", None, roleless_token)
+    info = res.get("data") if status == 200 and isinstance(res, dict) else None
+    if not isinstance(info, dict):
+        fail("账号 %s 登录后取不到登录信息：HTTP %s" % (roleless, status))
+    if info.get("roles") or info.get("buttons"):
+        fail("刚建的账号 %s 没有分配角色，登录信息里却有 %d 个角色、%d 个权限码"
+             % (roleless, len(info.get("roles") or []), len(info.get("buttons") or [])))
+    fd = os.open(HANDOFF + "/roleless-token", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(roleless_token)
+    print("OK 建了一个没有任何角色的账号 %s 并登录，留给最后一步：看它进得去哪些接口" % roleless)

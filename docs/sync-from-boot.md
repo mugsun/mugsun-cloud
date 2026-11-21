@@ -161,6 +161,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | `docker/full/gen-secrets.sh` 生成哪些口令和密钥、`init show` 怎么判断 | `deploy/docker/gen-secrets.sh` |
 | `scripts/compose-full-smoke.sh` 检查的部署约定 | `deploy/docker/smoke.sh` |
 | 加了、删了不用登录的接口，或者改了免登录名单 `LoginPublicPaths` | `deploy/docker/public-endpoints.txt`。自检的最后一步会列出多了、少了哪几个；多出来的先确认该对没登录的人开放，再加进去 |
+| 加了、删了登录就能用（不要权限码）的接口，或者改了接口的权限码 | `deploy/docker/roleless-endpoints.txt`。自检的最后一步会列出多了、少了哪几个；多出来的先确认该给任何登录的人用，该要权限的到 mugsun-boot 里补权限码 |
 
 ## 第三方库的版本
 

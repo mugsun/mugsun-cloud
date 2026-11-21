@@ -1,4 +1,5 @@
-"""每个接口：不登录进不去，网关把它转给了有这个接口的服务。由 smoke.sh 分两步调用，都在一次性容器里运行。
+"""每个接口：不登录进不去，网关把它转给了有这个接口的服务，没有任何角色的账号进得去的只有清单里那些。
+由 smoke.sh 分三步调用，都在一次性容器里运行。
 
 第一步 ask，在编排网络里。接口清单从各服务自己的接口文档里取（smoke.sh 只在这一步把文档打开），
 清单里的每个接口都经管理后台和网关请求一次：
@@ -17,6 +18,13 @@
 转给了谁看网关自己记的，不从状态码推：状态码是服务按自己的规则给的，比如上传文件的请求没登录时
 由过滤器先拒绝，轮不到看这个服务有没有这个接口。
 
+第三步 roleless，在编排网络里。smoke-check.py 在前面建了一个没有任何角色的账号并登录，登录令牌留在交接用的卷里。
+这一步带着它把要登录的接口按文档里的方法再请求一遍：返回 403 是被权限拦住了，别的都算进得去
+（进去以后接口自己再校验什么，不在这里看）。进得去的接口必须和仓库里的清单 roleless-endpoints.txt 一模一样。
+/system 下的写接口（POST、PUT、DELETE）没写权限码时另有一道兜底，默认拒绝；读接口和别的前缀下的接口没有这道兜底，
+忘了写权限码，任何登录的人都进得去。
+有了这份清单，这样的接口要有人看过、加进清单，自检才通过。
+
 只用标准库，不装依赖。
 """
 import http.client
@@ -33,6 +41,11 @@ SERVICES = {"system": 8101, "gis": 8102, "track": 8103, "ai": 8104}
 ENTRY_HOST, ENTRY_PORT, ENTRY_PREFIX = "pc", 8080, "/api"
 PUBLIC_PATHS_FILE = "/LoginPublicPaths.java"
 PINNED_FILE = "/public-endpoints.txt"
+ROLELESS_FILE = "/roleless-endpoints.txt"
+ROLELESS_TOKEN_FILE = "/handoff/roleless-token"
+# 第三步不请求的接口：它们的作用就是结束这次登录，请求了以后后面的接口都会变成「没登录」。
+# 任何登录的人都能退出，按进得去算。/auth/logout 不用登录，不在第三步的范围里
+ENDS_LOGIN = ("POST /app/auth/logout",)
 METHODS = ("get", "head", "post", "put", "patch", "delete")
 # 这几种返回等两秒再问一次：服务刚重新创建完，网关的实例列表可能还没跟上
 RETRY = (0, 502, 503, 504)
@@ -82,19 +95,19 @@ def is_public(path, exact, prefixes):
     return path in exact or any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
 
-def pinned_public():
-    """读仓库里那份「不用登录的接口」清单：一行一个「方法 路径」，# 开头的是注释。"""
-    pinned = set()
-    with open(PINNED_FILE, encoding="utf-8") as f:
+def pinned(file):
+    """读仓库里钉住的一份接口清单：一行一个「方法 路径」，# 开头的是注释。"""
+    rows = set()
+    with open(file, encoding="utf-8") as f:
         for number, raw in enumerate(f, 1):
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
             parts = line.split()
             if len(parts) != 2 or parts[0].lower() not in METHODS or parts[0] != parts[0].upper() or not parts[1].startswith("/"):
-                fail("public-endpoints.txt 第 %d 行看不懂：%s（要写成「方法 路径」，比如 GET /ping）" % (number, line))
-            pinned.add(" ".join(parts))
-    return pinned
+                fail("%s 第 %d 行看不懂：%s（要写成「方法 路径」，比如 GET /ping）" % (file[1:], number, line))
+            rows.add(" ".join(parts))
+    return rows
 
 
 def document(name, port):
@@ -109,11 +122,13 @@ def document(name, port):
 conn = None
 
 
-def ask_once(method, path, content_type, body):
+def ask_once(method, path, content_type, body, token):
     global conn
     headers = {"Accept": "*/*"}
     if content_type:
         headers["Content-Type"] = content_type
+    if token:
+        headers["Authorization"] = token
     # 一条连接用到一定次数 Nginx 会关掉它，换一条再发一次
     for _ in (1, 2):
         try:
@@ -133,25 +148,25 @@ def ask_once(method, path, content_type, body):
     return 0
 
 
-def ask(method, path, content_type=None, body=None):
-    """经管理后台和网关请求一次，返回状态码；连不上时是 0。"""
-    status = ask_once(method, path, content_type, body)
+def ask(method, path, content_type=None, body=None, token=None):
+    """经管理后台和网关请求一次，返回状态码；连不上时是 0。token 是登录令牌，不给就是没登录。"""
+    status = ask_once(method, path, content_type, body, token)
     if status in RETRY:
         time.sleep(2)
-        status = ask_once(method, path, content_type, body)
+        status = ask_once(method, path, content_type, body, token)
     return status
 
 
-def without_login(method, path, operation):
-    """按文档里的方法和请求体类型发一次，不带登录令牌。"""
+def send(method, path, operation, token=None):
+    """按文档里的方法和请求体类型发一次。token 是登录令牌，不给就是没登录。"""
     content = list((operation.get("requestBody") or {}).get("content") or {})
     if not content:
-        return ask(method, path)
+        return ask(method, path, token=token)
     if content[0].startswith("multipart/"):
-        return ask(method, path, "multipart/form-data; boundary=x", b"--x--\r\n")
+        return ask(method, path, "multipart/form-data; boundary=x", b"--x--\r\n", token)
     if "json" in content[0]:
-        return ask(method, path, content[0], b"{}")
-    return ask(method, path, content[0], b"")
+        return ask(method, path, content[0], b"{}", token)
+    return ask(method, path, content[0], b"", token)
 
 
 def marker(name):
@@ -163,14 +178,32 @@ def marker(name):
     return path
 
 
-def do_ask():
+def setup():
+    """读服务自己用的免登录名单，取四个服务的接口文档。"""
     expected = set(os.environ.get("APP_SERVICES", "").split())
     if expected != set(SERVICES):
         fail("smoke.sh 里的服务是 %s，smoke-sweep.py 里的是 %s，两边要一致" % (sorted(expected), sorted(SERVICES)))
     with open(PUBLIC_PATHS_FILE, encoding="utf-8") as f:
         exact, prefixes = public_paths(f.read())
-    pinned = pinned_public()
-    documents = {name: document(name, port) for name, port in SERVICES.items()}
+    return exact, prefixes, {name: document(name, port) for name, port in SERVICES.items()}
+
+
+def operations(name, doc, exact, prefixes):
+    """一份接口文档里的每个接口：路径模板、请求时用的路径、是不是不用登录、大写的方法、文档里对它的描述。"""
+    for template, item in sorted((doc.get("paths") or {}).items()):
+        path = re.sub(r"\{[^}]+\}", "1", template)
+        public = is_public(path, exact, prefixes)
+        for method, operation in sorted(item.items()):
+            if not isinstance(operation, dict) or "responses" not in operation:
+                continue
+            if method not in METHODS:
+                fail("%s 的接口文档里 %s %s 用的方法这里不会检查，要在 smoke-sweep.py 里补上" % (name, method.upper(), template))
+            yield template, path, public, method.upper(), operation
+
+
+def do_ask():
+    exact, prefixes, documents = setup()
+    listed_public = pinned(PINNED_FILE)
 
     counts, asked, entered, wrong = {}, {}, [], []
     open_now = set()
@@ -178,28 +211,21 @@ def do_ask():
     begin = marker("begin")
     for name, doc in documents.items():
         counts[name] = guarded = 0
-        for template, item in sorted((doc.get("paths") or {}).items()):
-            path = re.sub(r"\{[^}]+\}", "1", template)
-            public = is_public(path, exact, prefixes)
-            for method, operation in sorted(item.items()):
-                if not isinstance(operation, dict) or "responses" not in operation:
-                    continue
-                if method not in METHODS:
-                    fail("%s 的接口文档里 %s %s 用的方法这里不会检查，要在 smoke-sweep.py 里补上" % (name, method.upper(), template))
-                counts[name] += 1
-                sent = "OPTIONS" if public else method.upper()
-                asked.setdefault((sent, path), set()).add(SERVICES[name])
-                if public:
-                    open_now.add("%s %s" % (method.upper(), template))
-                    ask(sent, path)
-                    continue
-                guarded += 1
-                status = without_login(sent, path, operation)
-                row = "%-6s %-6s %s → %d" % (name, sent, template, status)
-                if 200 <= status < 400:
-                    entered.append(row)
-                elif status != 401:
-                    wrong.append(row)
+        for template, path, public, method, operation in operations(name, doc, exact, prefixes):
+            counts[name] += 1
+            sent = "OPTIONS" if public else method
+            asked.setdefault((sent, path), set()).add(SERVICES[name])
+            if public:
+                open_now.add("%s %s" % (method, template))
+                ask(sent, path)
+                continue
+            guarded += 1
+            status = send(sent, path, operation)
+            row = "%-6s %-6s %s → %d" % (name, sent, template, status)
+            if 200 <= status < 400:
+                entered.append(row)
+            elif status != 401:
+                wrong.append(row)
         if not guarded:
             fail("%s 的接口文档里没有一个要登录的接口（共 %d 个接口）：文档没取对，或者免登录名单读错了" % (name, counts[name]))
         need_login += guarded
@@ -211,7 +237,7 @@ def do_ask():
     if wrong:
         problems.append(listed("要登录的接口不登录请求，返回的不是 401，这样的", wrong))
     # 这两种全部列出，写法和清单里的一样，可以整行拷进清单或者照着删
-    extra, gone = sorted(open_now - pinned, key=by_path), sorted(pinned - open_now, key=by_path)
+    extra, gone = sorted(open_now - listed_public, key=by_path), sorted(listed_public - open_now, key=by_path)
     if extra:
         problems.append(listed("不用登录的接口比清单（deploy/docker/public-endpoints.txt）多出", extra, None)
                         + "\n  先确认它们确实该对没登录的人开放，再把上面这几行加进清单")
@@ -275,9 +301,66 @@ def do_routed():
     print("OK 这些接口共 %d 个不同的请求，网关都转给了文档里有这个接口的服务" % len(asked))
 
 
+def do_roleless():
+    exact, prefixes, documents = setup()
+    allowed = pinned(ROLELESS_FILE)
+    try:
+        with open(ROLELESS_TOKEN_FILE, encoding="utf-8") as f:
+            token = f.read().strip()
+    except OSError as e:
+        fail("读不到没有角色的账号的登录令牌：%s。它由 smoke-check.py 建好账号、登录以后留下" % e)
+    if not token:
+        fail("没有角色的账号的登录令牌是空的")
+    # 这个令牌是在重启 Nacos、把全部容器停掉再启动之前拿到的。登录状态存在 Redis 里，重启以后应该还在
+    status = ask("GET", "/auth/info", token=token)
+    if status != 200:
+        fail("没有角色的账号在前面登录拿到的令牌，现在访问 /auth/info 返回 %d：全部容器重新启动以后，登录状态没有留住" % status)
+
+    seen, denied, entered, last = set(), set(), set(), None
+    for name, doc in documents.items():
+        for template, path, public, method, operation in operations(name, doc, exact, prefixes):
+            line = "%s %s" % (method, template)
+            if public or line in seen:
+                continue
+            seen.add(line)
+            if line in ENDS_LOGIN:
+                entered.add(line)
+                continue
+            status = send(method, path, operation, token)
+            if status == 403:
+                denied.add(line)
+            elif status == 401:
+                fail("带着登录令牌请求 %s 返回了 401，这次登录中途失效了。它前面最后一个进得去的接口是 %s："
+                     "要是那个接口会结束登录，把它加进 smoke-sweep.py 的 ENDS_LOGIN" % (line, last or "（还没有）"))
+            elif status in RETRY:
+                fail("带着登录令牌请求 %s 返回了 %d：请求没有到服务" % (line, status))
+            else:
+                entered.add(line)
+                last = line
+    if not denied:
+        fail("没有任何角色的账号请求了 %d 个要登录的接口，一个 403 都没有：这个账号不是没有角色的，或者权限校验没有起作用" % len(seen))
+
+    # 这两种全部列出，写法和清单里的一样，可以整行拷进清单或者照着删
+    extra, gone = sorted(entered - allowed, key=by_path), sorted(allowed - entered, key=by_path)
+    problems = []
+    if extra:
+        problems.append(listed("没有任何角色的账号进得去的接口比清单（deploy/docker/roleless-endpoints.txt）多出", extra, None)
+                        + "\n  新接口忘了写权限码时会出现在这里。先确认它该对任何登录的人开放、给出的只是这个人自己的东西；"
+                          "该要权限的去补权限码，确认过的再把上面这几行加进清单")
+    if gone:
+        problems.append(listed("清单（deploy/docker/roleless-endpoints.txt）里，没有任何角色的账号现在进不去的接口有", gone, None)
+                        + "\n  它们被删掉了、改成不用登录了，或者现在要权限了：从清单里删掉上面这几行")
+    if problems:
+        fail("\n".join(problems))
+    print("OK 没有任何角色的账号带着登录令牌把要登录的 %d 个接口请求了一遍：%d 个被权限拦住（403），"
+          "进得去的 %d 个和清单 roleless-endpoints.txt 一模一样" % (len(seen), len(denied), len(entered)))
+
+
 if sys.argv[1:] == ["ask"]:
     do_ask()
 elif sys.argv[1:] == ["routed"]:
     do_routed()
+elif sys.argv[1:] == ["roleless"]:
+    do_roleless()
 else:
-    fail("用法：smoke-sweep.py ask | routed")
+    fail("用法：smoke-sweep.py ask | routed | roleless")
