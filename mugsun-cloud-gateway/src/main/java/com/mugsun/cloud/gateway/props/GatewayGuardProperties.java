@@ -19,6 +19,27 @@ public class GatewayGuardProperties {
 	 */
 	private String innerPath = "/inner";
 
+	/**
+	 * 黑名单：客户端地址落在这些地址段里的请求一律不转发。逗号分隔的 CIDR，留空表示没有黑名单。
+	 */
+	private String denyIps = "";
+
+	/**
+	 * 白名单：不为空时，只转发客户端地址落在这些地址段里的请求。逗号分隔的 CIDR，留空表示不限制。
+	 */
+	private String allowIps = "";
+
+	/**
+	 * 不对外开放的路径前缀，逗号分隔，例如 {@code /actuator,/v3/api-docs}。这些路径只有
+	 * {@link #restrictedAllowIps} 里的地址能访问。留空表示没有这样的路径。
+	 */
+	private String restrictedPaths = "";
+
+	/**
+	 * 能访问 {@link #restrictedPaths} 的地址段，逗号分隔的 CIDR。留空表示谁都不能经网关访问那些路径。
+	 */
+	private String restrictedAllowIps = "";
+
 	private final AccessLog accessLog = new AccessLog();
 
 	public String getTrustedProxies() {
@@ -35,6 +56,38 @@ public class GatewayGuardProperties {
 
 	public void setInnerPath(String innerPath) {
 		this.innerPath = innerPath;
+	}
+
+	public String getDenyIps() {
+		return denyIps;
+	}
+
+	public void setDenyIps(String denyIps) {
+		this.denyIps = denyIps == null ? "" : denyIps;
+	}
+
+	public String getAllowIps() {
+		return allowIps;
+	}
+
+	public void setAllowIps(String allowIps) {
+		this.allowIps = allowIps == null ? "" : allowIps;
+	}
+
+	public String getRestrictedPaths() {
+		return restrictedPaths;
+	}
+
+	public void setRestrictedPaths(String restrictedPaths) {
+		this.restrictedPaths = restrictedPaths == null ? "" : restrictedPaths;
+	}
+
+	public String getRestrictedAllowIps() {
+		return restrictedAllowIps;
+	}
+
+	public void setRestrictedAllowIps(String restrictedAllowIps) {
+		this.restrictedAllowIps = restrictedAllowIps == null ? "" : restrictedAllowIps;
 	}
 
 	public AccessLog getAccessLog() {

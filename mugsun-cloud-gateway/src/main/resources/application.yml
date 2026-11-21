@@ -91,6 +91,16 @@ mugsun:
     trusted-proxies: ${MUGSUN_OPENAPI_TRUSTED_PROXIES:}
     # 服务之间互相调用的内部接口的路径前缀，网关不对外转发
     inner-path: /inner
+    # 按客户端地址限制转发。地址段是逗号分隔的 CIDR；下面四项都留空（默认）就没有任何限制，写错了网关拒绝启动。
+    # 网关前面有反向代理时要先配好上面的 trusted-proxies，否则所有请求的地址都是代理的地址。
+    # 黑名单：这些地址发来的请求不转发，返回 403
+    deny-ips: ${MUGSUN_GATEWAY_DENY_IPS:}
+    # 白名单：不为空时，只转发这些地址发来的请求
+    allow-ips: ${MUGSUN_GATEWAY_ALLOW_IPS:}
+    # 不对外开放的路径前缀，逗号分隔，如 /actuator,/v3/api-docs,/swagger-ui。只有 restricted-allow-ips 里的地址能访问，
+    # 后者留空就是谁都不能经网关访问
+    restricted-paths: ${MUGSUN_GATEWAY_RESTRICTED_PATHS:}
+    restricted-allow-ips: ${MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS:}
     # 访问日志：每个请求结束时记一行（日志名 ACCESS），写明客户端地址、路径（不带查询串）、状态码、耗时、
     # 转给了哪个服务的哪个实例、请求编号。各字段的含义见 docs/deployment.md「网关的访问日志」
     access-log:
