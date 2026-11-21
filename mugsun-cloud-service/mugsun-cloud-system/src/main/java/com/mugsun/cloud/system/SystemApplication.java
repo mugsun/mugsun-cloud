@@ -17,8 +17,9 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * 区别只有一处：扫描范围多了微服务版自己的包 {@code com.mugsun.cloud.common} 和 {@code com.mugsun.cloud.system}。
  * boot 的启动类改了注解时，这里要跟着改。
  *
- * <p>{@code gis}/{@code track}/{@code ai} 三个包照样排除：这个服务里本来就没有它们的代码，留着排除规则是为了和 boot 一致，
- * 也防止以后误把这些包带进来时被根扫描直接注册。
+ * <p>{@code gis}/{@code track}/{@code ai} 三个包照样排除：和 boot 一致，也防止以后误把这些包带进来时被根扫描直接注册。
+ * 这个服务里没有 gis 和 track 的代码；ai 包里只有删租户时清 AI 密钥要用的实体和 Mapper（见 {@code CloudAiSecretPurger}），
+ * 它们不是组件，Mapper 由下面的 {@code @MapperScan} 注册，不受排除规则影响。
  */
 @SpringBootApplication
 @ComponentScan(
