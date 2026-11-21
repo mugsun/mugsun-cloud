@@ -2,14 +2,11 @@ package com.mugsun.cloud.gateway.support;
 
 import com.mugsun.boot.common.web.IpCidr;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 
 import java.net.InetSocketAddress;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -19,11 +16,12 @@ import java.util.Locale;
  * <p>前提是请求的连接地址没被别的机制改过，所以网关自己的 {@code server.forward-headers-strategy} 必须是 none：
  * 设成 native 或 framework（在 Kubernetes 等平台上不写时默认就是 native）后，容器会不分来源地采信转发头，
  * 任何客户端都能用 X-Forwarded-For 冒充别的地址。这里在启动时检查，不对就拒绝启动。
+ *
+ * <p>可信代理有一条写错也拒绝启动，和 mugsun-boot 不一样（那边记一条警告后忽略）：写错的那一条被忽略，
+ * 代理就不被采信，所有请求的客户端地址都成了代理的地址，按客户端地址做的限制全按这一个地址算。
  */
 @Component
 public class ClientViewResolver {
-
-	private static final Logger log = LoggerFactory.getLogger(ClientViewResolver.class);
 
 	private final List<IpCidr> trustedProxies;
 
@@ -34,24 +32,8 @@ public class ClientViewResolver {
 				+ (strategy == null ? "未设置" : strategy.name().toLowerCase(Locale.ROOT)) + "），否则客户端可以用 X-Forwarded-For 冒充别的地址。"
 				+ "网关前面有反向代理时，把代理的地址写进 mugsun.gateway.trusted-proxies（环境变量 MUGSUN_OPENAPI_TRUSTED_PROXIES）");
 		}
-		this.trustedProxies = trusted(properties.getTrustedProxies());
-	}
-
-	/** 和 mugsun-boot 一样，写错的条目记一条警告后忽略。每一条先经 {@link IpRanges} 看写法，写错的不会被拿去查 DNS */
-	private static List<IpCidr> trusted(String text) {
-		List<IpCidr> result = new ArrayList<>();
-		for (String item : (text == null ? "" : text).split("[,;\\s]+")) {
-			if (item.isEmpty()) {
-				continue;
-			}
-			IpCidr range = IpRanges.range(item);
-			if (range == null) {
-				log.warn("忽略 mugsun.gateway.trusted-proxies 里不合法的一条：{}", item);
-			} else {
-				result.add(range);
-			}
-		}
-		return List.copyOf(result);
+		this.trustedProxies = IpRanges.parse(properties.getTrustedProxies(),
+			"mugsun.gateway.trusted-proxies（环境变量 MUGSUN_OPENAPI_TRUSTED_PROXIES）");
 	}
 
 	public ClientView resolve(ServerHttpRequest request) {
