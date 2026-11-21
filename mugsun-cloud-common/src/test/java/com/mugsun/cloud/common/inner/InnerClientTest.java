@@ -1,5 +1,9 @@
 package com.mugsun.cloud.common.inner;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mugsun.boot.tenant.TenantContext;
@@ -7,6 +11,7 @@ import com.mugsun.cloud.common.inner.InnerCallException.Kind;
 import com.mugsun.core.tool.exception.ServiceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.cloud.client.DefaultServiceInstance;
 import org.springframework.cloud.client.ServiceInstance;
@@ -198,7 +203,7 @@ class InnerClientTest {
 	// ---------- 对方在不在 ----------
 
 	@Test
-	void withoutSecretNothingIsSentAndNothingIsReachable() {
+	void withoutSecretNothingIsSent() {
 		InnerProperties properties = new InnerProperties();
 		properties.validate();
 		InnerClient client = client(properties);
@@ -208,9 +213,43 @@ class InnerClientTest {
 
 		assertThat(e.kind()).isEqualTo(Kind.NOT_CONFIGURED);
 		assertThat(e.absent()).isTrue();
-		assertThat(client.reachable(TARGET)).isFalse();
 		verifyNoInteractions(discovery);
 		assertThat(sent).isEmpty();
+	}
+
+	/** 对方在注册中心里、本服务没配密钥：算调不了；日志里对每个服务只提示一次，免得每个请求都刷一行 */
+	@Test
+	void withoutSecretAPresentServiceIsUnreachableAndHintedOnce() {
+		InnerProperties properties = new InnerProperties();
+		properties.validate();
+		InnerClient client = client(properties);
+		oneInstance();
+		when(discovery.getInstances("mugsun-track")).thenReturn(List.of(instance("10.0.0.7")));
+		when(discovery.getInstances("mugsun-absent")).thenReturn(List.of());
+
+		List<String> warnings = warningsDuring(() -> {
+			assertThat(client.reachable(TARGET)).isFalse();
+			assertThat(client.reachable(TARGET)).isFalse();
+			assertThat(client.reachable("mugsun-track")).isFalse();
+			assertThat(client.reachable("mugsun-absent")).isFalse();
+			assertThat(client.reachable(TARGET)).isFalse();
+		});
+
+		assertThat(warnings).hasSize(2);
+		assertThat(warnings.get(0)).contains(TARGET).contains("MUGSUN_INNER_SECRET");
+		assertThat(warnings.get(1)).contains("mugsun-track").contains("MUGSUN_INNER_SECRET");
+		assertThat(sent).isEmpty();
+	}
+
+	/** 配了密钥时不该有这条提示 */
+	@Test
+	void withSecretThereIsNoHint() {
+		oneInstance();
+		InnerClient client = client();
+
+		List<String> warnings = warningsDuring(() -> assertThat(client.reachable(TARGET)).isTrue());
+
+		assertThat(warnings).isEmpty();
 	}
 
 	@Test
@@ -424,6 +463,23 @@ class InnerClientTest {
 	}
 
 	// ---------- 辅助 ----------
+
+	/** 执行期间 InnerClient 打出的 WARN 日志 */
+	private static List<String> warningsDuring(Runnable action) {
+		Logger logger = (Logger) LoggerFactory.getLogger(InnerClient.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			action.run();
+		} finally {
+			logger.detachAppender(appender);
+		}
+		return appender.list.stream()
+			.filter(event -> event.getLevel() == Level.WARN)
+			.map(ILoggingEvent::getFormattedMessage)
+			.toList();
+	}
 
 	private static InnerProperties properties() {
 		InnerProperties properties = new InnerProperties();

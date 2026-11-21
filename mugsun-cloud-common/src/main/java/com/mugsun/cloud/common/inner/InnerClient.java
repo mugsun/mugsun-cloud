@@ -37,7 +37,9 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -67,6 +69,9 @@ public class InnerClient {
 	/** 连不上时最多试几个实例 */
 	private static final int MAX_INSTANCES = 2;
 
+	/** 最多记多少个提示过的服务名，防止这个集合一直长大 */
+	private static final int MAX_HINTED = 32;
+
 	private final InnerProperties properties;
 
 	private final DiscoveryClient discoveryClient;
@@ -83,6 +88,9 @@ public class InnerClient {
 	private final LongSupplier clock;
 
 	private final SecureRandom random = new SecureRandom();
+
+	/** 已经提示过「对方在、但本服务没配密钥」的服务名 */
+	private final Set<String> hinted = ConcurrentHashMap.newKeySet();
 
 	@Autowired
 	public InnerClient(InnerProperties properties, DiscoveryClient discoveryClient, ObjectMapper objectMapper,
@@ -106,17 +114,26 @@ public class InnerClient {
 	/**
 	 * 对方现在能不能调：配了密钥，注册中心里也有它的实例。用来在调用之前判断「那个模块装没装」，
 	 * 注册中心问不到时按不能调处理。
+	 *
+	 * <p>对方在注册中心里、只是本服务没配密钥时，结果也是不能调，另外在日志里提示一次：
+	 * 用到对方的功能这时会悄悄退回没有对方时的做法，不提示的话部署的人很难发现是少配了密钥。
 	 */
 	public boolean reachable(String serviceId) {
-		if (!properties.configured()) {
-			return false;
-		}
+		boolean present;
 		try {
-			return !discoveryClient.getInstances(serviceId).isEmpty();
+			present = !discoveryClient.getInstances(serviceId).isEmpty();
 		} catch (RuntimeException e) {
 			log.warn("向注册中心查询服务 {} 失败，按没有实例处理：{}", serviceId, e.toString());
 			return false;
 		}
+		if (present && !properties.configured()) {
+			if (hinted.size() < MAX_HINTED && hinted.add(serviceId)) {
+				log.warn("注册中心里有 {}，但本服务没有配置 mugsun.cloud.inner.secret（环境变量 MUGSUN_INNER_SECRET），调不了它，"
+					+ "用到它的功能按它没有部署处理。这条提示对每个服务只打一次", serviceId);
+			}
+			return false;
+		}
+		return present;
 	}
 
 	/** 用默认的等待时间调用，见 {@link #call(String, String, Object, Duration)} */
