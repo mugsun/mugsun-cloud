@@ -1,10 +1,11 @@
 {
   "source": "https://github.com/mugsun/mugsun-boot",
   "commit": "69ace3832637e6369facce2a636efcb1807ad738",
-  "digest": "0a801f6e32ed9620c1a59ad43c7b0cfc67a3701d3f76cd03143320aa9466ed25",
+  "digest": "1619986f932cf9a743f887e579bbba8b9de1ecd67da2d98ec879719e4c9c19c5",
   "files": {
-    "mugsun-cloud-common": 222,
+    "mugsun-cloud-common": 208,
     "mugsun-cloud-gateway": 1,
-    "mugsun-cloud-service/mugsun-cloud-system": 455
+    "mugsun-cloud-service/mugsun-cloud-gis": 66,
+    "mugsun-cloud-service/mugsun-cloud-system": 469
   }
 }
