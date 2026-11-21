@@ -22,3 +22,13 @@ mugsun:
     sync:
       # 权限规则和租户数据源都在这个服务里修改，保存时就地生效，不用定时从库里重新加载（说明见 mugsun-cloud-defaults.yml）
       enabled: false
+    module:
+      # 可选模块拆成了独立的服务，「模块在不在」按注册中心里有没有对应服务的实例判断，结果决定菜单显不显示。
+      # 每隔多久向注册中心查一次，两次之间用上次的结果
+      presence-cache: 5s
+      # 发现实例全部消失后，这段时间内仍然算在：服务重启或滚动发布时菜单不会少一块
+      absent-grace: 60s
+      gis:
+        # GIS 服务在注册中心里的名字。没部署这个服务时，菜单里不显示 GIS，登录信息里 gisEnabled 为 false。
+        # 和单体版一样，MUGSUN_GIS_ENABLED=false 或系统参数 gis.module.enabled=false 也会把 GIS 关掉
+        service-id: mugsun-gis
