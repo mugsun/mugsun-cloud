@@ -160,6 +160,7 @@ system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。其它
 | `MUGSUN_GATEWAY_ALLOW_IPS` | 网关的白名单：填了以后只转发这些地址段发来的请求 | 空，即不限制 |
 | `MUGSUN_GATEWAY_RESTRICTED_PATHS` | 不对外开放的路径前缀，例如 `/actuator`，多个用逗号分隔 | 空，即没有 |
 | `MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS` | 能访问上面这些路径的地址段 | 空，即谁都不能经网关访问这些路径 |
+| `MUGSUN_GATEWAY_DYNAMIC_ROUTES` | 写 `true` 让网关另外从 Nacos 的配置 `mugsun-gateway-routes.yaml` 里读路由，改了不用重启网关 | `false` |
 
 上线前先看[部署注意事项](./docs/deployment.md)，里面是微服务版和单体版不一样、配错会出安全问题的地方。
 
@@ -205,6 +206,7 @@ system 按注册中心里有没有对应服务的实例来判断。服务启动�
 - 给每个请求定一个请求编号，放在 `X-Trace-Id` 请求头里传给服务，响应头里也有。服务的日志带着同一个编号，排查时拿它把网关和服务的日志对上。
 - 每个请求记一行访问日志：客户端地址、路径、状态码、耗时、转给了哪个实例。不记查询串。各字段的含义见[部署注意事项](./docs/deployment.md)第 10 节「网关的访问日志」。
 - 可以按客户端地址限制访问：黑名单、白名单，以及只对指定地址开放的路径（比如 `/actuator`）。默认不限制，配法见[部署注意事项](./docs/deployment.md)第 10 节「按客户端地址限制访问」。
+- 可以不重启就改路由：打开以后，网关另外从 Nacos 的一份配置里读路由，改了马上生效；写错了整份不采用，继续按原来的转发。默认不开。能写什么、接入 Nacos 的账号要加什么权限，见[部署注意事项](./docs/deployment.md)第 10 节「改路由不用重启网关」。
 
 登录校验和权限判断仍然在服务里做，和单体版是同一套代码，网关不解析令牌。
 

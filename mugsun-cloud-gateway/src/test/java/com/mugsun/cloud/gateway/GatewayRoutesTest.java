@@ -1,9 +1,15 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.gateway.route.DynamicRouteLoader;
+import com.mugsun.cloud.gateway.route.DynamicRouteLocator;
+import com.mugsun.cloud.gateway.route.NacosRouteSource;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.reactive.server.WebTestClient;
@@ -12,6 +18,8 @@ import reactor.netty.DisposableServer;
 import reactor.netty.http.server.HttpServer;
 
 import java.net.URI;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 配置文件里的路由表：哪些路径转给哪个服务。用的是 application.yml 里真实的路由，
@@ -32,6 +40,9 @@ class GatewayRoutesTest {
 
 	@LocalServerPort
 	int gatewayPort;
+
+	@Autowired
+	ApplicationContext context;
 
 	@DynamicPropertySource
 	static void instances(DynamicPropertyRegistry registry) {
@@ -81,6 +92,14 @@ class GatewayRoutesTest {
 			.exchange()
 			.expectStatus().isOk()
 			.expectBody(String.class).isEqualTo(service + " " + path);
+	}
+
+	/** 动态路由默认关着：相关的对象一个都不创建，路由只有上面这张表 */
+	@Test
+	void dynamicRoutesAreOffByDefault() {
+		assertThat(context.getBeansOfType(DynamicRouteLocator.class)).isEmpty();
+		assertThat(context.getBeansOfType(DynamicRouteLoader.class)).isEmpty();
+		assertThat(context.getBeansOfType(NacosRouteSource.class)).isEmpty();
 	}
 
 	private static DisposableServer backend(String service) {

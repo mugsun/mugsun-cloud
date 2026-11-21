@@ -38,7 +38,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 代码在 `mugsun-cloud-gateway/src/main/java/com/mugsun/cloud/gateway`。
 
-- 路径不改写，对外的接口路径和单体版一致。路由按顺序匹配，范围小的写在前面，`mugsun-system` 兜底。
+- `application.yml` 里的路由不改写路径，对外的接口路径和单体版一致。路由按顺序匹配，范围小的写在前面，`mugsun-system` 兜底。
 - 过滤器要拒绝请求时，返回 `Mono.error(new GatewayRejectedException(状态码, 说明))`，由 `GatewayErrorHandler` 写响应。不要在过滤器里自己写响应：排在前面的过滤器还要改响应头，响应已经写出去的话它们会抛异常。
 - 不要用 `DedupeResponseHeader` 这类在响应写出之后才改响应头的过滤器，它会把 WebSocket 连接弄断。要处理后端返回的响应头，写 `HttpHeadersFilter`，参考 `DownstreamCorsHeadersFilter`。
 - `X-Forwarded-*` 只由 `ClientAddressFilter` 写。网关自带的处理会在转发前删掉这类请求头，所以它必须是排在最后的 `HttpHeadersFilter`，写成普通的全局过滤器不生效。
@@ -49,10 +49,13 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 每个请求一行的访问日志由 `AccessLogFilter` 记，别的过滤器不要再给每个请求各记一行。字段有增减时同步改 `docs/deployment.md` 第 10 节的字段表。
 - 按客户端地址限制转发（黑名单、白名单、不对外开放的路径）由 `ClientAccessFilter` 管。名单这类配置写错时要拒绝启动，不要忽略写错的条目：`IpCidr.parseList` 会忽略，所以这里不用它。
 - 按路径拦请求时，用 `RequestPaths.of(exchange)` 把客户端发来的路径和路由改写以后的路径都查一遍，比较用 `PathGuard` 或 `PathPrefixes`。不要自己拿 `startsWith` 比：把路径编码、改大小写、加分号参数就绕过去了。这类过滤器的顺序要排在 `RouteToRequestUrlFilter` 后面。
+- 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
+- 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。
+- 读 Nacos 里的路由配置只由 `NacosRouteSource` 做，改动靠监听送来。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由清掉。
 - 网关不解析登录令牌，登录校验和权限判断在服务里做。
 - 需要 mugsun-boot 里的类时，在 `sync-rules.json` 的 `extras` 里单独拷贝，不要让网关依赖公共层。
 
-网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
+网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发，`GatewayDynamicRoutesTest` 测动态路由。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
 
 ## 服务的约定
 

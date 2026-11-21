@@ -108,3 +108,10 @@ mugsun:
       mode: ${MUGSUN_GATEWAY_ACCESS_LOG:all}
       # 从收到请求到开始回应超过这么多毫秒算慢请求；0 表示不按耗时区分
       slow-millis: ${MUGSUN_GATEWAY_SLOW_MILLIS:3000}
+    # 动态路由：从 Nacos 的一份配置里读路由，改了马上生效，不用重启网关。默认不启用（写 true 启用）。
+    # 能写什么、不能写什么、写错了会怎样，见 docs/deployment.md「改路由不用重启网关」
+    dynamic-routes:
+      enabled: ${MUGSUN_GATEWAY_DYNAMIC_ROUTES:false}
+      # 放路由的那份配置的 Data ID 和分组；分组留空表示和服务注册用同一个（MUGSUN_NACOS_GROUP）
+      data-id: mugsun-gateway-routes.yaml
+      group:

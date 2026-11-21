@@ -42,6 +42,8 @@ public class GatewayGuardProperties {
 
 	private final AccessLog accessLog = new AccessLog();
 
+	private final DynamicRoutes dynamicRoutes = new DynamicRoutes();
+
 	public String getTrustedProxies() {
 		return trustedProxies;
 	}
@@ -92,6 +94,49 @@ public class GatewayGuardProperties {
 
 	public AccessLog getAccessLog() {
 		return accessLog;
+	}
+
+	public DynamicRoutes getDynamicRoutes() {
+		return dynamicRoutes;
+	}
+
+	/**
+	 * 动态路由（前缀 {@code mugsun.gateway.dynamic-routes}）：从 Nacos 的一份配置里读路由，改了不用重启网关。
+	 */
+	public static class DynamicRoutes {
+
+		/** 是否启用。默认不启用：路由只有 application.yml 里写的那些 */
+		private boolean enabled = false;
+
+		/** 放路由的那份配置的 Data ID */
+		private String dataId = "mugsun-gateway-routes.yaml";
+
+		/** 那份配置所在的分组；留空表示和服务注册用同一个分组 */
+		private String group = "";
+
+		public boolean isEnabled() {
+			return enabled;
+		}
+
+		public void setEnabled(boolean enabled) {
+			this.enabled = enabled;
+		}
+
+		public String getDataId() {
+			return dataId;
+		}
+
+		public void setDataId(String dataId) {
+			this.dataId = dataId == null ? "" : dataId;
+		}
+
+		public String getGroup() {
+			return group;
+		}
+
+		public void setGroup(String group) {
+			this.group = group == null ? "" : group;
+		}
 	}
 
 	/**
