@@ -57,7 +57,8 @@
     ]
   },
   "extras": [
-    { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" }
+    { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" },
+    { "module": "mugsun-boot-core", "classes": ["system.file.FileStorageTikaConfig"], "to": "mugsun-cloud-service/mugsun-cloud-track" }
   ],
   "modules": [
     { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" },
