@@ -47,7 +47,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 记日志只记路径，不记查询串。WebSocket 的登录令牌在查询串里。
 - 每个请求的编号由 `TraceIdFilter` 定，规则要和 mugsun-boot 的 `TraceIdFilter` 一致。过滤器记警告日志时用 `TraceIds.of(exchange)` 带上编号。
 - 每个请求一行的访问日志由 `AccessLogFilter` 记，别的过滤器不要再给每个请求各记一行。字段有增减时同步改 `docs/deployment.md` 第 10 节的字段表。
-- 按客户端地址限制转发（黑名单、白名单、不对外开放的路径）由 `ClientAccessFilter` 管。名单这类配置写错时要拒绝启动，不要忽略写错的条目：`IpCidr.parseList` 会忽略，所以这里不用它。
+- 按客户端地址限制转发（黑名单、白名单、不对外开放的路径）由 `ClientAccessFilter` 管。名单这类配置写错时要拒绝启动，不要忽略写错的条目：地址名单用 `IpRanges.parse` 读，`IpCidr.parseList` 会忽略写错的条目，这里不用它。
+- 把一段文字认成地址或地址段，一律经 `IpRanges`（`bytes`、`range`、`parse`），不要直接调 `IpCidr.parse`、`parseList`、`toBytes`，也不要调 `InetAddress.getByName`。`10.0.0.300` 这种像地址又不是地址的写法，JDK 会当成主机名去查 DNS；在什么名字都解析得出地址的网络里（比如出网经过 fake-ip 代理），它会变成一个不相干的地址。`IpCidr.contains`、`anyContains` 只传 `ClientView` 算出来的地址。测试里的 `FakeIpDns` 让这类名字都解析得出地址，查没查 DNS 测得出来。
 - 按路径拦请求时，用 `RequestPaths.of(exchange)` 把客户端发来的路径和路由改写以后的路径都查一遍，比较用 `PathGuard` 或 `PathPrefixes`。不要自己拿 `startsWith` 比：把路径编码、改大小写、加分号参数就绕过去了。这类过滤器的顺序要排在 `RouteToRequestUrlFilter` 后面。
 - 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
 - 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。

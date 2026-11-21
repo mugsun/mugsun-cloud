@@ -4,6 +4,7 @@ import com.mugsun.boot.common.web.IpCidr;
 import com.mugsun.cloud.gateway.error.GatewayRejectedException;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
+import com.mugsun.cloud.gateway.support.IpRanges;
 import com.mugsun.cloud.gateway.support.PathPrefixes;
 import com.mugsun.cloud.gateway.support.RequestPaths;
 import com.mugsun.cloud.gateway.support.TraceIds;
@@ -18,7 +19,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -60,10 +60,10 @@ public class ClientAccessFilter implements GlobalFilter, Ordered {
 
 	public ClientAccessFilter(GatewayGuardProperties properties, ClientViewResolver clientViewResolver) {
 		this.clientViewResolver = clientViewResolver;
-		this.denied = cidrs(properties.getDenyIps(), "mugsun.gateway.deny-ips");
-		this.allowed = cidrs(properties.getAllowIps(), "mugsun.gateway.allow-ips");
+		this.denied = IpRanges.parse(properties.getDenyIps(), "mugsun.gateway.deny-ips");
+		this.allowed = IpRanges.parse(properties.getAllowIps(), "mugsun.gateway.allow-ips");
 		this.restrictedPaths = PathPrefixes.parse(properties.getRestrictedPaths(), "mugsun.gateway.restricted-paths");
-		this.restrictedAllowed = cidrs(properties.getRestrictedAllowIps(), "mugsun.gateway.restricted-allow-ips");
+		this.restrictedAllowed = IpRanges.parse(properties.getRestrictedAllowIps(), "mugsun.gateway.restricted-allow-ips");
 		if (active()) {
 			log.info("按客户端地址限制转发：黑名单 {} 段，白名单 {} 段，不对外开放的路径 {} 个（能访问的地址 {} 段）",
 				denied.size(), allowed.size(), restrictedPaths.size(), restrictedAllowed.size());
@@ -114,27 +114,6 @@ public class ClientAccessFilter implements GlobalFilter, Ordered {
 				TraceIds.of(exchange));
 		}
 		return Mono.error(new GatewayRejectedException(HttpStatus.FORBIDDEN, message));
-	}
-
-	/**
-	 * 解析地址段列表，有一条写错就报错。不用 {@link IpCidr#parseList}：它会忽略写错的条目。
-	 */
-	static List<IpCidr> cidrs(String text, String property) {
-		List<IpCidr> result = new ArrayList<>();
-		if (text != null) {
-			for (String item : text.split("[,;\\s]+")) {
-				if (item.isEmpty()) {
-					continue;
-				}
-				IpCidr cidr = IpCidr.parse(item);
-				if (cidr == null) {
-					throw new IllegalArgumentException(property + " 里的地址段不合法：" + item
-						+ "。要写成地址或 CIDR，例如 203.0.113.7 或 10.0.0.0/8");
-				}
-				result.add(cidr);
-			}
-		}
-		return List.copyOf(result);
 	}
 
 	@Override

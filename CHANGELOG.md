@@ -92,3 +92,6 @@
   - commons-collections4 4.4 → 4.5.0，guava 33.4.8 → 33.3.1
   - mybatis-spring-boot-starter 3.0.5 → 3.0.3
   - 父 pom 不再引入 `spring-cloud-alibaba-dependencies`，只写 Nacos 组件的版本
+- 网关不再把 `10.0.0.300` 这类像地址又不是地址的写法拿去查 DNS
+  - 此前在什么名字都解析得出地址的网络里，它会被当成另一个不相干的地址
+  - 影响可信代理、转发头里的地址和按客户端地址限制转发的名单

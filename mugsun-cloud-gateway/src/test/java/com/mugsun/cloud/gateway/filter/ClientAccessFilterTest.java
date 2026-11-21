@@ -171,6 +171,19 @@ class ClientAccessFilterTest {
 	}
 
 	@Test
+	void entryThatOnlyLooksLikeAnAddressFailsFast() {
+		// 10.0.0.300 不是地址。在什么名字都解析得出地址的网络里（测试里的 FakeIpDns 模仿的就是这种），它不能被查成别的地址、悄悄收进名单
+		assertThatThrownBy(() -> filter(properties -> properties.setDenyIps("10.0.0.300")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.deny-ips")
+			.hasMessageContaining("10.0.0.300");
+		assertThatThrownBy(() -> filter(properties -> properties.setAllowIps("203.0.113.0/24,999.1.1.1/8")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.allow-ips")
+			.hasMessageContaining("999.1.1.1/8");
+		assertThatThrownBy(() -> filter(properties -> properties.setRestrictedAllowIps("256.256.256.256")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.restricted-allow-ips");
+	}
+
+	@Test
 	void invalidRestrictedPathFailsFast() {
 		assertThatThrownBy(() -> filter(properties -> properties.setRestrictedPaths("/actuator,/a/*")))
 			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.restricted-paths");

@@ -74,9 +74,9 @@ public record ClientView(String clientIp, String scheme, String host, int port) 
 		return new ClientView(clientIp, scheme, host, port);
 	}
 
-	/** 把字面 IP 转成统一写法（去掉方括号和网卡后缀）；不是字面 IP 返回 null。 */
+	/** 把字面 IP 转成统一写法（去掉方括号和网卡后缀）；不是字面 IP 返回 null。只看写法，不查 DNS。 */
 	public static String canonicalIp(String text) {
-		byte[] bytes = IpCidr.toBytes(text == null ? null : text.trim());
+		byte[] bytes = IpRanges.bytes(text == null ? null : text.trim());
 		if (bytes == null) {
 			return null;
 		}

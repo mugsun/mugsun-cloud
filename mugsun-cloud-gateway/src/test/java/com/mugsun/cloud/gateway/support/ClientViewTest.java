@@ -66,6 +66,19 @@ class ClientViewTest {
 	}
 
 	@Test
+	void hopThatOnlyLooksLikeAnAddressFallsBackToPeer() {
+		// 10.0.0.300 不是地址。JDK 会把它当成主机名去查 DNS，在什么名字都解析得出地址的网络里（测试里的 FakeIpDns 模仿的就是这种）
+		// 查回一个不相干的地址。这里必须按「不是 IP」处理，退回直接连上来的地址
+		for (String hop : List.of("10.0.0.300", "999.1.1.1", "256.256.256.256")) {
+			ClientView view = ClientView.resolve("10.0.0.9", GATEWAY_URI,
+				headers("X-Forwarded-For", hop + ", 10.0.0.3"), PROXIES);
+			assertThat(view.clientIp()).as(hop).isEqualTo("10.0.0.9");
+			assertThat(ClientView.canonicalIp(hop)).as(hop).isNull();
+		}
+		assertThat(FakeIpDns.lookups()).doesNotContain("10.0.0.300", "999.1.1.1", "256.256.256.256");
+	}
+
+	@Test
 	void peerIsUsedWhenEveryHopIsTrustedOrHeaderMissing() {
 		assertThat(ClientView.resolve("10.0.0.9", GATEWAY_URI, headers("X-Forwarded-For", "10.0.0.3, 10.0.0.4"), PROXIES)
 			.clientIp()).isEqualTo("10.0.0.9");
