@@ -1,0 +1,28 @@
+# 微服务版在 mugsun-boot 默认配置（mugsun-boot-defaults.yml）之上的改动，各业务服务共用。
+# 只放「因为拆成了多个服务、前面多了网关」才需要的配置；业务配置一律沿用 boot 的，不在这里重写。
+
+server:
+  # 请求都经网关转发过来，直接连上来的地址是网关。让容器采信网关写的 X-Forwarded-*：
+  # getRemoteAddr() 得到真实的客户端地址（登录锁定、限流、各类日志都用它），isSecure() 跟客户端用的协议一致。
+  # 只采信从内网地址连上来的请求带的头（Tomcat 默认规则：10/8、172.16/12、192.168/16、127/8 等）。
+  # 网关和服务之间走的不是内网地址时，用 server.tomcat.remoteip.internal-proxies 写明网关地址（正则）。
+  # 服务端口不要对外暴露：绕过网关直接访问服务的人可以自己填这几个头。
+  forward-headers-strategy: native
+
+spring:
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
+        username: ${MUGSUN_NACOS_USERNAME:}
+        password: ${MUGSUN_NACOS_PASSWORD:}
+        namespace: ${MUGSUN_NACOS_NAMESPACE:}
+        group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
+        # 注册到注册中心的本机地址；留空自动取第一块非回环网卡，多网卡或开着 VPN 时建议写明
+        ip: ${MUGSUN_SERVICE_IP:}
+
+logging:
+  file:
+    # 日志文件按服务名分开（./logs/mugsun-system.log 等）。boot 的默认文件名是固定的 mugsun-boot，
+    # 几个服务在同一个目录下启动会写进同一个文件
+    name: ${spring.application.name}

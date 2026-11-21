@@ -1,0 +1,16 @@
+# system 服务的配置。分两段：
+# 第一段只负责导入——先是 mugsun-boot 的默认配置（从 boot 同步来，不要改），再是微服务版共用的改动；
+# 第二段是这个服务自己的配置。同一个配置项，后面的覆盖前面的：
+#   boot 默认 < config/application-local.yml < 微服务版共用 < 本文件第二段 < application-<profile>.yml < 环境变量和命令行参数
+# 必须分成两段：写在同一段里的话，被导入的文件会反过来覆盖这里的端口和服务名。
+spring:
+  config:
+    import:
+      - classpath:mugsun-boot-defaults.yml
+      - classpath:mugsun-cloud-defaults.yml
+---
+server:
+  port: 8101
+spring:
+  application:
+    name: mugsun-system
