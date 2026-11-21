@@ -52,7 +52,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void requestsOverTheLimitAreRejectedUntilTokensComeBack() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("3/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 
 		pass(filter, ALICE, "/ping", 3);
 		assertThat(rejected(filter, ALICE, "/ping")).isTrue();
@@ -65,7 +65,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void rejectionIs429AndTellsWhenToRetry() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("3/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 		pass(filter, ALICE, "/ping", 3);
 
 		assertThatThrownBy(() -> filter.filter(exchange(ALICE, "/ping"), current -> Mono.empty()).block())
@@ -84,7 +84,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void everyAddressIsCountedOnItsOwn() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("3/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 
 		pass(filter, ALICE, "/ping", 3);
 		assertThat(rejected(filter, ALICE, "/ping")).isTrue();
@@ -94,7 +94,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void ipv6IsCountedBySlash64() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("3/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 
 		assertThat(rejected(filter, "2001:db8:1:2::1", "/ping")).isFalse();
 		assertThat(rejected(filter, "2001:db8:1:2::2", "/ping")).isFalse();
@@ -116,7 +116,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void requestsWithoutAnAddressShareOneBucket() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("3/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 
 		pass(filter, null, "/ping", 3);
 		assertThat(rejected(filter, null, "/ping")).isTrue();
@@ -125,7 +125,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void forwardedHeaderFromAnUntrustedClientDoesNotGetAFreshBucket() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("3/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 
 		// 没配可信代理：客户端每次自称一个新地址，不算数
 		for (int i = 0; i < 3; i++) {
@@ -138,7 +138,7 @@ class RateLimitFilterTest {
 	void forwardedHeaderFromATrustedProxyTellsClientsApart() {
 		RateLimitFilter filter = filter(properties -> {
 			properties.setTrustedProxies("192.0.2.0/24");
-			properties.getRateLimit().setLimit("3/60s");
+			properties.setRateLimit("3/60s");
 		});
 
 		for (int i = 0; i < 3; i++) {
@@ -154,8 +154,8 @@ class RateLimitFilterTest {
 	@Test
 	void exemptAddressesAreNotLimited() {
 		RateLimitFilter filter = filter(properties -> {
-			properties.getRateLimit().setLimit("3/60s");
-			properties.getRateLimit().setExemptIps("198.51.100.0/24, 2001:db8:ffff::/48");
+			properties.setRateLimit("3/60s");
+			properties.setRateLimitExemptIps("198.51.100.0/24, 2001:db8:ffff::/48");
 		});
 
 		for (int i = 0; i < 50; i++) {
@@ -169,8 +169,8 @@ class RateLimitFilterTest {
 	@Test
 	void pathWithItsOwnLimitIsCountedSeparately() {
 		RateLimitFilter filter = filter(properties -> {
-			properties.getRateLimit().setLimit("3/60s");
-			properties.getRateLimit().setPathLimits("/system/auth=2/60s");
+			properties.setRateLimit("3/60s");
+			properties.setRateLimitPaths("/system/auth=2/60s");
 		});
 
 		pass(filter, ALICE, "/system/auth/login", 2);
@@ -183,7 +183,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void pathLimitsWorkWithoutADefaultLimit() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setPathLimits("/system/auth=2/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimitPaths("/system/auth=2/60s"));
 
 		pass(filter, ALICE, "/system/auth/login", 2);
 		assertThat(rejected(filter, ALICE, "/system/auth/login")).isTrue();
@@ -195,8 +195,8 @@ class RateLimitFilterTest {
 	@Test
 	void unlimitedPathIsNotCounted() {
 		RateLimitFilter filter = filter(properties -> {
-			properties.getRateLimit().setLimit("3/60s");
-			properties.getRateLimit().setPathLimits("/system/gis/tile=unlimited");
+			properties.setRateLimit("3/60s");
+			properties.setRateLimitPaths("/system/gis/tile=unlimited");
 		});
 
 		for (int i = 0; i < 50; i++) {
@@ -209,7 +209,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void pathAfterRouteRewritingIsCheckedToo() {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setPathLimits("/auth=1/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimitPaths("/auth=1/60s"));
 
 		for (int i = 0; i < 2; i++) {
 			MockServerWebExchange exchange = exchange(ALICE, "/sys/auth/login");
@@ -232,16 +232,16 @@ class RateLimitFilterTest {
 
 	@Test
 	void invalidSettingsFailFast() {
-		assertThatThrownBy(() -> filter(properties -> properties.getRateLimit().setLimit("600")))
-			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit.limit");
-		assertThatThrownBy(() -> filter(properties -> properties.getRateLimit().setPathLimits("/system/auth=30/60s,/v1")))
-			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit.path-limits");
-		assertThatThrownBy(() -> filter(properties -> properties.getRateLimit().setExemptIps("10.0.0.0/33")))
-			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit.exempt-ips")
+		assertThatThrownBy(() -> filter(properties -> properties.setRateLimit("600")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit");
+		assertThatThrownBy(() -> filter(properties -> properties.setRateLimitPaths("/system/auth=30/60s,/v1")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit-paths");
+		assertThatThrownBy(() -> filter(properties -> properties.setRateLimitExemptIps("10.0.0.0/33")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit-exempt-ips")
 			.hasMessageContaining("10.0.0.0/33");
 		// 像地址、其实不是地址的写法：不能被查成别的地址、悄悄收进名单
-		assertThatThrownBy(() -> filter(properties -> properties.getRateLimit().setExemptIps("198.51.100.0/24, 10.0.0.300")))
-			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit.exempt-ips")
+		assertThatThrownBy(() -> filter(properties -> properties.setRateLimitExemptIps("198.51.100.0/24, 10.0.0.300")))
+			.isInstanceOf(IllegalArgumentException.class).hasMessageContaining("mugsun.gateway.rate-limit-exempt-ips")
 			.hasMessageContaining("10.0.0.300");
 	}
 
@@ -249,9 +249,9 @@ class RateLimitFilterTest {
 	void startupLineSaysWhatIsLimited(CapturedOutput output) {
 		filter(properties -> {
 			properties.setTrustedProxies("10.0.0.0/8");
-			properties.getRateLimit().setLimit("600/1m");
-			properties.getRateLimit().setPathLimits("/system/auth=30/60s,/v1=60/60s");
-			properties.getRateLimit().setExemptIps("198.51.100.0/24");
+			properties.setRateLimit("600/1m");
+			properties.setRateLimitPaths("/system/auth=30/60s,/v1=60/60s");
+			properties.setRateLimitExemptIps("198.51.100.0/24");
 		});
 
 		assertThat(lines(output, "限流已启用")).singleElement().asString()
@@ -261,7 +261,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void startupLineWarnsWhenNoTrustedProxyIsConfigured(CapturedOutput output) {
-		filter(properties -> properties.getRateLimit().setPathLimits("/system/auth=30/60s"));
+		filter(properties -> properties.setRateLimitPaths("/system/auth=30/60s"));
 
 		assertThat(lines(output, "限流已启用")).singleElement().asString()
 			.contains("默认限额 没有，单独定了限额的路径前缀 1 个")
@@ -273,7 +273,7 @@ class RateLimitFilterTest {
 		// 变量里只剩下分隔符（比如拼变量时两边都是空的）：一条可信代理也没有，提醒照样要给
 		filter(properties -> {
 			properties.setTrustedProxies(" , ;");
-			properties.getRateLimit().setLimit("600/1m");
+			properties.setRateLimit("600/1m");
 		});
 
 		assertThat(lines(output, "限流已启用")).singleElement().asString().contains("没有配可信代理（");
@@ -281,7 +281,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void nothingIsLoggedAtStartupWhenOff(CapturedOutput output) {
-		filter(properties -> properties.getRateLimit().setExemptIps("198.51.100.0/24"));
+		filter(properties -> properties.setRateLimitExemptIps("198.51.100.0/24"));
 
 		assertThat(lines(output, "限流")).isEmpty();
 	}
@@ -290,7 +290,7 @@ class RateLimitFilterTest {
 	void firstRejectionIsLoggedWithRuleClientAndTraceId(CapturedOutput output) {
 		RateLimitFilter filter = filter(properties -> {
 			properties.setTrustedProxies("10.0.0.0/8");
-			properties.getRateLimit().setPathLimits("/system/auth=2/60s");
+			properties.setRateLimitPaths("/system/auth=2/60s");
 		});
 		pass(filter, ALICE, "/system/auth/login", 2);
 
@@ -307,7 +307,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void rejectionLogHintsAtMissingTrustedProxies(CapturedOutput output) {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("1/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("1/60s"));
 
 		// 没配可信代理，请求却带着 X-Forwarded-For：多半是前面有代理，所有人都被算成了代理这一个地址
 		assertThat(rejected(filter, exchange("10.0.0.9", "/ping", "198.51.100.7"))).isFalse();
@@ -321,7 +321,7 @@ class RateLimitFilterTest {
 
 	@Test
 	void requestWithoutAnAddressIsNamedInTheLog(CapturedOutput output) {
-		RateLimitFilter filter = filter(properties -> properties.getRateLimit().setLimit("1/60s"));
+		RateLimitFilter filter = filter(properties -> properties.setRateLimit("1/60s"));
 
 		pass(filter, null, "/ping", 1);
 		assertThat(rejected(filter, null, "/ping")).isTrue();

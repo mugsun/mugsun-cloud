@@ -30,9 +30,9 @@ import static org.awaitility.Awaitility.await;
 	"spring.cloud.nacos.discovery.enabled=false",
 	"spring.cloud.service-registry.auto-registration.enabled=false",
 	"mugsun.gateway.trusted-proxies=127.0.0.1/32",
-	"mugsun.gateway.rate-limit.limit=5/10m",
-	"mugsun.gateway.rate-limit.path-limits=/system/auth=2/10m,/system/gis/tile=unlimited,/ws=1/10m",
-	"mugsun.gateway.rate-limit.exempt-ips=198.51.100.0/24"})
+	"mugsun.gateway.rate-limit=5/10m",
+	"mugsun.gateway.rate-limit-paths=/system/auth=2/10m,/system/gis/tile=unlimited,/ws=1/10m",
+	"mugsun.gateway.rate-limit-exempt-ips=198.51.100.0/24"})
 @ExtendWith(OutputCaptureExtension.class)
 class GatewayRateLimitTest extends GatewayTestBase {
 

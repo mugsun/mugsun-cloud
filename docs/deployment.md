@@ -467,7 +467,7 @@ grep ' ACCESS ' 网关的日志文件 | sed -E 's/^([0-9T:-]{16}).* ip=([^ ]*).*
 
 - Data ID 是 `mugsun-gateway-routes.yaml`。
 - 分组和命名空间跟服务注册用的一样，也就是 `MUGSUN_NACOS_GROUP`（默认 `DEFAULT_GROUP`）和 `MUGSUN_NACOS_NAMESPACE`。
-- 要换 Data ID 或分组，改网关的 `mugsun.gateway.dynamic-routes.data-id` 和 `mugsun.gateway.dynamic-routes.group`。
+- 要换 Data ID 或分组，改网关的 `mugsun.gateway.dynamic-routes-data-id` 和 `mugsun.gateway.dynamic-routes-group`。
 
 内容的写法和 `application.yml` 里的路由一样，最外层只有 `routes` 一项。比如新加了一个报表服务 `mugsun-report`，把 `/report/` 开头的请求转给它，转发前去掉开头的 `/report`：
 

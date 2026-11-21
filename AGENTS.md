@@ -55,6 +55,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
 - 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。
 - 读 Nacos 里的路由配置只由 `NacosRouteSource` 做，改动靠监听送来。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由清掉。
+- 网关自己的配置项都在 `GatewayGuardProperties`（前缀 `mugsun.gateway`），只有一层，不要分组（不要加嵌套的对象）。给配置项给值的环境变量，名字就是配置项的名字换成大写加下划线：`mugsun.gateway.rate-limit-paths` 对应 `MUGSUN_GATEWAY_RATE_LIMIT_PATHS`。Spring Boot 会按名字把环境变量对到配置项上；分了组以后，和组同名的变量会被拿去给整组赋值，变量在、值是空的时候网关启动不了。变量留空等于没配，按默认值：不是文字的配置项，setter 的参数用 `Long`、`Boolean`，不用 `long`、`boolean`。
+- 配置项从环境变量来的情况，要用真正的环境变量测（测试里的 `FakeEnvironment`）。写在 `@SpringBootTest(properties = …)` 里的值不算环境变量，上面那种问题测不出来。`GatewayBlankSettingsTest` 把所有开关留空启动网关，`GatewayEnvironmentSettingsTest` 给所有开关配上值；加了开关，在后一个里补上它的值和效果。
 - 网关不解析登录令牌，登录校验和权限判断在服务里做。
 - 需要 mugsun-boot 里的类时，在 `sync-rules.json` 的 `extras` 里单独拷贝，不要让网关依赖公共层。
 

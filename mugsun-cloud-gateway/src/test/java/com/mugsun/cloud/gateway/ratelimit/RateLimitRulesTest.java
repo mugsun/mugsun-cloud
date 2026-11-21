@@ -15,8 +15,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class RateLimitRulesTest {
 
-	private static final String LIMIT = "mugsun.gateway.rate-limit.limit";
-	private static final String PATHS = "mugsun.gateway.rate-limit.path-limits";
+	private static final String LIMIT = "mugsun.gateway.rate-limit";
+	private static final String PATHS = "mugsun.gateway.rate-limit-paths";
 
 	@Test
 	void nothingConfiguredMeansNoRules() {

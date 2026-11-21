@@ -50,7 +50,7 @@ public class NacosRouteSource implements SmartLifecycle {
 
 	public NacosRouteSource(String dataId, String group, Connector connector, DynamicRouteLoader loader) {
 		if (dataId == null || dataId.isBlank()) {
-			throw new IllegalArgumentException("mugsun.gateway.dynamic-routes.data-id 不能为空");
+			throw new IllegalArgumentException("mugsun.gateway.dynamic-routes-data-id 不能为空");
 		}
 		if (group == null || group.isBlank()) {
 			throw new IllegalArgumentException("动态路由所在的 Nacos 分组不能为空");

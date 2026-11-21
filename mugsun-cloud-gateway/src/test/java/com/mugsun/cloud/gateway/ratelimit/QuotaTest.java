@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class QuotaTest {
 
-	private static final String PROPERTY = "mugsun.gateway.rate-limit.limit";
+	private static final String PROPERTY = "mugsun.gateway.rate-limit";
 
 	@Test
 	void readsCountAndDuration() {

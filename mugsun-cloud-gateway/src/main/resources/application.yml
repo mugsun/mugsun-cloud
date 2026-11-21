@@ -85,6 +85,9 @@ management:
 
 mugsun:
   gateway:
+    # 这一层的配置项不要分组（不要再往下嵌套），MUGSUN_GATEWAY_ 开头的环境变量名就是配置项名换成大写加下划线。
+    # 分了组以后，和组同名的环境变量留空时网关启动不了，原因写在 GatewayGuardProperties 的说明里。
+    # 变量留空等于没配，按默认值。
     # 网关前面的可信代理（Nginx、负载均衡）的地址段，逗号分隔，如 172.30.88.10/32。
     # 只有请求直接来自这些地址时，才采信它带来的 X-Forwarded-For / -Proto / -Host / -Port；留空表示网关直接面向客户端。
     # 变量名沿用单体版：原来配给后端的值，现在配给网关。
@@ -104,25 +107,22 @@ mugsun:
     # 限流：按客户端地址数请求，超过限额的不转发，返回 429。下面三项都留空（默认）就不限流，写错了网关拒绝启动。
     # 计数在每个网关实例自己的内存里：起了 N 个网关时，一个地址实际能过的请求最多是限额的 N 倍。
     # 网关前面有反向代理时要先配好上面的 trusted-proxies，否则所有请求都算在代理的地址上。详见 docs/deployment.md「限流」
-    rate-limit:
-      # 默认限额，写成 次数/时长，时长是数字加 s、m、h，如 600/60s。没有单独定限额的路径都用它；留空表示这些路径不限流
-      limit: ${MUGSUN_GATEWAY_RATE_LIMIT:}
-      # 给个别路径单独定限额，逗号分隔，每条写成 路径前缀=次数/时长，右边写 unlimited 表示这个前缀下不限流，
-      # 如 /auth/login=30/60s,/track=unlimited。一个请求只算一条：前缀最长的那条，都不沾的用默认限额
-      path-limits: ${MUGSUN_GATEWAY_RATE_LIMIT_PATHS:}
-      # 不限流的客户端地址段，逗号分隔的 CIDR，如办公网的出口、监控系统
-      exempt-ips: ${MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS:}
+    # 默认限额，写成 次数/时长，时长是数字加 s、m、h，如 600/60s。没有单独定限额的路径都用它；留空表示这些路径不限流
+    rate-limit: ${MUGSUN_GATEWAY_RATE_LIMIT:}
+    # 给个别路径单独定限额，逗号分隔，每条写成 路径前缀=次数/时长，右边写 unlimited 表示这个前缀下不限流，
+    # 如 /auth/login=30/60s,/track=unlimited。一个请求只算一条：前缀最长的那条，都不沾的用默认限额
+    rate-limit-paths: ${MUGSUN_GATEWAY_RATE_LIMIT_PATHS:}
+    # 不限流的客户端地址段，逗号分隔的 CIDR，如办公网的出口、监控系统
+    rate-limit-exempt-ips: ${MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS:}
     # 访问日志：每个请求结束时记一行（日志名 ACCESS），写明客户端地址、路径（不带查询串）、状态码、耗时、
     # 转给了哪个服务的哪个实例、请求编号。各字段的含义见 docs/deployment.md「网关的访问日志」
-    access-log:
-      # all 每个请求都记；problems 只记有问题的（5xx、转发出错、慢请求，这些按警告级别记）；none 不记
-      mode: ${MUGSUN_GATEWAY_ACCESS_LOG:all}
-      # 从收到请求到开始回应超过这么多毫秒算慢请求；0 表示不按耗时区分
-      slow-millis: ${MUGSUN_GATEWAY_SLOW_MILLIS:3000}
+    # all 每个请求都记；problems 只记有问题的（5xx、转发出错、慢请求，这些按警告级别记）；none 不记
+    access-log: ${MUGSUN_GATEWAY_ACCESS_LOG:all}
+    # 从收到请求到开始回应超过这么多毫秒算慢请求；0 表示不按耗时区分
+    slow-millis: ${MUGSUN_GATEWAY_SLOW_MILLIS:3000}
     # 动态路由：从 Nacos 的一份配置里读路由，改了马上生效，不用重启网关。默认不启用（写 true 启用）。
     # 能写什么、不能写什么、写错了会怎样，见 docs/deployment.md「改路由不用重启网关」
-    dynamic-routes:
-      enabled: ${MUGSUN_GATEWAY_DYNAMIC_ROUTES:false}
-      # 放路由的那份配置的 Data ID 和分组；分组留空表示和服务注册用同一个（MUGSUN_NACOS_GROUP）
-      data-id: mugsun-gateway-routes.yaml
-      group:
+    dynamic-routes: ${MUGSUN_GATEWAY_DYNAMIC_ROUTES:false}
+    # 放路由的那份配置的 Data ID 和分组；分组留空表示和服务注册用同一个（MUGSUN_NACOS_GROUP）
+    dynamic-routes-data-id: mugsun-gateway-routes.yaml
+    dynamic-routes-group:

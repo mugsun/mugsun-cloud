@@ -22,11 +22,11 @@ import org.springframework.validation.Validator;
 import java.util.List;
 
 /**
- * 动态路由的总开关：{@code mugsun.gateway.dynamic-routes.enabled} 不是 true 时，下面三个对象一个都不创建，
+ * 动态路由的总开关：{@code mugsun.gateway.dynamic-routes} 不是 true 时，下面三个对象一个都不创建，
  * 网关的路由只有 application.yml 里写的那些。
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnBooleanProperty(prefix = "mugsun.gateway.dynamic-routes", name = "enabled")
+@ConditionalOnBooleanProperty("mugsun.gateway.dynamic-routes")
 public class DynamicRouteConfiguration {
 
 	@Bean
@@ -51,9 +51,8 @@ public class DynamicRouteConfiguration {
 	@ConditionalOnNacosDiscoveryEnabled
 	NacosRouteSource nacosRouteSource(GatewayGuardProperties properties, NacosDiscoveryProperties nacos,
 			DynamicRouteLoader loader) {
-		GatewayGuardProperties.DynamicRoutes settings = properties.getDynamicRoutes();
-		String group = settings.getGroup().isBlank() ? nacos.getGroup() : settings.getGroup();
-		return new NacosRouteSource(settings.getDataId(), group,
+		String group = properties.getDynamicRoutesGroup();
+		return new NacosRouteSource(properties.getDynamicRoutesDataId(), group.isBlank() ? nacos.getGroup() : group,
 			() -> NacosFactory.createConfigService(nacos.getNacosProperties()), loader);
 	}
 }

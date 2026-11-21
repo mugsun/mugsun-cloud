@@ -35,9 +35,9 @@ import java.util.function.LongSupplier;
  * 限流：按客户端地址数请求，超过限额的不转发，返回 429，响应头 {@code Retry-After} 写明过几秒再试。
  *
  * <ul>
- *   <li>默认限额（{@code mugsun.gateway.rate-limit.limit}）：没有单独定限额的路径都用它</li>
- *   <li>单独定的限额（{@code mugsun.gateway.rate-limit.path-limits}）：给个别路径前缀定得更严、更松或者不限流</li>
- *   <li>不限流的地址（{@code mugsun.gateway.rate-limit.exempt-ips}）</li>
+ *   <li>默认限额（{@code mugsun.gateway.rate-limit}）：没有单独定限额的路径都用它</li>
+ *   <li>单独定的限额（{@code mugsun.gateway.rate-limit-paths}）：给个别路径前缀定得更严、更松或者不限流</li>
+ *   <li>不限流的地址（{@code mugsun.gateway.rate-limit-exempt-ips}）</li>
  * </ul>
  *
  * <p>三项默认都是空的，不配就不限流；写错了拒绝启动。一个请求只算在一条规则上，见 {@link RateLimitRules}；
@@ -83,11 +83,10 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
 	 */
 	RateLimitFilter(GatewayGuardProperties properties, ClientViewResolver clientViewResolver, LongSupplier nanoClock,
 			Scheduler reportScheduler) {
-		GatewayGuardProperties.RateLimit settings = properties.getRateLimit();
 		this.clientViewResolver = clientViewResolver;
-		this.rules = RateLimitRules.parse(settings.getLimit(), "mugsun.gateway.rate-limit.limit",
-			settings.getPathLimits(), "mugsun.gateway.rate-limit.path-limits");
-		this.exempt = IpRanges.parse(settings.getExemptIps(), "mugsun.gateway.rate-limit.exempt-ips");
+		this.rules = RateLimitRules.parse(properties.getRateLimit(), "mugsun.gateway.rate-limit",
+			properties.getRateLimitPaths(), "mugsun.gateway.rate-limit-paths");
+		this.exempt = IpRanges.parse(properties.getRateLimitExemptIps(), "mugsun.gateway.rate-limit-exempt-ips");
 		this.limiter = rules.isEmpty() ? null : new RateLimiter(nanoClock);
 		this.report = new RejectionReport(reportScheduler);
 		this.noTrustedProxies = !clientViewResolver.hasTrustedProxies();

@@ -2,7 +2,7 @@ package com.mugsun.cloud.gateway.filter;
 
 import com.mugsun.cloud.gateway.error.GatewayErrorHandler;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLog.Mode;
+import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLogMode;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
 import com.mugsun.cloud.gateway.support.TraceIds;
 import org.slf4j.Logger;
@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>5xx、转发出错、慢请求按警告级别记，其余按信息级别记。慢不慢看 {@code ttfb}，不看 {@code ms}：
  * 下载大文件、流式输出、WebSocket 连接本来就会持续很久。
  *
- * <p>记哪些请求由 {@code mugsun.gateway.access-log.mode} 定：{@code all} 每个都记，{@code problems} 只记按警告级别记的那些，
+ * <p>记哪些请求由 {@code mugsun.gateway.access-log} 定：{@code all} 每个都记，{@code problems} 只记按警告级别记的那些，
  * {@code none} 不记。网关自己的健康检查每隔几秒就来一次，成功的不记，只记失败的。
  */
 @Component
@@ -72,15 +72,15 @@ public class AccessLogFilter implements WebFilter, Ordered {
 	}
 
 	private final ClientViewResolver clientViewResolver;
-	private final Mode mode;
+	private final AccessLogMode mode;
 	private final long slowMillis;
 	private final String managementPath;
 
 	public AccessLogFilter(ClientViewResolver clientViewResolver, GatewayGuardProperties properties,
 			@Value("${management.endpoints.web.base-path:/actuator}") String managementPath) {
 		this.clientViewResolver = clientViewResolver;
-		this.mode = properties.getAccessLog().getMode();
-		this.slowMillis = properties.getAccessLog().getSlowMillis();
+		this.mode = properties.getAccessLog();
+		this.slowMillis = properties.getSlowMillis();
 		String trimmed = managementPath == null ? "" : managementPath.trim();
 		while (trimmed.endsWith("/")) {
 			trimmed = trimmed.substring(0, trimmed.length() - 1);
@@ -90,7 +90,7 @@ public class AccessLogFilter implements WebFilter, Ordered {
 
 	@Override
 	public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-		if (mode == Mode.NONE || !ACCESS.isWarnEnabled()) {
+		if (mode == AccessLogMode.NONE || !ACCESS.isWarnEnabled()) {
 			return chain.filter(exchange);
 		}
 		long startedAt = System.nanoTime();
@@ -130,7 +130,7 @@ public class AccessLogFilter implements WebFilter, Ordered {
 			long waited = responded >= 0 ? responded : total;
 			String ttfb = responded < 0 && end == End.CLOSED ? "-" : Long.toString(waited);
 			boolean warn = warns(status, end, waited, slowMillis);
-			if (!warn && (mode == Mode.PROBLEMS || !ACCESS.isInfoEnabled())) {
+			if (!warn && (mode == AccessLogMode.PROBLEMS || !ACCESS.isInfoEnabled())) {
 				return;
 			}
 			String line = line(clientViewResolver.resolve(request).clientIp(), request.getMethod().name(), path, status,

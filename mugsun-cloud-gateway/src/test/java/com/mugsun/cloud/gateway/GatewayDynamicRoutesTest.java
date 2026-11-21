@@ -49,7 +49,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 	"spring.cloud.nacos.discovery.enabled=false",
 	"spring.cloud.service-registry.auto-registration.enabled=false",
-	"mugsun.gateway.dynamic-routes.enabled=true",
+	"mugsun.gateway.dynamic-routes=true",
 	"mugsun.gateway.trusted-proxies=127.0.0.1/32",
 	"mugsun.gateway.restricted-paths=/actuator",
 	"mugsun.gateway.restricted-allow-ips=198.51.100.0/24"})

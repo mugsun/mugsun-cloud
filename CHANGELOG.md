@@ -101,5 +101,7 @@
 - 网关的可信代理有一条写错时拒绝启动，此前是记一条警告后忽略那一条
   - 忽略以后代理不被采信，所有请求的客户端地址都成了代理的地址
 - 网关的开关变量留空时按默认值，和没有这个变量一样
-  - 此前 `MUGSUN_GATEWAY_SLOW_MILLIS`、`MUGSUN_GATEWAY_DYNAMIC_ROUTES` 留空时启动不了
+  - 此前 `MUGSUN_GATEWAY_ACCESS_LOG`、`MUGSUN_GATEWAY_SLOW_MILLIS` 留空时启动不了
+  - `MUGSUN_GATEWAY_DYNAMIC_ROUTES` 留空时也启动不了
   - 编排文件把没配的变量传成空值是常见写法；写错的值仍然拒绝启动
+  - 网关的配置项改成只有一层：变量名就是配置项名换成大写加下划线

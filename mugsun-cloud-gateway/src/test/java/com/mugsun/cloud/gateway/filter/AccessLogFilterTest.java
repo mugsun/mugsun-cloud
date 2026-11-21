@@ -3,7 +3,7 @@ package com.mugsun.cloud.gateway.filter;
 import com.mugsun.cloud.gateway.error.GatewayRejectedException;
 import com.mugsun.cloud.gateway.filter.AccessLogFilter.End;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLog.Mode;
+import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLogMode;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -100,7 +100,7 @@ class AccessLogFilterTest {
 
 	@Test
 	void modeAllWritesEveryRequest(CapturedOutput output) {
-		run(Mode.ALL, "/mode-all?token=secret-value", answering(HttpStatus.OK));
+		run(AccessLogMode.ALL, "/mode-all?token=secret-value", answering(HttpStatus.OK));
 
 		assertThat(lineFor(output, "/mode-all")).contains(" status=200 ").contains(" end=ok ");
 		assertThat(output.getAll()).doesNotContain("secret-value");
@@ -108,8 +108,8 @@ class AccessLogFilterTest {
 
 	@Test
 	void modeProblemsWritesOnlyWhatWouldBeAWarning(CapturedOutput output) {
-		run(Mode.PROBLEMS, "/mode-problems-fine", answering(HttpStatus.OK));
-		run(Mode.PROBLEMS, "/mode-problems-broken", answering(HttpStatus.INTERNAL_SERVER_ERROR));
+		run(AccessLogMode.PROBLEMS, "/mode-problems-fine", answering(HttpStatus.OK));
+		run(AccessLogMode.PROBLEMS, "/mode-problems-broken", answering(HttpStatus.INTERNAL_SERVER_ERROR));
 
 		assertThat(lineFor(output, "/mode-problems-fine")).isNull();
 		assertThat(lineFor(output, "/mode-problems-broken")).contains(" status=500 ");
@@ -117,34 +117,34 @@ class AccessLogFilterTest {
 
 	@Test
 	void modeNoneWritesNothing(CapturedOutput output) {
-		run(Mode.NONE, "/mode-none", answering(HttpStatus.INTERNAL_SERVER_ERROR));
+		run(AccessLogMode.NONE, "/mode-none", answering(HttpStatus.INTERNAL_SERVER_ERROR));
 
 		assertThat(lineFor(output, "/mode-none")).isNull();
 	}
 
 	@Test
 	void gatewayHealthChecksAreWrittenOnlyWhenTheyFail(CapturedOutput output) {
-		run(Mode.ALL, "/_gateway/health", answering(HttpStatus.OK));
+		run(AccessLogMode.ALL, "/_gateway/health", answering(HttpStatus.OK));
 		assertThat(lineFor(output, "/_gateway/health")).isNull();
 
-		run(Mode.ALL, "/_gateway/health", answering(HttpStatus.SERVICE_UNAVAILABLE));
+		run(AccessLogMode.ALL, "/_gateway/health", answering(HttpStatus.SERVICE_UNAVAILABLE));
 		assertThat(lineFor(output, "/_gateway/health")).contains(" status=503 ");
 
 		// 只是开头像，不是网关自己的地址
-		run(Mode.ALL, "/_gatewayx", answering(HttpStatus.OK));
+		run(AccessLogMode.ALL, "/_gatewayx", answering(HttpStatus.OK));
 		assertThat(lineFor(output, "/_gatewayx")).contains(" status=200 ");
 	}
 
 	@Test
 	void failedForwardIsWrittenWithTheStatusTheErrorHandlerWillReturn(CapturedOutput output) {
-		run(Mode.ALL, "/forward-failed", exchange -> Mono.error(new ConnectException("refused")));
+		run(AccessLogMode.ALL, "/forward-failed", exchange -> Mono.error(new ConnectException("refused")));
 
 		assertThat(lineFor(output, "/forward-failed")).contains(" status=502 ").contains(" end=error ");
 	}
 
 	@Test
 	void requestRejectedByGatewayEndsNormally(CapturedOutput output) {
-		run(Mode.ALL, "/rejected",
+		run(AccessLogMode.ALL, "/rejected",
 			exchange -> Mono.error(new GatewayRejectedException(HttpStatus.FORBIDDEN, "不允许访问")));
 
 		assertThat(lineFor(output, "/rejected")).contains(" status=403 ").contains(" end=ok ");
@@ -153,7 +153,7 @@ class AccessLogFilterTest {
 	@Test
 	void clientLeavingBeforeAnyResponseIsWrittenAs499(CapturedOutput output) {
 		MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/left-early"));
-		filter(Mode.ALL).filter(exchange, current -> Mono.never()).subscribe().dispose();
+		filter(AccessLogMode.ALL).filter(exchange, current -> Mono.never()).subscribe().dispose();
 
 		assertThat(lineFor(output, "/left-early")).contains(" status=499 ").contains(" ttfb=- ")
 			.contains(" end=closed ");
@@ -166,14 +166,14 @@ class AccessLogFilterTest {
 		};
 	}
 
-	private static void run(Mode mode, String pathAndQuery, WebFilterChain chain) {
+	private static void run(AccessLogMode mode, String pathAndQuery, WebFilterChain chain) {
 		MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get(pathAndQuery));
 		filter(mode).filter(exchange, chain).onErrorResume(error -> Mono.empty()).block();
 	}
 
-	private static AccessLogFilter filter(Mode mode) {
+	private static AccessLogFilter filter(AccessLogMode mode) {
 		GatewayGuardProperties properties = new GatewayGuardProperties();
-		properties.getAccessLog().setMode(mode);
+		properties.setAccessLog(mode);
 		ServerProperties server = new ServerProperties();
 		server.setForwardHeadersStrategy(ServerProperties.ForwardHeadersStrategy.NONE);
 		return new AccessLogFilter(new ClientViewResolver(properties, server), properties, "/_gateway");
