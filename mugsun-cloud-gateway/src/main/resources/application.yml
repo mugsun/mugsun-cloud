@@ -60,6 +60,11 @@ spring:
               uri: lb://mugsun-gis
               predicates:
                 - Path=/system/gis/**
+            # /track/** 是埋点 SDK 上报用的公开接口，/system/track/** 是管理后台的接口
+            - id: mugsun-track
+              uri: lb://mugsun-track
+              predicates:
+                - Path=/track/**,/system/track/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

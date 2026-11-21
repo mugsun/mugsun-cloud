@@ -26,6 +26,8 @@ class GatewayRoutesTest {
 
 	private static final DisposableServer GIS = backend("mugsun-gis");
 
+	private static final DisposableServer TRACK = backend("mugsun-track");
+
 	@LocalServerPort
 	int gatewayPort;
 
@@ -34,6 +36,7 @@ class GatewayRoutesTest {
 		String prefix = "spring.cloud.discovery.client.simple.instances.";
 		registry.add(prefix + "mugsun-system[0].uri", () -> "http://127.0.0.1:" + SYSTEM.port());
 		registry.add(prefix + "mugsun-gis[0].uri", () -> "http://127.0.0.1:" + GIS.port());
+		registry.add(prefix + "mugsun-track[0].uri", () -> "http://127.0.0.1:" + TRACK.port());
 	}
 
 	@ParameterizedTest
@@ -44,6 +47,14 @@ class GatewayRoutesTest {
 		"/system/gis/layer/page?pageNum=1&pageSize=10, mugsun-gis",
 		"/system/gis/tile/xyz/3/1/2.png, mugsun-gis",
 		"/system/gisx/layer, mugsun-system",
+		"/track, mugsun-track",
+		"/track/collect, mugsun-track",
+		"/track/config?appKey=demo, mugsun-track",
+		"/system/track, mugsun-track",
+		"/system/track/apps, mugsun-track",
+		"/system/track/error-issues/page?pageNum=1&pageSize=10, mugsun-track",
+		"/system/trackx/apps, mugsun-system",
+		"/tracking/collect, mugsun-system",
 		"/system/user/page, mugsun-system",
 		"/gis/layer, mugsun-system",
 		"/auth/login, mugsun-system",
