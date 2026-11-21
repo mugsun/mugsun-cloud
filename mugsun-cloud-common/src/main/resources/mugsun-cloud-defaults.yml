@@ -25,6 +25,16 @@ spring:
         # 注册到注册中心的本机地址；留空自动取第一块非回环网卡，多网卡或开着 VPN 时建议写明
         ip: ${MUGSUN_SERVICE_IP:}
 
+mugsun:
+  cloud:
+    sync:
+      # 数据权限规则、接口权限规则和角色授权、租户独立数据源，这三样每个服务进程都在内存里留了一份，
+      # 而修改它们的管理接口只在 system 服务里。其它服务定时从库里重新加载：
+      # 在 system 里改完，最长过一个间隔在其它服务里生效。system 在自己的 application.yml 里关掉。
+      enabled: true
+      # 间隔（毫秒）
+      interval-ms: 30000
+
 logging:
   file:
     # 日志文件按服务名分开（./logs/mugsun-system.log 等）。boot 的默认文件名是固定的 mugsun-boot，

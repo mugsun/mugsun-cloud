@@ -17,3 +17,8 @@ spring:
   flyway:
     # 主库的表结构由这个服务迁移；微服务版共用的配置里默认是关的
     enabled: true
+mugsun:
+  cloud:
+    sync:
+      # 权限规则和租户数据源都在这个服务里修改，保存时就地生效，不用定时从库里重新加载（说明见 mugsun-cloud-defaults.yml）
+      enabled: false
