@@ -58,7 +58,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - `/inner` 开头的路径留给服务之间调用的内部接口，网关不对外转发。对外的接口不要用这个前缀。写法见下面的「服务之间的调用」。
 - 服务之间要传消息时，先看能不能走共用的主库和 Redis，不行再加内部接口。track 发告警站内信就是写主库的消息表，实时推送发到 Redis，由 system 投递给在线用户。所以 `mugsun.websocket.sender-type` 固定为 `redis`。删租户时清它的 AI 密钥也是 system 直接删主库里的表（`CloudAiSecretPurger`），不调 ai 服务。
 - 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。埋点库是另一个库，由 track 自己迁移。
-- 有些状态以库里的为准，各进程又在内存里各存一份，只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源。每个服务的每个实例（包括 system）都跑公共层的 `SharedStateSyncTask`：保存的那个实例由 `SharedStateChangeAspect` 把 Redis 里的版本换成新值，各实例每秒读一次，变了就从库里重新加载，另有每 30 秒一次的加载兜底。新增这类状态时两处都要补：在 `SharedStateSyncTask` 里加上重新加载，在 `SharedStateChangeAspect` 的切点里加上保存时调用的那个方法。
+- 有些状态以库里的为准，各进程又在内存里各存一份，只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源，还有缓存的租户和套餐。每个服务的每个实例（包括 system）都跑公共层的 `SharedStateSyncTask`：保存的那个实例由 `SharedStateChangeAspect` 把 Redis 里的版本换成新值，各实例每秒读一次，变了就从库里重新加载，另有每 30 秒一次的加载兜底。租户和套餐不是重新加载，是把缓存清掉，由 `TenantCacheSync` 记着本实例缓存过哪些；mugsun-boot 给 `TenantValidator` 加了公开方法时 `TenantCacheSyncTest` 会失败，提醒看新方法会不会往缓存里放东西。新增这类状态时两处都要补：在 `SharedStateSyncTask` 里加上重新加载，在 `SharedStateChangeAspect` 的切点里加上保存时调用的那个方法。
 - system 可以部署多个实例，写 system 的代码时按多实例考虑：状态放库里或 Redis 里，只放在内存里的要有办法让别的实例跟上。启动时「先查有没有，没有就改表或插入」的代码，要在公共层的 `StartupLock` 持锁期间执行：写成 `CommandLineRunner`、`ApplicationRunner`，或者监听 `ApplicationReadyEvent`，不要写在 `@PostConstruct` 里，那时还没有占到锁。
 - 可选模块的服务可以不部署。system 用 `CloudGisModuleStatus`、`CloudTrackModuleStatus`、`CloudAiModuleStatus` 这样的类查注册中心，决定菜单显不显示；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`、`TrackModuleRequired`、`AiModuleRequired`。
 - mugsun-boot 的可选模块里有些类要和 system 的代码在同一个进程里才起作用，拆成服务后要在 system 里补上对应的东西。现有两处：
