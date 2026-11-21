@@ -75,5 +75,16 @@
     { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" },
     { "module": "mugsun-boot-track", "target": "mugsun-cloud-service/mugsun-cloud-track" },
     { "module": "mugsun-boot-ai", "target": "mugsun-cloud-service/mugsun-cloud-ai" }
+  ],
+  "files": [
+    {
+      "to": "deploy/docker/boot",
+      "paths": [
+        "scripts/gen-keys.sh",
+        "scripts/init-db.sql",
+        "docker/postgres/00-init-db.sh",
+        "docker/full/init-pw-check.py"
+      ]
+    }
   ]
 }
