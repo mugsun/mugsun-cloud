@@ -1,0 +1,57 @@
+{
+  "source": "https://github.com/mugsun/mugsun-boot",
+  "core": {
+    "module": "mugsun-boot-core",
+    "common": "mugsun-cloud-common",
+    "system": "mugsun-cloud-service/mugsun-cloud-system",
+    "skip": [
+      "MugsunApplication"
+    ],
+    "commonPackages": [
+      "common",
+      "tenant",
+      "datascope",
+      "security",
+      "config",
+      "cache",
+      "datasource"
+    ],
+    "commonClasses": [
+      "auth.MugsunStpInterface",
+      "auth.IpRegionService",
+      "auth.IpRegionProperties",
+      "log.OperationLog",
+      "log.OperationLogAspect",
+      "log.AutoAuditAspect",
+      "log.OperLogProperties",
+      "log.AuditField",
+      "monitor.TraceIdFilter",
+      "monitor.ActuatorAuthFilter",
+      "monitor.ApiLogFilter",
+      "monitor.AccessLogFilter",
+      "monitor.AccessLogRetentionEnvironmentPostProcessor",
+      "demo.ConditionalOnNotDemo",
+      "demo.DemoConstants",
+      "demo.DemoReadOnlyFilter",
+      "demo.DemoLimitFilter",
+      "demo.DemoSqlPermissionResolver",
+      "demo.DemoCapacityGate",
+      "demo.DemoSchemaGuard"
+    ],
+    "commonControllers": [
+      "controller.PingController"
+    ],
+    "systemClasses": [],
+    "resources": [
+      { "match": "application.yml", "to": "common", "as": "mugsun-boot-defaults.yml" },
+      { "match": "application-*.yml", "to": "common" },
+      { "match": "logback-spring.xml", "to": "common" },
+      { "match": "META-INF/spring.factories", "to": "split" },
+      { "match": "*", "to": "system" }
+    ]
+  },
+  "extras": [
+    { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" }
+  ],
+  "modules": []
+}
