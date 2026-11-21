@@ -92,6 +92,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 带过去的身份只有租户，没有用户，也不转发用户的登录令牌。所以只有在单体版里本来就只看租户、不看用户的调用才能这样转；用户有没有权限做这件事，由发起调用的一方在调用之前判断。接口的实现里不能用 `StpUtil` 和 `@DataScope`。
 - 请求和响应都用共享密钥签名，协议在 `InnerProtocol`，校验在 `InnerRequestFilter`。改这两个类等于改鉴权，属于敏感改动。
 - 对方没有部署时，效果要和单体版没装那个模块时一样；对方在但调用失败时，要和单体版里那个模块出错时一样。现有的三处可以参考：ai 的 `RemoteInsightPort`、track 的 `RemoteTrackAskLlmGateway`、system 的 `RemoteGenAiDraftEnhancer`。
+- 调用方只看得到注册中心里有没有对方的实例，分不出它是没有部署，还是部署了、此刻不在（正在重启，或者挂了）。这时给用户的话要在两种情况下都是真的，不要说「没有部署」。
 - 给用户看的提示里不带地址、服务名和状态码，具体原因只记日志。日志里不记密钥和签名。
 - 内部接口要有测试：验签的规则在 `InnerRequestFilterTest`，两头接起来的情况在 `InnerLoopbackTest`，都不需要 Nacos 和 Redis。
 

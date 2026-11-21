@@ -71,7 +71,7 @@ class RemoteInsightPort implements ModuleInsightPort {
 		} catch (InnerCallException e) {
 			log.warn("向 {} 查询{}失败：{}", serviceId, subject, e.getMessage());
 			throw new ServiceException(switch (e.kind()) {
-				case NO_INSTANCE -> label + "服务没有部署，无法查询" + subject;
+				case NO_INSTANCE -> offline();
 				case NOT_CONFIGURED -> "服务之间的内部调用没有开通，无法查询" + subject + "，请联系管理员";
 				default -> unavailable();
 			});
@@ -88,5 +88,13 @@ class RemoteInsightPort implements ModuleInsightPort {
 
 	private String unavailable() {
 		return label + "服务暂时不可用，请稍后再试";
+	}
+
+	/**
+	 * 注册中心里没有对方的实例时说的话。可能是没有部署，也可能是它正在重启或者挂了，这里分不出来，
+	 * 所以不说「没有部署」：部署了、只是此刻不在的时候，那句话会让人以为是装漏了。
+	 */
+	private String offline() {
+		return label + "服务现在不在线，无法查询" + subject + "。请稍后再试，一直不行请联系管理员";
 	}
 }

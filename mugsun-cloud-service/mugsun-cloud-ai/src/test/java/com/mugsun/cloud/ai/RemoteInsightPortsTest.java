@@ -120,17 +120,20 @@ class RemoteInsightPortsTest {
 		assertThat(overview.get("avg")).isEqualTo(new BigDecimal("12345678901234567890.123456789"));
 	}
 
-	/** 和单体版没装那个模块时一样，告诉用户查不了，而不是报一个看不懂的错 */
+	/**
+	 * 和单体版没装那个模块时一样，告诉用户查不了，而不是报一个看不懂的错。
+	 * 注册中心里没有实例，可能是没部署，也可能是正在重启或者挂了，所以话里不说「没有部署」
+	 */
 	@Test
-	void saysSoWhenTheOtherServiceIsNotDeployed() {
+	void saysSoWhenTheOtherServiceHasNoInstance() {
 		clientFailsWith(new InnerCallException(Kind.NO_INSTANCE, "注册中心里没有 mugsun-gis 的实例"));
 
 		assertThatThrownBy(() -> gis().snapshot(Map.of()))
 			.isInstanceOf(ServiceException.class)
-			.hasMessage("地理信息服务没有部署，无法查询图层");
+			.hasMessage("地理信息服务现在不在线，无法查询图层。请稍后再试，一直不行请联系管理员");
 		assertThatThrownBy(() -> track().snapshot(Map.of()))
 			.isInstanceOf(ServiceException.class)
-			.hasMessage("埋点服务没有部署，无法查询埋点数据");
+			.hasMessage("埋点服务现在不在线，无法查询埋点数据。请稍后再试，一直不行请联系管理员");
 	}
 
 	@Test

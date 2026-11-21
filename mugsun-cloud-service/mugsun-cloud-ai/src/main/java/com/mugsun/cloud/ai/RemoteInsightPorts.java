@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
 /**
  * 「AI 问图层」「AI 解读埋点数据」要的库内实数，分别向 gis、track 服务取。
  *
- * <p>两个实现一直都注册着，对方服务在不在等到用的时候再看：不在就告诉用户那个服务没有部署，
+ * <p>两个实现一直都注册着，对方服务在不在等到用的时候再看：不在就告诉用户那个服务现在不在线、查不了，
  * 效果和单体版没装那个模块时一样。服务可以随时加上或撤掉，ai 服务不用跟着重启。
  */
 @Configuration(proxyBeanMethods = false)
