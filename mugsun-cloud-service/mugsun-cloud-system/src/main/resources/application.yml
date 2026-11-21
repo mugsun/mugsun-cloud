@@ -14,3 +14,6 @@ server:
 spring:
   application:
     name: mugsun-system
+  flyway:
+    # 主库的表结构由这个服务迁移；微服务版共用的配置里默认是关的
+    enabled: true

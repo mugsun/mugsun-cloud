@@ -10,6 +10,10 @@ server:
   forward-headers-strategy: native
 
 spring:
+  flyway:
+    # 主库的表结构只由 system 服务迁移：迁移脚本只在它的包里，它在自己的 application.yml 里重新打开。
+    # 其它服务不执行迁移，所以要先启动 system（升级时也是先升 system），再启动其它服务。
+    enabled: false
   cloud:
     nacos:
       discovery:
