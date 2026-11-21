@@ -3,6 +3,7 @@
 
 mugsun-cloud 的业务代码和 mugsun-boot 同源：各模块 src/boot/ 下的文件由本脚本从 mugsun-boot 的
 一个确定提交原样复制，不要手改。微服务版特有的代码写在各模块的 src/main/ 下。
+部署要用的几个脚本（生成密钥、建库）也从同一个提交原样复制，放在规则里 files 写的目录下。
 
 用法（在仓库根目录执行）：
 
@@ -10,7 +11,7 @@ mugsun-cloud 的业务代码和 mugsun-boot 同源：各模块 src/boot/ 下的�
     python3 scripts/sync_from_boot.py --ref <提交>      # 同步指定提交、分支或标签
     python3 scripts/sync_from_boot.py --boot <路径>     # mugsun-boot 不在 ../mugsun-boot 时
     python3 scripts/sync_from_boot.py --check          # 只比较不写文件，有差异时退出码 1
-    python3 scripts/sync_from_boot.py --locked --check # 和上次同步的提交比较：src/boot 有没有被手改
+    python3 scripts/sync_from_boot.py --locked --check # 和上次同步的提交比较：同步来的文件有没有被手改
     python3 scripts/sync_from_boot.py --explain <类名>  # 说明某个类为什么进了公共层
     python3 scripts/sync_from_boot.py --report         # 列出公共层和 system 各自用到的第三方包
 
@@ -45,6 +46,14 @@ MARKER_TEXT = """# 这个目录由脚本同步，不要手改
 - 要写微服务版特有的代码：写在本模块的 `src/main/` 下。
 - 划分规则：`scripts/sync-rules.json`。
 """
+FILES_MARKER_TEXT = """# 这个目录由脚本同步，不要手改
+
+这里的文件从 mugsun-boot 原样复制，来源提交记在仓库根目录的 `boot-sync.lock.json`。
+
+- 要改这些文件：改 mugsun-boot，再执行 `python3 scripts/sync_from_boot.py`。
+- 微服务版自己的文件不要放进这个目录，同步时整个目录会重写。
+- 同步哪些文件：`scripts/sync-rules.json` 的 `files`。
+"""
 
 IMPORT_RE = re.compile(r"^import\s+(static\s+)?([\w.]+?)(\.\*)?\s*;", re.M)
 CONTROLLER_RE = re.compile(r"@(Rest)?Controller\b")
@@ -71,6 +80,61 @@ def read_tree(boot, ref, prefixes):
             if member.isfile():
                 files[member.name] = tar.extractfile(member).read()
     return files
+
+
+def read_files(boot, ref, paths):
+    """读出某个提交里的若干单个文件：{仓库内路径: (内容, 是否带可执行位)}。"""
+    if not paths:
+        return {}
+    modes = {}
+    for entry in git(boot, "ls-tree", "-z", ref, "--", *paths).decode("utf-8").split("\0"):
+        if entry:
+            meta, _, name = entry.partition("\t")
+            modes[name] = meta.split(" ")[0]
+    for path in paths:
+        if path not in modes:
+            die("sync-rules.json 的 files 里写的 %s 在 mugsun-boot 的这个提交里没有，规则需要更新" % path)
+        if modes[path] not in ("100644", "100755"):
+            die("sync-rules.json 的 files 里写的 %s 不是普通文件，目录和链接不能这样同步" % path)
+    data = read_tree(boot, ref, paths)
+    return {path: (data[path], modes[path] == "100755") for path in paths}
+
+
+class Layout:
+    """同步来的文件放在哪：模块的放在 <模块目录>/src/boot 下；单独同步的文件直接放在规则里 to 写的目录下。"""
+
+    def __init__(self):
+        self.dirs = set()
+        self.execs = set()
+
+    def base(self, target):
+        return target if target in self.dirs else target + "/" + SYNC_DIR
+
+
+def plan_files(rules, boot, ref, out, layout):
+    """规则里 files 写的单个文件：原样复制到 to 写的目录，文件名不变，可执行位跟着走。"""
+    taken = set(out)
+    for group in rules.get("files", []):
+        to = group["to"].strip("/")
+        parts = to.split("/")
+        if not to or os.path.isabs(group["to"]) or ".." in parts or "." in parts:
+            die("sync-rules.json 的 files 里 to 要写仓库内的相对目录：%s" % group["to"])
+        for other in sorted(taken):
+            if to == other or to.startswith(other + "/") or other.startswith(to + "/"):
+                die("sync-rules.json 的 files 里 to 写的 %s 和 %s 重叠，换一个单独的目录" % (to, other))
+        taken.add(to)
+        layout.dirs.add(to)
+        paths = group["paths"]
+        if not paths or len(set(paths)) != len(paths):
+            die("sync-rules.json 的 files 里 %s 的 paths 不能为空，也不能有重复" % to)
+        for path, (content, executable) in read_files(boot, ref, paths).items():
+            name = path.rpartition("/")[2]
+            if name == MARKER or name in out[to]:
+                die("sync-rules.json 的 files 里 %s 复制到 %s 会重名：%s" % (path, to, name))
+            out[to][name] = content
+            if executable:
+                layout.execs.add((to, name))
+        out[to][MARKER] = FILES_MARKER_TEXT.encode("utf-8")
 
 
 def strip_comments(text):
@@ -255,7 +319,7 @@ def split_factories(content, owner_of):
 
 
 def plan(rules, boot, ref):
-    """算出每个目标模块 src/boot 下应该有哪些文件。返回 ({模块目录: {相对路径: 内容}}, 索引, 划分结果)。"""
+    """算出每个目标目录下应该有哪些文件。返回 ({目标: {相对路径: 内容}}, 索引, 划分结果, 存放位置)。"""
     core = rules["core"]
     modules = rules.get("modules", [])
     extras = rules.get("extras", [])
@@ -349,11 +413,13 @@ def plan(rules, boot, ref):
 
     for target in out:
         out[target][MARKER] = MARKER_TEXT.encode("utf-8")
-    return out, index, (common, system, parent)
+    layout = Layout()
+    plan_files(rules, boot, ref, out, layout)
+    return out, index, (common, system, parent), layout
 
 
-def existing(target):
-    base = os.path.join(REPO_ROOT, target, SYNC_DIR)
+def existing(base):
+    base = os.path.join(REPO_ROOT, base)
     found = {}
     for dirpath, _, names in os.walk(base):
         for name in names:
@@ -363,26 +429,39 @@ def existing(target):
     return found
 
 
-def check(planned):
+def is_executable(base, rel):
+    return bool(os.stat(os.path.join(REPO_ROOT, base, rel)).st_mode & 0o100)
+
+
+def check(planned, layout):
     dirty = 0
     for target in sorted(planned):
-        have, want = existing(target), planned[target]
+        base = layout.base(target)
+        have, want = existing(base), planned[target]
         for rel in sorted(set(have) | set(want)):
             if rel not in want:
-                print("多出：%s/%s/%s" % (target, SYNC_DIR, rel))
+                print("多出：%s/%s" % (base, rel))
             elif rel not in have:
-                print("缺少：%s/%s/%s" % (target, SYNC_DIR, rel))
+                print("缺少：%s/%s" % (base, rel))
             elif have[rel] != want[rel]:
-                print("不同：%s/%s/%s" % (target, SYNC_DIR, rel))
+                print("不同：%s/%s" % (base, rel))
+            elif (target in layout.dirs and os.name != "nt"
+                  and is_executable(base, rel) != ((target, rel) in layout.execs)):
+                print("可执行位不同：%s/%s" % (base, rel))
             else:
                 continue
             dirty += 1
     return dirty
 
 
-def write(planned):
+def write(planned, layout):
+    # 单独同步文件的目录是规则里写的，写错了会把别的文件删掉：目录里有东西又没有同步标记时不动它
+    for target in sorted(layout.dirs):
+        base = os.path.join(REPO_ROOT, target)
+        if os.path.isdir(base) and os.listdir(base) and not os.path.isfile(os.path.join(base, MARKER)):
+            die("%s 里有不是同步来的文件（没有 %s 标记），换一个单独的目录，或者先把里面的文件挪走" % (target, MARKER))
     for target in sorted(planned):
-        base = os.path.join(REPO_ROOT, target, SYNC_DIR)
+        base = os.path.join(REPO_ROOT, layout.base(target))
         if os.path.isdir(base):
             shutil.rmtree(base)
         for rel, content in planned[target].items():
@@ -390,14 +469,18 @@ def write(planned):
             os.makedirs(os.path.dirname(full), exist_ok=True)
             with open(full, "wb") as fh:
                 fh.write(content)
+            if (target, rel) in layout.execs:
+                os.chmod(full, 0o755)
 
 
-def digest(planned):
+def digest(planned, layout):
     sha = hashlib.sha256()
     for target in sorted(planned):
         for rel in sorted(planned[target]):
             sha.update((target + "/" + rel + "\0").encode("utf-8"))
             sha.update(hashlib.sha256(planned[target][rel]).digest())
+            if (target, rel) in layout.execs:
+                sha.update(b"+x")
     return sha.hexdigest()
 
 
@@ -454,7 +537,7 @@ def main():
         with open(LOCK_FILE, encoding="utf-8") as fh:
             ref = json.load(fh)["commit"]
     commit = git(boot, "rev-parse", ref + "^{commit}").decode().strip()
-    planned, index, parts = plan(rules, boot, commit)
+    planned, index, parts, layout = plan(rules, boot, commit)
 
     if args.explain:
         explain(index, parts, args.explain)
@@ -463,22 +546,22 @@ def main():
         report(index, parts)
         return
     if args.check:
-        dirty = check(planned)
+        dirty = check(planned, layout)
         print("和 mugsun-boot %s 比较：%s" % (commit[:12], "一致" if dirty == 0 else "%d 个文件有差异" % dirty))
         sys.exit(1 if dirty else 0)
 
-    write(planned)
+    write(planned, layout)
     lock = collections.OrderedDict()
     lock["source"] = rules["source"]
     lock["commit"] = commit
-    lock["digest"] = digest(planned)
+    lock["digest"] = digest(planned, layout)
     lock["files"] = collections.OrderedDict((t, len(planned[t]) - 1) for t in sorted(planned))
     with open(LOCK_FILE, "w", encoding="utf-8") as fh:
         json.dump(lock, fh, ensure_ascii=False, indent=2)
         fh.write("\n")
     print("已从 mugsun-boot %s 同步：" % commit[:12])
     for target in sorted(planned):
-        print("  %s/%s  %d 个文件" % (target, SYNC_DIR, len(planned[target]) - 1))
+        print("  %s  %d 个文件" % (layout.base(target), len(planned[target]) - 1))
 
 
 if __name__ == "__main__":
