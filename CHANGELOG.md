@@ -19,5 +19,13 @@
   - 跨域只由网关应答，规则与 mugsun-boot 一致
   - 转发失败按统一格式返回 502、503、504
   - 自己的健康检查在 `/_gateway/health`，`/actuator` 转给后端服务
+- gis 服务：`mugsun-boot-gis` 的全部功能，端口 8102，可以不部署
+  - 网关把 `/system/gis/**` 转给它，没部署时这些接口返回 503
+  - system 按注册中心里有没有 gis 实例决定 GIS 菜单显不显示
+  - 系统参数 `gis.module.enabled` 可以不停服务关掉 GIS
+- 多个服务共用一个库的处理
+  - 主库迁移和初始数据只由 system 执行，其它服务不跑 Flyway，要先启动 system
+  - 在 system 里改的数据权限规则、接口权限、租户数据源，其它服务 30 秒内生效
+- 同步脚本支持可选模块：整个模块对应一个服务，并检查它只引用公共层的类
 - 本地开发用的 Nacos：`deploy/dev/nacos.sh`，密钥首次启动时随机生成
 - 文档：`docs/sync-from-boot.md`、`docs/deployment.md`

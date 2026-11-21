@@ -13,8 +13,9 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层，Servlet 栈 |
 | `mugsun-cloud-gateway` | 8080 | 网关，WebFlux 栈，不依赖公共层 |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务，对应 `mugsun-boot-core` |
+| `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务，对应 `mugsun-boot-gis`，可以不部署 |
 
-预留的端口：gis 8102、track 8103、ai 8104。服务名是 `mugsun-<名字>`，如 `mugsun-system`。
+预留的端口：track 8103、ai 8104。服务名是 `mugsun-<名字>`，如 `mugsun-system`。
 
 ## 两类代码
 
@@ -51,14 +52,17 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 - 启动类上的注解和 mugsun-boot 的 `MugsunApplication` 保持一致，只多扫描 `com.mugsun.cloud` 下自己的包。
 - `application.yml` 分两段：第一段只写 `spring.config.import`，先引入 `mugsun-boot-defaults.yml` 再引入 `mugsun-cloud-defaults.yml`；第二段写端口和服务名。各服务都一样的配置写进 `mugsun-cloud-defaults.yml`。
-- `/inner` 开头的路径留给服务之间调用的内部接口，网关不对外转发。对外的接口不要用这个前缀。
+- `/inner` 开头的路径留给服务之间调用的内部接口，网关不对外转发。对外的接口不要用这个前缀。服务之间目前还没有调用。
+- 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。
+- 有些状态各进程在内存里各存一份，又只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源。其它服务靠公共层的 `SharedStateSyncTask` 定时重新加载，新增这类状态时要在那里补上。system 自己不跑这个任务，所以 system 目前只能部署一个实例。
+- 可选模块的服务可以不部署。system 用 `CloudGisModuleStatus` 这样的类查注册中心，决定菜单显不显示；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 构建和测试
 
 ```bash
 (cd ../mugsun-core && mvn -B install -DskipTests)    # core 0.2.0-SNAPSHOT 不在 Central
-./mvnw -B verify                                     # 编译全部模块，跑网关的测试
+./mvnw -B verify                                     # 编译全部模块，跑本仓自己的测试
 python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 ```
 
@@ -76,7 +80,7 @@ python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 约定和 mugsun-boot 相同，细则见那边的 `AGENTS.md` 和 `.github/COMMIT_CONVENTION.md`。要点：
 
 - Conventional Commits，主题中文，不超过 50 字，不用 emoji。一个提交只做一件事。
-- scope 用模块名：`gateway`、`common`、`system`、`sync`、`deploy`、`build`。
+- scope 用模块名：`gateway`、`common`、`system`、`gis`、`sync`、`deploy`、`build`。
 - 同步 mugsun-boot 代码单独做一个提交，类型用 `chore(sync)`，正文写 mugsun-boot 的提交号。
 - `CHANGELOG.md` 写在 `## [Unreleased]` 下，每行不超过 80 字。
 - 提交身份和 mugsun-boot 用同一个，只在仓库级配置里设，不改全局配置。

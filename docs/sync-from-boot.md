@@ -17,11 +17,17 @@
 | `META-INF/spring.factories` | 按里面登记的类分别属于哪边，拆成两份 |
 | 其他资源文件，如数据库迁移脚本 | system |
 
+可选模块整个对应一个服务，模块的 `src/main` 原样拷到那个服务的 `src/boot` 下：
+
+| 来源 | 去向 |
+| --- | --- |
+| `mugsun-boot-gis` | `mugsun-cloud-service/mugsun-cloud-gis/src/boot` |
+
 没有同步的部分：
 
 - `MugsunApplication`。每个服务有自己的启动类。
 - 测试代码。
-- `mugsun-boot-gis`、`mugsun-boot-track`、`mugsun-boot-ai`。这三个模块对应的服务还没拆。
+- `mugsun-boot-track`、`mugsun-boot-ai`。这两个模块对应的服务还没拆。
 
 `application.yml` 改名是因为每个服务有自己的 `application.yml`。服务的配置先引入 `mugsun-boot-defaults.yml`，再引入微服务版的 `mugsun-cloud-defaults.yml`，最后写自己的端口和服务名。
 
@@ -34,7 +40,7 @@
 | `commonPackages` | 整个包连同子包进公共层 |
 | `commonClasses` | 单个类进公共层 |
 | `commonControllers` | 允许进公共层的控制器。没列在这里的控制器一律留在 system |
-| `systemClasses` | 强制留在 system 的类 |
+| `systemClasses` | 强制留在 system 的类。类名里可以用 `*`，如 `config.*SchemaRunner` |
 | `skip` | 不同步的类 |
 
 划分分两步：
@@ -43,6 +49,8 @@
 2. 公共层的类引用到的其他类也跟着进公共层，一直到没有新的类为止。引用关系按源码里的 `import` 和同包引用推断。
 
 剩下的类都在 system。
+
+只该执行一次的启动任务要写进 `systemClasses`，比如写初始数据的 `config.DataInitializer`。它们所在的 `config` 包整个在公共层，不单独列出来的话，每个服务启动时都会执行一遍。
 
 如果第 2 步带到了控制器、`systemClasses` 或 `skip` 里的类，脚本会报错并列出是谁引用了谁。这时要改规则：把前者从公共层拿掉，或者允许后者进公共层。
 
@@ -92,6 +100,8 @@ python3 scripts/sync_from_boot.py --ref <提交>   # 或者指定提交、分支
 | `MugsunApplication` 上的注解 | 各服务的启动类，如 `SystemApplication` |
 | `CorsConfig` 的跨域规则 | 网关 `application.yml` 里的 `globalcors` |
 | 父 pom 和 `mugsun-boot-core/pom.xml` 的依赖、版本号 | 父 pom、`mugsun-cloud-common/pom.xml`、system 的 pom |
+| `mugsun-boot-gis/pom.xml` 的依赖 | `mugsun-cloud-gis` 的 pom |
+| `OptionalModuleConfiguration` 里 GIS 模块状态的判断规则 | system 的 `CloudGisModuleStatus` |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 
 ## 检查 `src/boot` 有没有被手改
@@ -112,7 +122,17 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" }
 ```
 
-另外还要做这几件事：给新服务写 pom 和启动类，在网关的路由里把它的路径写在 `mugsun-system` 前面，在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
+可选模块只能引用公共层的类，拆出去的服务里没有 system 的代码。脚本会检查这一点，引用了留在 system 的类就报错并列出来。这时有两种处理：
+
+- 那个类各服务都能带：把它加进 `commonClasses`。
+- 那个类只能在 system 里跑：先设计服务间调用，再拆这个模块。
+
+另外还要做这几件事：
+
+1. 给新服务写 pom、启动类和 `application.yml`，照 `mugsun-cloud-gis` 的写。
+2. 在网关的路由里把它的路径写在 `mugsun-system` 前面。
+3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
+4. 在 system 里写一个模块状态类，照 `CloudGisModuleStatus` 的写。system 靠它知道这个服务有没有部署，决定菜单显不显示。
 
 ## 为什么包名不改
 
