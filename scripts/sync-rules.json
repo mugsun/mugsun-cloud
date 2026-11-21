@@ -83,7 +83,9 @@
         "scripts/gen-keys.sh",
         "scripts/init-db.sql",
         "docker/postgres/00-init-db.sh",
-        "docker/full/init-pw-check.py"
+        "docker/full/init-pw-check.py",
+        "docker/full/smoke.py",
+        "docker/full/smoke-requirements.txt"
       ]
     }
   ]
