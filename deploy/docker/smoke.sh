@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定 → 登录、上报并查到第一条埋点、
-# 服务之间互相调用 → 两个 system 实例之间保持一致，停掉一个另一个接着应答
+# 服务之间互相调用 → 两个 system 实例之间保持一致，正常停掉一个的过程中经网关的访问不能有失败
 # → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
 # 镜像和正式那一套是同一组标签（mugsun-cloud-*:local），这里会按当前的源码重新构建它们，
@@ -245,21 +245,26 @@ for v in "${lag_login}" "${lag_create}"; do
 		|| fail "最新一条登录日志的时间不是 ${tz} 的当前时间（login_time、create_time 落后的秒数：${lag:-查不到记录}）"
 done
 
-# ---- 停掉一个 system 实例，另一个接着应答；再起回来，重新登记上 ----
-# 网关把实例列表缓存 5 秒，这段时间里转给已停实例的请求会失败（docs/deployment.md 第 10 节），过了就不该再有。
-# /api/ping 由 system 应答
+# ---- 正常停掉一个 system 实例：停的过程中经网关连续访问，一次失败都不能有；再起回来，重新登记上 ----
+# 实例先从 Nacos 注销，照常应答 8 秒才开始停；网关把实例列表缓存 5 秒，到它开始停的时候已经不往它转发了
+# （docs/deployment.md 第 10 节）。停一个实例约 9 秒，这里从发出停止命令起连续访问 15 秒。/api/ping 由 system 应答
 if [ "${MUGSUN_SYSTEM_REPLICAS}" -gt 1 ]; then
 	# shellcheck disable=SC2207
 	system_ids=($(cid system))
 	stopped=$(date +%s)
-	docker stop "${system_ids[0]}" >/dev/null
-	sleep 8
-	for _ in $(seq 20); do
-		[ "$(http_code /api/ping)" = 200 ] || fail "停掉一个 system 实例 8 秒以后，经网关访问 system 还有失败"
+	docker stop "${system_ids[0]}" >/dev/null &
+	stopper=$!
+	asked=0
+	while [ "$(date +%s)" -lt "$((stopped + 15))" ]; do
+		code=$(http_code /api/ping)
+		asked=$((asked + 1))
+		[ "${code}" = 200 ] || fail "正常停掉一个 system 实例的过程中，经网关访问 system 的第 ${asked} 次返回了 ${code}（发出停止命令后 $(($(date +%s) - stopped)) 秒）"
 	done
+	wait "${stopper}"
+	[ "$(docker inspect -f '{{.State.ExitCode}}' "${system_ids[0]}")" != 137 ] || fail "system 实例停止时没有来得及自己退出，被强杀了"
 	docker start "${system_ids[0]}" >/dev/null
 	wait_registered 120
-	echo ">> 停掉一个 system 实例，另一个接着应答；起回来以后，从停掉算起 $(($(date +%s) - stopped)) 秒重新登记上"
+	echo ">> 正常停掉一个 system 实例的 15 秒里经网关访问 ${asked} 次，全部成功；起回来以后，从发出停止命令算起 $(($(date +%s) - stopped)) 秒重新登记上"
 fi
 
 # ---- Nacos 重启以后能自己恢复 ----
