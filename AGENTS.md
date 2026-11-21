@@ -62,6 +62,9 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发，`GatewayRateLimitTest` 测限流，`GatewayDynamicRoutesTest` 测动态路由。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
 
+- 测试里访问网关用 `GatewayTestBase.client()`，不继承它的用 `GatewayClients.onPort(端口)`，不要自己 `WebTestClient.bindToServer()`。后者只断言状态码和响应头时不读响应体，没读的那部分占着的缓冲区没有人释放；`GatewayClients` 收到响应就把响应体整个读完。
+- `BufferLeakGuard` 对网关的每个测试类都生效：有缓冲区没释放就被回收时，测试不通过。它报错时先分清是哪一种：测试里有响应没读完，还是网关的代码读了请求体、响应体没有释放。后一种在线上是内存只涨不落，要改网关的代码，不要为了让测试通过去动这道检查。
+
 ## 服务的约定
 
 - 启动类上的注解和 mugsun-boot 的 `MugsunApplication` 保持一致，只多扫描 `com.mugsun.cloud` 下自己的包。有意不一样的地方写在启动类的注释里。

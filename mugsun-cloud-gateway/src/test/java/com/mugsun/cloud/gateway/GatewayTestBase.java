@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.gateway.support.GatewayClients;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -98,7 +99,7 @@ abstract class GatewayTestBase {
 	}
 
 	WebTestClient client() {
-		return WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + gatewayPort).build();
+		return GatewayClients.onPort(gatewayPort);
 	}
 
 	/** 按原样发送路径，不让客户端再编码或整理一遍 */

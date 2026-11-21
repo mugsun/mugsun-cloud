@@ -3,6 +3,7 @@ package com.mugsun.cloud.gateway;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader;
 import com.mugsun.cloud.gateway.route.DynamicRouteLocator;
 import com.mugsun.cloud.gateway.route.NacosRouteSource;
+import com.mugsun.cloud.gateway.support.GatewayClients;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -12,7 +13,6 @@ import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.web.reactive.server.WebTestClient;
 import reactor.core.publisher.Mono;
 import reactor.netty.DisposableServer;
 import reactor.netty.http.server.HttpServer;
@@ -87,7 +87,7 @@ class GatewayRoutesTest {
 		"/, mugsun-system"
 	})
 	void pathGoesToService(String path, String service) {
-		WebTestClient.bindToServer().build()
+		GatewayClients.onPort(gatewayPort)
 			.get().uri(URI.create("http://127.0.0.1:" + gatewayPort + path))
 			.exchange()
 			.expectStatus().isOk()

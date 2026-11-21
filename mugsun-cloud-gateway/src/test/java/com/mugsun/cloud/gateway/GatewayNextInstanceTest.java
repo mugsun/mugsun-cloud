@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.gateway.support.GatewayClients;
 import io.netty.channel.ChannelOption;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -169,7 +170,7 @@ class GatewayNextInstanceTest {
 	}
 
 	private WebTestClient client() {
-		return WebTestClient.bindToServer().baseUrl("http://127.0.0.1:" + gatewayPort).build();
+		return GatewayClients.onPort(gatewayPort);
 	}
 
 	private static int closedPort() {
