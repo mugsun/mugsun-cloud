@@ -34,6 +34,11 @@ mugsun:
       enabled: true
       # 间隔（毫秒）
       interval-ms: 30000
+  websocket:
+    # 推送固定走 Redis。WebSocket 连接都在 system 上，其它服务要推送时（比如 track 发告警站内信）把消息发到 Redis，
+    # 由 system 投递给在线用户。boot 的默认值就是 redis，这里再写一遍是防止 config/application-local.yml 把它改成 local：
+    # local 只认本进程里的连接，system 以外的服务没有连接可发，启动时就会因为找不到发送器而失败
+    sender-type: redis
 
 logging:
   file:
