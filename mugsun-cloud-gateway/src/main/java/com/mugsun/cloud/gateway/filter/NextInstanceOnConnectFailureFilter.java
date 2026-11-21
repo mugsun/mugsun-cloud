@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway.filter;
 
+import com.mugsun.cloud.gateway.support.TraceIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.client.ServiceInstance;
@@ -80,9 +81,9 @@ public class NextInstanceOnConnectFailureFilter implements GlobalFilter, Ordered
 				if (next == null) {
 					return Mono.error(error);
 				}
-				log.warn("连不上 {} 的实例 {}:{}，换 {}:{} 再转发一次：{} {}，原因：{}", first.getServiceId(),
+				log.warn("连不上 {} 的实例 {}:{}，换 {}:{} 再转发一次：{} {}，原因：{}，请求编号 {}", first.getServiceId(),
 					first.getHost(), first.getPort(), next.getHost(), next.getPort(), exchange.getRequest().getMethod(),
-					shown(exchange.getRequest().getURI().getRawPath()), error.toString());
+					shown(exchange.getRequest().getURI().getRawPath()), error.toString(), TraceIds.of(exchange));
 				exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR,
 					LoadBalancerUriTools.reconstructURI(new DelegatingServiceInstance(next, target.getScheme()), target));
 				exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_LOADBALANCER_RESPONSE_ATTR,

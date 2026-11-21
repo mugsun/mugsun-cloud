@@ -91,3 +91,10 @@ mugsun:
     trusted-proxies: ${MUGSUN_OPENAPI_TRUSTED_PROXIES:}
     # 服务之间互相调用的内部接口的路径前缀，网关不对外转发
     inner-path: /inner
+    # 访问日志：每个请求结束时记一行（日志名 ACCESS），写明客户端地址、路径（不带查询串）、状态码、耗时、
+    # 转给了哪个服务的哪个实例、请求编号。各字段的含义见 docs/deployment.md「网关的访问日志」
+    access-log:
+      # all 每个请求都记；problems 只记有问题的（5xx、转发出错、慢请求，这些按警告级别记）；none 不记
+      mode: ${MUGSUN_GATEWAY_ACCESS_LOG:all}
+      # 从收到请求到开始回应超过这么多毫秒算慢请求；0 表示不按耗时区分
+      slow-millis: ${MUGSUN_GATEWAY_SLOW_MILLIS:3000}

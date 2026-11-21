@@ -19,6 +19,8 @@ public class GatewayGuardProperties {
 	 */
 	private String innerPath = "/inner";
 
+	private final AccessLog accessLog = new AccessLog();
+
 	public String getTrustedProxies() {
 		return trustedProxies;
 	}
@@ -33,5 +35,49 @@ public class GatewayGuardProperties {
 
 	public void setInnerPath(String innerPath) {
 		this.innerPath = innerPath;
+	}
+
+	public AccessLog getAccessLog() {
+		return accessLog;
+	}
+
+	/**
+	 * 访问日志（前缀 {@code mugsun.gateway.access-log}）：每个请求结束时记一行，日志名是 ACCESS。
+	 */
+	public static class AccessLog {
+
+		public enum Mode {
+			/** 每个请求都记 */
+			ALL,
+			/** 只记有问题的：5xx、转发出错、慢请求 */
+			PROBLEMS,
+			/** 不记。不叫 off：YAML 会把没加引号的 off 当成布尔值 */
+			NONE
+		}
+
+		/** 记哪些请求 */
+		private Mode mode = Mode.ALL;
+
+		/**
+		 * 从收到请求到开始回应超过这么多毫秒算慢请求，这一行按警告级别记；0 表示不按耗时区分。
+		 * 不看整个请求的时长：下载大文件、流式输出、WebSocket 连接本来就会持续很久。
+		 */
+		private long slowMillis = 3000;
+
+		public Mode getMode() {
+			return mode;
+		}
+
+		public void setMode(Mode mode) {
+			this.mode = mode == null ? Mode.ALL : mode;
+		}
+
+		public long getSlowMillis() {
+			return slowMillis;
+		}
+
+		public void setSlowMillis(long slowMillis) {
+			this.slowMillis = slowMillis;
+		}
 	}
 }

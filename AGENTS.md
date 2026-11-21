@@ -45,10 +45,12 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - `server.forward-headers-strategy` 必须是 `none`，启动时有检查。客户端地址一律用 `ClientViewResolver` 算，算法和 mugsun-boot 的 `ClientIpResolver` 一致。
 - 跨域只由网关应答，规则在 `application.yml` 的 `globalcors`，要和 mugsun-boot 的 `CorsConfig` 一致。
 - 记日志只记路径，不记查询串。WebSocket 的登录令牌在查询串里。
+- 每个请求的编号由 `TraceIdFilter` 定，规则要和 mugsun-boot 的 `TraceIdFilter` 一致。过滤器记警告日志时用 `TraceIds.of(exchange)` 带上编号。
+- 每个请求一行的访问日志由 `AccessLogFilter` 记，别的过滤器不要再给每个请求各记一行。字段有增减时同步改 `docs/deployment.md` 第 10 节的字段表。
 - 网关不解析登录令牌，登录校验和权限判断在服务里做。
 - 需要 mugsun-boot 里的类时，在 `sync-rules.json` 的 `extras` 里单独拷贝，不要让网关依赖公共层。
 
-网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，两者都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
+网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
 
 ## 服务的约定
 

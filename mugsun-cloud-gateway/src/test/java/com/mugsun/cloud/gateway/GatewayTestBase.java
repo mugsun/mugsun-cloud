@@ -12,6 +12,7 @@ import reactor.netty.http.server.HttpServer;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +34,9 @@ abstract class GatewayTestBase {
 
 	static final List<Received> RECEIVED = new CopyOnWriteArrayList<>();
 
+	/** /slow-stream/ 下的流式接口，第一段内容要等这么久 */
+	static final Duration SLOW_STREAM_DELAY = Duration.ofMillis(400);
+
 	private static final DisposableServer BACKEND = HttpServer.create().host("127.0.0.1").port(0)
 		.handle((request, response) -> {
 			Map<String, List<String>> headers = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -43,6 +47,13 @@ abstract class GatewayTestBase {
 				return response.sendWebsocket((inbound, outbound) ->
 					outbound.sendString(inbound.receive().asString().map(text -> "echo:" + text)));
 			}
+			// 真实的后端服务会把收到的请求编号原样写进响应头；/foreign/ 下模拟一个有自己一套编号的服务
+			String traceId = request.requestHeaders().get("X-Trace-Id");
+			if (request.uri().startsWith("/foreign/")) {
+				response.header("X-Trace-Id", "backend-own-id");
+			} else if (traceId != null) {
+				response.header("X-Trace-Id", traceId);
+			}
 			// 真实的后端服务带着和单体版一样的跨域过滤器，会自己写跨域响应头。这里照样写一份，
 			// 并故意多写一个网关规则里没有的头，用来确认后端写的这份不会返回给客户端
 			String origin = request.requestHeaders().get("Origin");
@@ -51,12 +62,21 @@ abstract class GatewayTestBase {
 				response.header("Access-Control-Allow-Credentials", "true");
 				response.addHeader("Vary", "Origin");
 			}
+			if (request.uri().startsWith("/slow-stream/")) {
+				// 流式接口：响应头马上发，第一段内容过一会儿才有（比如在等大模型）
+				return response.header("Content-Type", "text/event-stream").sendHeaders()
+					.sendString(Mono.delay(SLOW_STREAM_DELAY).map(tick -> "data: first\n\n"));
+			}
 			return response.header("Content-Type", "application/json").sendString(Mono.just("{\"code\":200}"));
 		})
 		.bindNow();
 
 	@LocalServerPort
 	int gatewayPort;
+
+	static int backendPort() {
+		return BACKEND.port();
+	}
 
 	@DynamicPropertySource
 	static void routes(DynamicPropertyRegistry registry) {

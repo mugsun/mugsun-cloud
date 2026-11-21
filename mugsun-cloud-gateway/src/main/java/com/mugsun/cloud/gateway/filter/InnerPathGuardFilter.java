@@ -4,6 +4,7 @@ import com.mugsun.cloud.gateway.error.GatewayRejectedException;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
 import com.mugsun.cloud.gateway.support.PathGuard;
+import com.mugsun.cloud.gateway.support.TraceIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -75,10 +76,12 @@ public class InnerPathGuardFilter implements GlobalFilter, Ordered {
 		}
 		String clientIp = clientViewResolver.resolve(exchange.getRequest()).clientIp();
 		if (worst == PathGuard.Verdict.INNER) {
-			log.warn("拦下从外部访问内部接口的请求：{} {}，客户端 {}", exchange.getRequest().getMethod(), shown, clientIp);
+			log.warn("拦下从外部访问内部接口的请求：{} {}，客户端 {}，请求编号 {}", exchange.getRequest().getMethod(), shown,
+				clientIp, TraceIds.of(exchange));
 			return Mono.error(new GatewayRejectedException(HttpStatus.NOT_FOUND, "资源不存在"));
 		}
-		log.warn("拒绝路径写法不合法的请求：{} {}，客户端 {}", exchange.getRequest().getMethod(), shown, clientIp);
+		log.warn("拒绝路径写法不合法的请求：{} {}，客户端 {}，请求编号 {}", exchange.getRequest().getMethod(), shown,
+			clientIp, TraceIds.of(exchange));
 		return Mono.error(new GatewayRejectedException(HttpStatus.BAD_REQUEST, "请求地址不合法"));
 	}
 

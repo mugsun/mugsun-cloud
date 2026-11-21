@@ -1,6 +1,7 @@
 package com.mugsun.cloud.gateway.error;
 
 import com.mugsun.cloud.gateway.support.ResultWriter;
+import com.mugsun.cloud.gateway.support.TraceIds;
 import io.netty.channel.ConnectTimeoutException;
 import io.netty.handler.timeout.ReadTimeoutException;
 import org.slf4j.Logger;
@@ -50,10 +51,11 @@ public class GatewayErrorHandler implements ErrorWebExceptionHandler {
 		HttpStatusCode status = statusOf(ex);
 		String path = exchange.getRequest().getURI().getRawPath();
 		if (status.value() == HttpStatus.INTERNAL_SERVER_ERROR.value()) {
-			log.error("网关处理请求出错：{} {}", exchange.getRequest().getMethod(), path, ex);
+			log.error("网关处理请求出错：{} {}，请求编号 {}", exchange.getRequest().getMethod(), path,
+				TraceIds.of(exchange), ex);
 		} else if (status.is5xxServerError()) {
-			log.warn("转发失败，返回 {}：{} {}，原因：{}", status.value(), exchange.getRequest().getMethod(), path,
-				ex.toString());
+			log.warn("转发失败，返回 {}：{} {}，原因：{}，请求编号 {}", status.value(), exchange.getRequest().getMethod(),
+				path, ex.toString(), TraceIds.of(exchange));
 		}
 		if (ex instanceof ErrorResponse errorResponse) {
 			exchange.getResponse().getHeaders().putAll(errorResponse.getHeaders());
@@ -64,7 +66,8 @@ public class GatewayErrorHandler implements ErrorWebExceptionHandler {
 		return resultWriter.fail(exchange, status, msg);
 	}
 
-	static HttpStatusCode statusOf(Throwable ex) {
+	/** 出错原因对应的状态码。访问日志也用它，记下的状态码和实际返回的一致 */
+	public static HttpStatusCode statusOf(Throwable ex) {
 		Throwable current = ex;
 		for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++) {
 			if (current instanceof ErrorResponse errorResponse) {
