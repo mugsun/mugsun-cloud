@@ -1,0 +1,369 @@
+# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个服务、管理后台。
+#
+#   docker compose -f deploy/docker/docker-compose.yml up -d --build
+#   浏览器打开 http://localhost:8188 ，账号 admin，口令（不写进日志）：
+#   docker compose -f deploy/docker/docker-compose.yml run --rm init show
+#
+# 只需要 Docker（Compose v2.17 以上），镜像都在 Docker 里从源码构建。做法和 mugsun-boot 的 docker-compose.full.yml 一致，
+# 区别是后端从一个进程换成了网关加四个服务，另加一个注册中心。
+#
+# 默认就是安全的配置，不带任何弱口令：
+#   - 首次启动由 init 生成全部口令和密钥，按使用方拆进六个密钥卷，每个容器只挂自己的那一个，重启不变（见 gen-secrets.sh）；
+#   - 各服务按 prod 配置运行：密钥缺失拒绝启动、验证码打开、接口文档关闭；
+#   - 对外只有管理后台一个端口，默认只绑 127.0.0.1:8188；要给别的机器访问，显式设 MUGSUN_HTTP_BIND=0.0.0.0，
+#     并把 MUGSUN_PUBLIC_URL 设成它们访问用的地址。
+#     网关、各服务、Nacos、数据库和 Redis 都不映射到宿主机，理由见 docs/deployment.md 第 1、5 节；
+#   - Nacos 打开客户端鉴权，网关和各服务用一个只能注册和查询服务的账号接入，拿不到管理员口令（见 nacos-init.py）。
+#
+# 端口、网段和项目名的默认值都和单体版那套（8088、172.30.88.0/24）错开；两套同时运行没有实测过。
+# 网段默认占 172.30.89.0/24，和宿主机上别的网段冲突时改 MUGSUN_NET_PREFIX（写前三段，比如 10.89.0）。
+# 已经起过的环境换网段，要把 Nacos 的数据卷一起删掉，步骤见 docs/deployment.md 第 16 节的「能改的变量」。
+# 管理后台、Nacos、网关、数据库、Redis 用网段里的固定地址（.10 到 .14），容器之间按地址找对方，不按名字：
+# 一个容器没在运行时，Docker 会把它的名字交给宿主机的 DNS 去查，查到什么地址，请求和口令就发到哪里；
+# 管理后台的 Nginx 还只在启动时查一次，查错了要等重启才改得过来。
+# 时区：常驻容器默认都是 Asia/Shanghai，换时区设 MUGSUN_TZ=<IANA 名称>。库里的时间列不带时区，按后端 JVM 的时区写入，
+# 所以四个服务的时区必须一致；给已经在跑的环境改时区不会改写旧数据。
+# 内存：整套跑起来实测约占 3.5 GB（每个 Java 进程的堆上限默认 512 MB，用 MUGSUN_JAVA_OPTS 改）。
+# 构建管理后台的前端实测要约 5 GB：在内存 5.8 GB 的 Docker 上，单独构建能过，同时有别的容器占着 1 GB 时被杀掉。
+# 内存不宽裕时先单独构建它，构建期间不要有别的容器和构建占内存，然后再执行上面的 up：
+#   docker compose -f deploy/docker/docker-compose.yml build pc
+# 清空重来只能用（会删数据和密钥）：docker compose -f deploy/docker/docker-compose.yml down -v
+# 不要单删密钥卷而保留 pg-data：库口令只在首次初始化时写入，新生成的口令会对不上。
+name: mugsun-cloud
+
+# 四个业务服务共用的构建参数和环境变量。口令和密钥不在这里，在 MUGSUN_ENV_FILE 指的文件里，由镜像的入口脚本读入。
+x-build: &build
+  context: ../..
+  dockerfile: deploy/docker/Dockerfile
+
+x-service-env: &service-env
+  # JVM 默认时区：应用取的当前时间和数据库会话的 now() 都跟它走
+  TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+  # 镜像默认按容器内存上限的 75% 定堆大小；这里的容器没有设内存上限，五个进程会各自按整台机器的内存来算，所以写明堆上限
+  JAVA_OPTS: ${MUGSUN_JAVA_OPTS:--Xmx512m}
+  MUGSUN_ENV_FILE: /secrets/service.env
+  # Nacos、数据库和 Redis 都按固定地址连，原因见文件开头
+  MUGSUN_NACOS_ADDR: ${MUGSUN_NET_PREFIX:-172.30.89}.11:8848
+  JDBC_URL: jdbc:postgresql://${MUGSUN_NET_PREFIX:-172.30.89}.13:5432/mugsun
+  JDBC_USERNAME: mugsun
+  TRACK_JDBC_URL: jdbc:postgresql://${MUGSUN_NET_PREFIX:-172.30.89}.13:5432/mugsun_track
+  TRACK_JDBC_USERNAME: mugsun
+  REDIS_HOST: ${MUGSUN_NET_PREFIX:-172.30.89}.14
+  REDIS_DB: "3"
+  # 浏览器访问管理后台用的地址，末尾不带斜杠。系统给出的文件地址、OAuth 同意页的跳转都以它开头；
+  # 给别的机器访问时改成它们用的地址，比如 MUGSUN_PUBLIC_URL=http://192.168.1.20:8188
+  MUGSUN_FRONT_URL: ${MUGSUN_PUBLIC_URL:-http://localhost:${MUGSUN_HTTP_PORT:-8188}}
+  FILE_DOMAIN: ${MUGSUN_PUBLIC_URL:-http://localhost:${MUGSUN_HTTP_PORT:-8188}}/api/file/
+  # 这套环境不配邮件和短信，需要时在这里换成真实的值（口令类的值写进密钥文件，不要写在这里）
+  SMTP_HOST: smtp.invalid
+  SMTP_USERNAME: unset
+  SMTP_PASSWORD: unset
+  SMS_AK: unset
+  SMS_SK: unset
+  SMS_SIGNATURE: unset
+  SMS_TEMPLATE_ID: unset
+
+services:
+  init:
+    build:
+      context: .
+      dockerfile: init.Dockerfile
+    image: mugsun-cloud-init:local
+    environment:
+      # init show 要连库看 admin 改没改过口令
+      MUGSUN_DB_HOST: ${MUGSUN_NET_PREFIX:-172.30.89}.13
+    volumes:
+      - secrets-service:/secrets/service
+      - secrets-gateway:/secrets/gateway
+      - secrets-postgres:/secrets/postgres
+      - secrets-redis:/secrets/redis
+      - secrets-nacos:/secrets/nacos
+      - secrets-nacos-admin:/secrets/nacos-admin
+
+  postgres:
+    # PostGIS + pgvector 的多架构镜像，和单体版用的是同一个，由 mugsun-boot 的 docker/postgres/Dockerfile 构建。
+    # 要固定摘要，或者拉不到 ghcr.io 要换成自己构建的镜像：MUGSUN_PG_IMAGE=<镜像>@sha256:<摘要>
+    image: ${MUGSUN_PG_IMAGE:-ghcr.io/mugsun/postgis-pgvector:16-3.4}
+    # 超级用户 postgres 和应用账号 mugsun 用同一个随机口令，从它专用的密钥卷读；库只在容器网络里能连到
+    entrypoint: ["sh", "-c", ". /secrets/db.env && export POSTGRES_PASSWORD=\"$$MUGSUN_DB_PASSWORD\" && exec docker-entrypoint.sh postgres"]
+    environment:
+      POSTGRES_USER: postgres
+      # TZ：首次初始化时按它写库的默认时区；PGTZ：容器里 psql 等客户端的会话时区
+      TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+      PGTZ: ${MUGSUN_TZ:-Asia/Shanghai}
+    volumes:
+      - secrets-postgres:/secrets:ro
+      - pg-data:/var/lib/postgresql/data
+      # 建库脚本从 mugsun-boot 同步：建应用账号、主库 mugsun 和埋点库 mugsun_track，装 PostGIS 和 pgvector 扩展
+      - ./boot/init-db.sql:/initdb/init-db.sql:ro
+      - ./boot/00-init-db.sh:/docker-entrypoint-initdb.d/00-init-db.sh:ro
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks:
+      default:
+        ipv4_address: ${MUGSUN_NET_PREFIX:-172.30.89}.13
+    # 停止时等进程自己收尾退出，到时间还没退才强杀。各常驻服务都写明这个时间：不写就按 Docker 的默认值，
+    # 有的环境里默认只有 1 秒，Java 进程和 Nacos 来不及收尾就被杀掉
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+    # 口令不进进程参数：密钥卷里是一份带 requirepass 的配置文件，这里只传文件路径
+    command: ["redis-server", "/secrets/redis.conf"]
+    environment:
+      TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+    volumes:
+      - secrets-redis:/secrets:ro
+      - redis-data:/data
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$(sed -n 's/^requirepass //p' /secrets/redis.conf)\" redis-cli ping | grep PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      default:
+        ipv4_address: ${MUGSUN_NET_PREFIX:-172.30.89}.14
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  nacos:
+    image: ${MUGSUN_NACOS_IMAGE:-nacos/nacos-server:v3.0.3@sha256:a223937902d4292e49ce6bcca8c9d47d29d508075b7f7c6ba98e1a34ff9c3f3b}
+    # 签发令牌用的密钥和服务端身份标识从它专用的密钥卷读，不写在容器配置里
+    entrypoint: ["sh", "-c", ". /secrets/nacos.env && exec sh bin/docker-startup.sh"]
+    environment:
+      MODE: standalone
+      # 客户端鉴权：没有账号的进程不能注册实例，也查不到实例。网关按 Nacos 里登记的地址转发请求，这一项不能关
+      NACOS_AUTH_ENABLE: "true"
+      # 镜像默认给 1g 堆，只做注册中心用不到
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      JVM_XMN: 128m
+      # Nacos 的 Java 进程按 TZ 定时区，日志里的钟点跟着它走。镜像里没有系统的时区数据，在容器里执行 date 看到的始终是 UTC
+      TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+    volumes:
+      - secrets-nacos:/secrets:ro
+      - nacos-data:/home/nacos/data
+    networks:
+      default:
+        # 固定地址：网关和各服务按这个地址找它。Nacos 还把自己的地址记在数据卷里：地址变了以后它照样能启动，
+        # 健康检查通过，各服务也注册得上，但日志里会一直报 Failed to join the cluster。所以换网段时要删 nacos-data 卷
+        ipv4_address: ${MUGSUN_NET_PREFIX:-172.30.89}.11
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -m 3 -o /dev/null http://127.0.0.1:8848/nacos/v3/admin/core/state/readiness"]
+      interval: 5s
+      timeout: 5s
+      start_period: 60s
+      retries: 30
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  nacos-init:
+    # 一次性：给 Nacos 设管理员口令，建网关和各服务用的接入账号并核对。每次 up 都执行，做过的步骤会跳过。
+    # 看各服务登记的实例：docker compose -f deploy/docker/docker-compose.yml run --rm nacos-init status
+    # 镜像由上面的 init 构建，这里只是拿来用，所以不让 Compose 去拉取
+    image: mugsun-cloud-init:local
+    pull_policy: never
+    entrypoint: ["python3", "/nacos-init.py"]
+    environment:
+      MUGSUN_NACOS_URL: http://${MUGSUN_NET_PREFIX:-172.30.89}.11:8848/nacos
+    volumes:
+      - secrets-nacos-admin:/secrets/nacos-admin:ro
+    depends_on:
+      nacos:
+        condition: service_healthy
+    restart: "no"
+
+  system:
+    # 主库的建表和升级只由它执行，所以它先启动，其它三个服务等它健康以后再启动（docs/deployment.md 第 6 节）
+    build:
+      <<: *build
+      target: system
+    image: mugsun-cloud-system:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+      - files:/var/lib/mugsun/files
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nacos-init:
+        condition: service_completed_successfully
+    # 停止时先把手上的请求处理完再退出：四个服务最多等 20 秒，网关最多等 30 秒，所以都给 40 秒
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  gis:
+    build:
+      <<: *build
+      target: gis
+    image: mugsun-cloud-gis:local
+    environment:
+      <<: *service-env
+      # 底图瓦片由 gis 到公网去取。为防 SSRF，瓦片域名解析到 198.18.0.0/15 时它拒绝去取，返回 403。
+      # 宿主机出网经过 Clash、Surge 这类代理并且开着 fake-ip 时，公网域名都被解析到这个网段，底图出不来，
+      # 这时设成 true。别的机器不要开
+      MUGSUN_GIS_XYZ_ALLOW_BENCHMARK_NET: ${MUGSUN_GIS_XYZ_ALLOW_BENCHMARK_NET:-false}
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  track:
+    build:
+      <<: *build
+      target: track
+    image: mugsun-cloud-track:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+      # 埋点的会话回放、接口报文和 sourcemap 也存在文件存储里，和 system 共用一个卷，目录布局和单体版一样
+      - files:/var/lib/mugsun/files
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  ai:
+    build:
+      <<: *build
+      target: ai
+    image: mugsun-cloud-ai:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  gateway:
+    build:
+      <<: *build
+      target: gateway
+    image: mugsun-cloud-gateway:local
+    environment:
+      TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+      JAVA_OPTS: ${MUGSUN_JAVA_OPTS:--Xmx512m}
+      # 网关的密钥文件里只有接入 Nacos 的账号：它不连数据库和 Redis，也不参与服务之间的调用
+      MUGSUN_ENV_FILE: /secrets/gateway.env
+      MUGSUN_NACOS_ADDR: ${MUGSUN_NET_PREFIX:-172.30.89}.11:8848
+      # 只采信管理后台容器（Nginx）这一个固定地址传来的 X-Forwarded-For，不采信整个网段。
+      # 单体版里这个变量配给后端，微服务版配给网关（docs/deployment.md 第 2 节）
+      MUGSUN_OPENAPI_TRUSTED_PROXIES: ${MUGSUN_NET_PREFIX:-172.30.89}.10/32
+    volumes:
+      - secrets-gateway:/secrets:ro
+    networks:
+      default:
+        # 固定地址：管理后台按这个地址把请求转过来
+        ipv4_address: ${MUGSUN_NET_PREFIX:-172.30.89}.12
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  pc:
+    # 管理后台：直接用 mugsun-pc 仓库自己的 Dockerfile 和 Nginx 配置构建（非 root、基础镜像固定摘要、带 CSP、
+    # 用 $remote_addr 覆盖 X-Forwarded-For）。源码钉在 mugsun-boot 同一个提交里 docker-compose.full.yml 钉的提交，
+    # 同步 mugsun-boot 时跟着改。本地已有 mugsun-pc 时可以改用本地源码，路径相对本文件所在的目录：
+    #   MUGSUN_PC_SRC=../../../mugsun-pc docker compose -f deploy/docker/docker-compose.yml up -d --build
+    build:
+      context: ${MUGSUN_PC_SRC:-https://github.com/mugsun/mugsun-pc.git#8b123c5db7b75fa48c1c2f2d5f2736d911278df1}
+      dockerfile: Dockerfile
+    image: mugsun-cloud-pc:local
+    environment:
+      # 接口都经网关进来，路径和单体版一样。写网关的固定地址，不写名字：Nginx 只在启动时把名字解析一次，
+      # 那时网关要是没在运行，查到的是宿主机的 DNS 给的地址，之后的请求一直发到那里，重启管理后台才改得过来
+      MUGSUN_API_UPSTREAM: http://${MUGSUN_NET_PREFIX:-172.30.89}.12:8080
+      TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+      # 管理后台前面还有 TLS 终端或负载均衡时，写它的网段，逗号分隔；默认空，不采信任何前置代理传来的 X-Forwarded-For。
+      # 这个变量是 mugsun-pc 镜像的，名字里的「网关」指这种前置代理，不是 mugsun-cloud 的网关
+      MUGSUN_GATEWAY_CIDRS: ${MUGSUN_GATEWAY_CIDRS:-}
+      MUGSUN_CSP_TILE_HOSTS: ${MUGSUN_CSP_TILE_HOSTS:-}
+      MUGSUN_CSP_TRACK_HOSTS: ${MUGSUN_CSP_TRACK_HOSTS:-}
+    ports:
+      # 容器里 Nginx 以非 root 监听 8080；宿主机上默认只绑回环地址
+      - "${MUGSUN_HTTP_BIND:-127.0.0.1}:${MUGSUN_HTTP_PORT:-8188}:8080"
+    networks:
+      default:
+        ipv4_address: ${MUGSUN_NET_PREFIX:-172.30.89}.10
+    depends_on:
+      gateway:
+        condition: service_healthy
+      system:
+        condition: service_healthy
+    # 页面开着的时候有一条长连接，Nginx 等不到它自己断开，所以这里只等 10 秒
+    stop_grace_period: 10s
+    restart: unless-stopped
+
+  ready:
+    # 一次性提示：全部服务就绪后打印登录地址和查口令的命令，不打印口令。
+    # 它退出以后 docker compose up --wait 会误报失败，要用 --wait 时写明常驻的服务名，写法见 smoke.sh
+    image: mugsun-cloud-init:local
+    pull_policy: never
+    depends_on:
+      pc:
+        condition: service_healthy
+      gis:
+        condition: service_healthy
+      track:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    environment:
+      MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        printf '%s\n' \
+          '' \
+          '========================================' \
+          ' mugsun-cloud 已就绪' \
+          " 登录: http://127.0.0.1:$${MUGSUN_HTTP_PORT}" \
+          ' 账号: admin' \
+          ' 查看口令（口令本身不打印在此）:' \
+          '   docker compose -f deploy/docker/docker-compose.yml run --rm init show' \
+          '========================================' \
+          ''
+
+networks:
+  default:
+    ipam:
+      config:
+        # 固定地址：.10 管理后台（网关只采信它传来的客户端地址）、.11 Nacos、.12 网关、.13 PostgreSQL、.14 Redis。
+        # 四个业务服务和一次性的容器只在 .128/25 里分配地址，拿不到上面这几个。网段和这些地址都由 MUGSUN_NET_PREFIX 一个变量决定
+        - subnet: ${MUGSUN_NET_PREFIX:-172.30.89}.0/24
+          ip_range: ${MUGSUN_NET_PREFIX:-172.30.89}.128/25
+
+volumes:
+  secrets-service:
+  secrets-gateway:
+  secrets-postgres:
+  secrets-redis:
+  secrets-nacos:
+  secrets-nacos-admin:
+  pg-data:
+  redis-data:
+  nacos-data:
+  files:
