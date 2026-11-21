@@ -207,7 +207,8 @@ services:
         condition: service_healthy
       nacos-init:
         condition: service_completed_successfully
-    # 停止时先把手上的请求处理完再退出：四个服务最多等 20 秒，网关最多等 30 秒，所以都给 40 秒
+    # 停止时四个服务先从 Nacos 注销、照常应答 8 秒，再把手上的请求处理完（最多等 20 秒）；
+    # 网关不等那 8 秒，手上的请求最多等 30 秒。所以都给 40 秒
     stop_grace_period: 40s
     restart: unless-stopped
 
