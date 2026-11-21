@@ -14,8 +14,9 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-gateway` | 8080 | 网关，WebFlux 栈，不依赖公共层 |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务，对应 `mugsun-boot-core` |
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务，对应 `mugsun-boot-gis`，可以不部署 |
+| `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务，对应 `mugsun-boot-track`，可以不部署 |
 
-预留的端口：track 8103、ai 8104。服务名是 `mugsun-<名字>`，如 `mugsun-system`。
+预留的端口：ai 8104。服务名是 `mugsun-<名字>`，如 `mugsun-system`。
 
 ## 两类代码
 
@@ -50,12 +51,16 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 ## 服务的约定
 
-- 启动类上的注解和 mugsun-boot 的 `MugsunApplication` 保持一致，只多扫描 `com.mugsun.cloud` 下自己的包。
+- 启动类上的注解和 mugsun-boot 的 `MugsunApplication` 保持一致，只多扫描 `com.mugsun.cloud` 下自己的包。有意不一样的地方写在启动类的注释里。
 - `application.yml` 分两段：第一段只写 `spring.config.import`，先引入 `mugsun-boot-defaults.yml` 再引入 `mugsun-cloud-defaults.yml`；第二段写端口和服务名。各服务都一样的配置写进 `mugsun-cloud-defaults.yml`。
+- 从 boot 同步来的 `application-prod.yml` 等 profile 文件，优先级比各服务的 `application.yml` 和 `mugsun-cloud-defaults.yml` 都高。要把一个配置项固定住，先查 profile 文件里有没有设它：设了的话写配置固定不住，要用代码。
 - `/inner` 开头的路径留给服务之间调用的内部接口，网关不对外转发。对外的接口不要用这个前缀。服务之间目前还没有调用。
-- 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。
+- 服务之间要传消息时，先看能不能走共用的主库和 Redis，不行再设计 `/inner` 接口和它的鉴权。track 发告警站内信就是写主库的消息表，实时推送发到 Redis，由 system 投递给在线用户。所以 `mugsun.websocket.sender-type` 固定为 `redis`。
+- 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。埋点库是另一个库，由 track 自己迁移。
 - 有些状态各进程在内存里各存一份，又只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源。其它服务靠公共层的 `SharedStateSyncTask` 定时重新加载，新增这类状态时要在那里补上。system 自己不跑这个任务，所以 system 目前只能部署一个实例。
-- 可选模块的服务可以不部署。system 用 `CloudGisModuleStatus` 这样的类查注册中心，决定菜单显不显示；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`。
+- 可选模块的服务可以不部署。system 用 `CloudGisModuleStatus`、`CloudTrackModuleStatus` 这样的类查注册中心，决定菜单显不显示；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`、`TrackModuleRequired`。
+- 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器和拦截器：新服务带了它们保护的功能，就把它们划进公共层。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
+- PowerJob 执行器只在 system 上启动：同一个应用名下的执行器，调度中心派任务时不加区分。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 构建和测试
@@ -81,7 +86,7 @@ python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 
 - Conventional Commits，主题中文，不超过 50 字，不用 emoji。一个提交只做一件事。
 - 直接在 `main` 上提交和推送，不另建分支。推之前 `./mvnw -B verify` 和 `sync_from_boot.py --locked --check` 都要通过。
-- scope 用模块名：`gateway`、`common`、`system`、`gis`、`sync`、`deploy`、`build`。
+- scope 用模块名：`gateway`、`common`、`system`、`gis`、`track`、`sync`、`deploy`、`build`。
 - 同步 mugsun-boot 代码单独做一个提交，类型用 `chore(sync)`，正文写 mugsun-boot 的提交号。
 - `CHANGELOG.md` 写在 `## [Unreleased]` 下，每行不超过 80 字。
 - 提交身份和 mugsun-boot 用同一个，只在仓库级配置里设，不改全局配置。
