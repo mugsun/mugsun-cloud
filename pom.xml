@@ -30,6 +30,7 @@
 
 	<modules>
 		<module>mugsun-cloud-common</module>
+		<module>mugsun-cloud-gateway</module>
 		<module>mugsun-cloud-service</module>
 	</modules>
 

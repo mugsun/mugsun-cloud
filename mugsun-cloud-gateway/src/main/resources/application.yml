@@ -1,0 +1,78 @@
+# mugsun-cloud 网关。对外只开网关这一个端口（默认 8080，和单体版 mugsun-boot 一样），接口路径和单体版一致。
+
+server:
+  port: 8080
+  shutdown: graceful
+  # 必须是 none，改成别的值网关拒绝启动。native / framework 会不分来源地采信请求里的 X-Forwarded-*，
+  # 客户端可以冒充别的地址；不写的话，在 Kubernetes 等平台上默认就是 native。
+  # 网关前面有反向代理时，用最下面的 mugsun.gateway.trusted-proxies 写明代理地址
+  forward-headers-strategy: none
+  netty:
+    # 请求行（地址加查询串）的长度上限。默认 4KB，后端 Tomcat 是 8KB；不调大的话，单体版能收的长查询串在网关会被拒
+    max-initial-line-length: 8KB
+
+spring:
+  application:
+    name: mugsun-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
+        username: ${MUGSUN_NACOS_USERNAME:}
+        password: ${MUGSUN_NACOS_PASSWORD:}
+        namespace: ${MUGSUN_NACOS_NAMESPACE:}
+        group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
+        # 注册到注册中心的本机地址；留空自动取第一块非回环网卡，多网卡或开着 VPN 时建议写明
+        ip: ${MUGSUN_SERVICE_IP:}
+    loadbalancer:
+      cache:
+        # 服务实例列表的缓存时间。默认 35 秒，服务重启后要等这么久才切到新实例，调短
+        ttl: 5s
+    gateway:
+      server:
+        webflux:
+          # X-Forwarded-* 只由 ClientAddressFilter 写。下面两项保持 false：自带的处理不启用，客户端带来的转发头在转发前全部删掉。
+          # 不要设置 spring.cloud.gateway.server.webflux.trusted-proxies，可信代理写在最下面的 mugsun.gateway.trusted-proxies
+          x-forwarded:
+            enabled: false
+          forwarded:
+            enabled: false
+          httpclient:
+            # 连后端服务的超时（毫秒）。不设响应超时：导出、流式输出这类长请求和单体版一样不被中途切断
+            connect-timeout: 3000
+            pool:
+              # 要小于后端 Tomcat 保持空闲连接的时间（默认 60 秒），否则会取到已经被后端关掉的连接
+              max-idle-time: 30s
+          # 跨域只由网关应答：预检请求到不了后面的服务，服务自己写的跨域响应头也会被网关去掉（DownstreamCorsHeadersFilter）。
+          # 规则和 mugsun-boot 的 CorsConfig 一致：任意来源、不带 Cookie；boot 改了跨域规则时这里要跟着改
+          globalcors:
+            cors-configurations:
+              '[/**]':
+                allowed-origin-patterns: "*"
+                allowed-headers: "*"
+                allowed-methods: "*"
+                allow-credentials: false
+                max-age: 3600
+          # 路由按顺序匹配，范围小的写在前面，最后一条兜底。拆出新服务时在 mugsun-system 前面加一条
+          routes:
+            - id: mugsun-system
+              uri: lb://mugsun-system
+              predicates:
+                - Path=/**
+
+management:
+  endpoints:
+    web:
+      # 网关自己的健康检查在 /_gateway/health。/actuator 让给后面的服务：前端监控页用的是后端的 /actuator
+      base-path: /_gateway
+      exposure:
+        include: health
+
+mugsun:
+  gateway:
+    # 网关前面的可信代理（Nginx、负载均衡）的地址段，逗号分隔，如 172.30.88.10/32。
+    # 只有请求直接来自这些地址时，才采信它带来的 X-Forwarded-For / -Proto / -Host / -Port；留空表示网关直接面向客户端。
+    # 变量名沿用单体版：原来配给后端的值，现在配给网关。
+    trusted-proxies: ${MUGSUN_OPENAPI_TRUSTED_PROXIES:}
+    # 服务之间互相调用的内部接口的路径前缀，网关不对外转发
+    inner-path: /inner
