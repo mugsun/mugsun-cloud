@@ -36,7 +36,10 @@
       "demo.DemoLimitFilter",
       "demo.DemoSqlPermissionResolver",
       "demo.DemoCapacityGate",
-      "demo.DemoSchemaGuard"
+      "demo.DemoSchemaGuard",
+      "message.MessageService",
+      "websocket.RedisWsMessageSender",
+      "system.file.LocalFileAccessFilter"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -57,6 +60,7 @@
     { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" }
   ],
   "modules": [
-    { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" }
+    { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" },
+    { "module": "mugsun-boot-track", "target": "mugsun-cloud-service/mugsun-cloud-track" }
   ]
 }
