@@ -58,7 +58,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - `/inner` 开头的路径留给服务之间调用的内部接口，网关不对外转发。对外的接口不要用这个前缀。写法见下面的「服务之间的调用」。
 - 服务之间要传消息时，先看能不能走共用的主库和 Redis，不行再加内部接口。track 发告警站内信就是写主库的消息表，实时推送发到 Redis，由 system 投递给在线用户。所以 `mugsun.websocket.sender-type` 固定为 `redis`。删租户时清它的 AI 密钥也是 system 直接删主库里的表（`CloudAiSecretPurger`），不调 ai 服务。
 - 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。埋点库是另一个库，由 track 自己迁移。
-- 有些状态各进程在内存里各存一份，又只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源。其它服务靠公共层的 `SharedStateSyncTask` 定时重新加载，新增这类状态时要在那里补上。system 自己不跑这个任务，所以 system 目前只能部署一个实例。
+- 有些状态以库里的为准，各进程又在内存里各存一份，只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源。每个服务的每个实例（包括 system）都跑公共层的 `SharedStateSyncTask`：保存的那个实例由 `SharedStateChangeAspect` 把 Redis 里的版本换成新值，各实例每秒读一次，变了就从库里重新加载，另有每 30 秒一次的加载兜底。新增这类状态时两处都要补：在 `SharedStateSyncTask` 里加上重新加载，在 `SharedStateChangeAspect` 的切点里加上保存时调用的那个方法。
+- system 可以部署多个实例，写 system 的代码时按多实例考虑：状态放库里或 Redis 里，只放在内存里的要有办法让别的实例跟上。启动时「先查有没有，没有就改表或插入」的代码，要在公共层的 `StartupLock` 持锁期间执行：写成 `CommandLineRunner`、`ApplicationRunner`，或者监听 `ApplicationReadyEvent`，不要写在 `@PostConstruct` 里，那时还没有占到锁。
 - 可选模块的服务可以不部署。system 用 `CloudGisModuleStatus`、`CloudTrackModuleStatus`、`CloudAiModuleStatus` 这样的类查注册中心，决定菜单显不显示；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`、`TrackModuleRequired`、`AiModuleRequired`。
 - mugsun-boot 的可选模块里有些类要和 system 的代码在同一个进程里才起作用，拆成服务后要在 system 里补上对应的东西。现有两处：
   - 删租户时清凭据的 `TenantCredentialPurger`。AI 模块的实现在 ai 服务里，system 用 `CloudAiSecretPurger` 顶上。各可选服务的 `TenantPurgerGuardTest` 会在 mugsun-boot 新增这类实现时失败，提醒在 system 里补上。
@@ -89,11 +90,12 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 口令和密钥不写进编排文件、镜像、容器的环境变量和启动参数，也不打进日志。它们由 `gen-secrets.sh` 在首次启动时生成，按使用方分卷，每个容器只挂自己要读的那一个。新增一个密钥时先想清楚谁要读它，写进对应的文件。
 - 映射到宿主机的只有管理后台一个端口，默认只绑 `127.0.0.1`。不要给网关、各服务、Nacos、数据库和 Redis 加端口映射。
 - 要被别的容器找到的容器用固定地址，连接配置里写地址，不写容器名。容器没在运行时，Docker 会把它的名字交给宿主机的 DNS 去查，请求和口令会发到查到的地址；Nginx 还只在启动时查一次。四个业务服务不用固定地址，它们经 Nacos 被找到。
+- system 的实例数由 `MUGSUN_SYSTEM_REPLICAS` 定，默认一个。不要给 system 写 `container_name` 和固定地址，否则起不了第二个实例。自检默认起两个 system 实例，写检查时一个服务按可能有几个容器处理。
 - 常驻的服务都写 `restart: unless-stopped` 和 `stop_grace_period`。不写停止时等多久的话，有的环境里 Docker 只等 1 秒就强杀。
 - 镜像和源码都要钉死：基础镜像和第三方镜像写摘要，从 GitHub 取的源码写 40 位提交号。和 mugsun-boot 共用的那几个，同步时跟着改，见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。PostgreSQL 的镜像是例外，和单体版一样按标签取。
 - `deploy/docker/boot/` 是从 mugsun-boot 同步来的，不要手改。
 - 网关和各服务的镜像默认按 `prod` 配置运行。不要为了让编排好起而换成 `dev`。
-- 改了 `deploy/docker` 下的文件，跑一遍 `deploy/docker/smoke.sh`。它从零起一套独立的环境，逐项检查上面这些约定，再重启 Nacos、把全部容器停掉打乱顺序重新启动，看能不能自己恢复。新加的约定要在里面补上检查。
+- 改了 `deploy/docker` 下的文件，跑一遍 `deploy/docker/smoke.sh`。它从零起一套独立的环境，逐项检查上面这些约定和两个 system 实例之间的一致，再重启 Nacos、把全部容器停掉打乱顺序重新启动，看能不能自己恢复。新加的约定要在里面补上检查。
 
 ## 构建和测试
 
