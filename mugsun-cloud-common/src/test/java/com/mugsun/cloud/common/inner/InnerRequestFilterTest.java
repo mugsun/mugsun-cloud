@@ -1,11 +1,16 @@
 package com.mugsun.cloud.common.inner;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mugsun.boot.tenant.TenantContext;
 import com.mugsun.core.tool.exception.ServiceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -19,6 +24,13 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -41,19 +53,23 @@ class InnerRequestFilterTest {
 
 	private final ObjectMapper mapper = new ObjectMapper();
 
-	private final Set<String> seenNonces = new HashSet<>();
+	// 下面几个容器会被几个同时在跑的请求一起写（测并发上限的那几条），所以用能并发写的
+	private final Set<String> seenNonces = ConcurrentHashMap.newKeySet();
 
-	private final List<Duration> nonceTtls = new ArrayList<>();
+	private final List<Duration> nonceTtls = new CopyOnWriteArrayList<>();
 
-	private final List<InnerCall> calls = new ArrayList<>();
+	private final List<InnerCall> calls = new CopyOnWriteArrayList<>();
 
-	private final List<String> tenantRawInside = new ArrayList<>();
+	private final List<String> tenantRawInside = new CopyOnWriteArrayList<>();
 
-	private final List<Object[]> tenantIdsInside = new ArrayList<>();
+	private final List<Object[]> tenantIdsInside = new CopyOnWriteArrayList<>();
+
+	/** 要和别的请求同时跑的请求，放到这里面跑 */
+	private final ExecutorService background = Executors.newVirtualThreadPerTaskExecutor();
 
 	private boolean nonceStoreBroken;
 
-	private Function<InnerCall, Object> behaviour = call -> Map.of("count", 3);
+	private volatile Function<InnerCall, Object> behaviour = call -> Map.of("count", 3);
 
 	private MockFilterChain chain;
 
@@ -62,6 +78,8 @@ class InnerRequestFilterTest {
 	@AfterEach
 	void clearTenant() {
 		TenantContext.clear();
+		InnerDeadline.clear();
+		background.shutdownNow();
 	}
 
 	// ---------- 不归这个过滤器管的路径 ----------
@@ -522,6 +540,246 @@ class InnerRequestFilterTest {
 		assertThat(bodies).hasSize(1);
 	}
 
+	// ---------- 同时处理的个数 ----------
+
+	/** 名额占满以后新来的请求得到带签名的「忙」，接口没有执行；占着名额的请求做完，名额就还回来 */
+	@Test
+	void whenAllSlotsAreTakenTheNextCallIsToldBusyWithoutRunning() throws Exception {
+		InnerRequestFilter filter = filter(limited(2, Duration.ofMillis(50)));
+		CountDownLatch entered = new CountDownLatch(2);
+		CountDownLatch release = holdCallsInside(entered);
+		Future<MockHttpServletResponse> first = inBackground(filter, signed(PATH, "000000", BODY));
+		Future<MockHttpServletResponse> second = inBackground(filter, signed(PATH, "000000", BODY));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+		MockHttpServletRequest third = signed(PATH, "000000", BODY);
+		MockHttpServletResponse refused = run(filter, third);
+
+		assertThat(refused.getStatus()).isEqualTo(200);
+		assertThat(okOf(refused)).isFalse();
+		assertThat(codeOf(refused)).isEqualTo("busy");
+		assertResponseSigned(third, refused);
+		assertThat(calls).as("第三个请求没有执行").hasSize(2);
+
+		release.countDown();
+		assertThat(okOf(first.get(5, TimeUnit.SECONDS))).isTrue();
+		assertThat(okOf(second.get(5, TimeUnit.SECONDS))).isTrue();
+		behaviour = call -> Map.of("count", 3);
+		assertThat(okOf(run(filter, signed(PATH, "000000", BODY)))).as("名额还回来了").isTrue();
+	}
+
+	/** 满了的时候先等一会儿：等的这段时间里有名额空出来就接着做，不回「忙」 */
+	@Test
+	void aWaitingCallTakesTheSlotAsSoonAsOneIsFreed() throws Exception {
+		InnerRequestFilter filter = filter(limited(1, Duration.ofSeconds(10)));
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = holdCallsInside(entered);
+		Future<MockHttpServletResponse> first = inBackground(filter, signed(PATH, "000000", BODY));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+		Future<MockHttpServletResponse> waiting = inBackground(filter, signed(PATH, "000000", BODY));
+		Thread.sleep(100);
+		assertThat(waiting.isDone()).as("第二个请求在排队，既没有被拒绝").isFalse();
+		assertThat(calls).as("也没有进到接口里").hasSize(1);
+
+		release.countDown();
+
+		assertThat(okOf(first.get(5, TimeUnit.SECONDS))).isTrue();
+		assertThat(okOf(waiting.get(5, TimeUnit.SECONDS))).isTrue();
+		assertThat(calls).hasSize(2);
+	}
+
+	@Test
+	void theSlotIsGivenBackWhenTheEndpointFails() throws Exception {
+		InnerRequestFilter filter = filter(limited(1, Duration.ZERO));
+
+		behaviour = call -> {
+			throw new IllegalStateException("boom");
+		};
+		assertThat(run(filter, signed(PATH, "000000", BODY)).getStatus()).isEqualTo(500);
+		behaviour = call -> {
+			throw new ServiceException("图层模块没有启用");
+		};
+		assertThat(codeOf(run(filter, signed(PATH, "000000", BODY)))).isEqualTo("business");
+		behaviour = call -> Map.of("count", 3);
+
+		assertThat(okOf(run(filter, signed(PATH, "000000", BODY)))).isTrue();
+	}
+
+	/** 按接口分开限：一个接口卡住、名额占满，别的接口照常用 */
+	@Test
+	void oneFullEndpointDoesNotHoldUpAnother() throws Exception {
+		String otherPath = "/inner/gis/layer/count";
+		InnerRequestFilter filter = new InnerRequestFilter(limited(1, Duration.ZERO), nonceStore(), mapper, SELF,
+			() -> List.of(endpoint(PATH), endpoint(otherPath)), () -> NOW);
+		filter.afterSingletonsInstantiated();
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		behaviour = call -> {
+			if (call.body().path("hold").asBoolean()) {
+				entered.countDown();
+				await(release);
+			}
+			return Map.of("count", 3);
+		};
+		Future<MockHttpServletResponse> held = inBackground(filter,
+			signed(PATH, "000000", "{\"hold\":true}".getBytes(StandardCharsets.UTF_8)));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+		assertThat(codeOf(run(filter, signed(PATH, "000000", BODY)))).isEqualTo("busy");
+		assertThat(okOf(run(filter, signed(otherPath, "000000", BODY)))).as("另一个接口").isTrue();
+
+		release.countDown();
+		assertThat(okOf(held.get(5, TimeUnit.SECONDS))).isTrue();
+	}
+
+	/** 验签通过的请求才来占名额、排队：没有密钥的人既占不满名额，也探测不出接口忙不忙 */
+	@Test
+	void callsThatFailTheSignatureCheckNeverQueueForASlot() throws Exception {
+		InnerRequestFilter filter = filter(limited(1, Duration.ofSeconds(10)));
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = holdCallsInside(entered);
+		Future<MockHttpServletResponse> held = inBackground(filter, signed(PATH, "000000", BODY));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+		MockHttpServletResponse forged = run(filter,
+			request(PATH, CALLER, "000000", Long.toString(NOW), nonce(), BODY, SELF, wrongSecret()));
+
+		assertThat(forged.getStatus()).isEqualTo(401);
+		release.countDown();
+		assertThat(okOf(held.get(5, TimeUnit.SECONDS))).isTrue();
+	}
+
+	/** 忙的时候不能每个被拒绝的请求刷一行日志：一段时间里只留一行 */
+	@Test
+	void busyAnswersAreLoggedOnceInAWhileNotOncePerCall() throws Exception {
+		InnerRequestFilter filter = filter(limited(1, Duration.ZERO));
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = holdCallsInside(entered);
+		Future<MockHttpServletResponse> held = inBackground(filter, signed(PATH, "000000", BODY));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+		Logger logger = (Logger) LoggerFactory.getLogger(InnerRequestFilter.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			for (int i = 0; i < 5; i++) {
+				assertThat(codeOf(run(filter, signed(PATH, "000000", BODY)))).isEqualTo("busy");
+			}
+		} finally {
+			logger.detachAppender(appender);
+		}
+
+		List<String> warnings = appender.list.stream()
+			.filter(event -> event.getLevel() == Level.WARN)
+			.map(ILoggingEvent::getFormattedMessage)
+			.toList();
+		assertThat(warnings).hasSize(1);
+		assertThat(warnings.get(0)).contains(PATH, "忙", "max-concurrent");
+		release.countDown();
+		held.get(5, TimeUnit.SECONDS);
+	}
+
+	// ---------- 调用方等多久 ----------
+
+	/** 调用方说了最多等多久：接口执行期间查得到还剩多少时间（给查询设时限用），执行完就清掉 */
+	@Test
+	void theCallersWaitIsKnownWhileTheEndpointRunsAndForgottenAfterwards() throws Exception {
+		List<Integer> secondsLeft = new ArrayList<>();
+		behaviour = call -> {
+			secondsLeft.add(InnerDeadline.secondsLeft());
+			return Map.of();
+		};
+		MockHttpServletRequest request = signed(PATH, "000000", BODY);
+		request.addHeader(InnerProtocol.HEADER_WAIT, "7000");
+
+		MockHttpServletResponse response = run(filter(), request);
+
+		assertThat(response.getStatus()).isEqualTo(200);
+		assertThat(secondsLeft).hasSize(1);
+		assertThat(secondsLeft.get(0)).isBetween(6, 7);
+		assertThat(InnerDeadline.active()).isFalse();
+	}
+
+	/** 没带这个头（旧版本的调用方）或者写得不对：调用照常执行，只是没有时限 */
+	@Test
+	void withoutAUsableWaitHeaderTheCallRunsWithoutADeadline() throws Exception {
+		for (String value : new String[] {null, "", "0", "abc", "-5", "7.5", "7000ms", "99999999999"}) {
+			List<Boolean> active = new ArrayList<>();
+			behaviour = call -> {
+				active.add(InnerDeadline.active());
+				return Map.of();
+			};
+			MockHttpServletRequest request = signed(PATH, "000000", BODY);
+			if (value != null) {
+				request.addHeader(InnerProtocol.HEADER_WAIT, value);
+			}
+
+			MockHttpServletResponse response = run(filter(), request);
+
+			assertThat(response.getStatus()).as(String.valueOf(value)).isEqualTo(200);
+			assertThat(active).as(String.valueOf(value)).containsExactly(false);
+		}
+	}
+
+	/** 这个头不在签名里，所以不管它写多少，都限制在 1 秒到 long-read-timeout（默认 120 秒）之间 */
+	@Test
+	void theCallersWaitIsKeptWithinBounds() throws Exception {
+		List<Integer> secondsLeft = new ArrayList<>();
+		List<Boolean> passedAfterAWhile = new ArrayList<>();
+		behaviour = call -> {
+			secondsLeft.add(InnerDeadline.secondsLeft());
+			pause(50);
+			passedAfterAWhile.add(InnerDeadline.passed());
+			return Map.of();
+		};
+		for (String value : List.of("5", "999999999")) {
+			MockHttpServletRequest request = signed(PATH, "000000", BODY);
+			request.addHeader(InnerProtocol.HEADER_WAIT, value);
+			run(filter(), request);
+		}
+
+		assertThat(secondsLeft).hasSize(2);
+		assertThat(secondsLeft.get(0)).isEqualTo(1);
+		assertThat(passedAfterAWhile.get(0)).as("写 5 毫秒也按 1 秒算：过了 50 毫秒还没到点").isFalse();
+		assertThat(secondsLeft.get(1)).isBetween(119, 120);
+	}
+
+	@Test
+	void theDeadlineIsForgottenEvenWhenTheEndpointFails() throws Exception {
+		behaviour = call -> {
+			throw new IllegalStateException("boom");
+		};
+		MockHttpServletRequest request = signed(PATH, "000000", BODY);
+		request.addHeader(InnerProtocol.HEADER_WAIT, "7000");
+
+		MockHttpServletResponse response = run(filter(), request);
+
+		assertThat(response.getStatus()).isEqualTo(500);
+		assertThat(InnerDeadline.active()).isFalse();
+	}
+
+	/** 调用方只等 1 秒的话，排队也最多排 1 秒，不按 max-wait 排满：再排下去，轮到了也没人要结果 */
+	@Test
+	void queueingNeverOutlastsTheCaller() throws Exception {
+		InnerRequestFilter filter = filter(limited(1, Duration.ofSeconds(60)));
+		CountDownLatch entered = new CountDownLatch(1);
+		CountDownLatch release = holdCallsInside(entered);
+		Future<MockHttpServletResponse> held = inBackground(filter, signed(PATH, "000000", BODY));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+		MockHttpServletRequest request = signed(PATH, "000000", BODY);
+		request.addHeader(InnerProtocol.HEADER_WAIT, "1000");
+
+		long started = System.nanoTime();
+		MockHttpServletResponse response = run(filter, request);
+		long elapsedMillis = (System.nanoTime() - started) / 1_000_000;
+
+		assertThat(codeOf(response)).isEqualTo("busy");
+		assertThat(elapsedMillis).isBetween(900L, 30_000L);
+		release.countDown();
+		held.get(5, TimeUnit.SECONDS);
+	}
+
 	// ---------- 启动时的检查 ----------
 
 	@Test
@@ -600,6 +858,61 @@ class InnerRequestFilterTest {
 				return behaviour.apply(call);
 			}
 		};
+	}
+
+	private static InnerProperties limited(int maxConcurrent, Duration maxWait) {
+		InnerProperties properties = properties();
+		properties.setMaxConcurrent(maxConcurrent);
+		properties.setMaxWait(maxWait);
+		return properties;
+	}
+
+	/** 让接下来的调用进到接口里就停住，直到返回的闩被放开；每进去一个，entered 减一 */
+	private CountDownLatch holdCallsInside(CountDownLatch entered) {
+		CountDownLatch release = new CountDownLatch(1);
+		behaviour = call -> {
+			entered.countDown();
+			await(release);
+			return Map.of("count", 3);
+		};
+		return release;
+	}
+
+	private static void pause(long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		}
+	}
+
+	private static void await(CountDownLatch latch) {
+		try {
+			if (!latch.await(30, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("测试一直没有放行");
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		}
+	}
+
+	/** 在另一个线程里跑一个请求，不等它结束 */
+	private Future<MockHttpServletResponse> inBackground(InnerRequestFilter filter, MockHttpServletRequest request) {
+		return background.submit(() -> {
+			MockHttpServletResponse response = new MockHttpServletResponse();
+			filter.doFilter(request, response, new MockFilterChain());
+			return response;
+		});
+	}
+
+	private boolean okOf(MockHttpServletResponse response) throws Exception {
+		return mapper.readTree(response.getContentAsByteArray()).path("ok").asBoolean();
+	}
+
+	private String codeOf(MockHttpServletResponse response) throws Exception {
+		return mapper.readTree(response.getContentAsByteArray()).path("code").asText();
 	}
 
 	private InnerRequestFilter filter() {

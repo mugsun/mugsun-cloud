@@ -106,17 +106,65 @@ class InnerPropertiesTest {
 		assertThatThrownBy(response::validate).hasMessageContaining("max-response-size");
 	}
 
+	/** 不配时：每个内部接口同时处理 5 个，满了等 2 秒；接连失败 3 次熔断，停 10 秒 */
+	@Test
+	void concurrencyAndBreakerDefaults() {
+		InnerProperties properties = new InnerProperties();
+		properties.validate();
+
+		assertThat(properties.getMaxConcurrent()).isEqualTo(5);
+		assertThat(properties.getMaxWait()).isEqualTo(Duration.ofSeconds(2));
+		assertThat(properties.getBreakerFailures()).isEqualTo(3);
+		assertThat(properties.getBreakerPause()).isEqualTo(Duration.ofSeconds(10));
+	}
+
+	@Test
+	void concurrencyAndBreakerSettingsAreChecked() {
+		InnerProperties concurrent = new InnerProperties();
+		concurrent.setMaxConcurrent(0);
+		assertThatThrownBy(concurrent::validate).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("max-concurrent");
+
+		InnerProperties wait = new InnerProperties();
+		wait.setMaxWait(Duration.ofSeconds(-1));
+		assertThatThrownBy(wait::validate).isInstanceOf(IllegalStateException.class).hasMessageContaining("max-wait");
+
+		InnerProperties failures = new InnerProperties();
+		failures.setBreakerFailures(-1);
+		assertThatThrownBy(failures::validate).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("breaker-failures");
+
+		InnerProperties pause = new InnerProperties();
+		pause.setBreakerPause(Duration.ZERO);
+		assertThatThrownBy(pause::validate).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("breaker-pause");
+	}
+
+	/** 不排队（max-wait 为 0）和不熔断（breaker-failures 为 0）都是允许的写法 */
+	@Test
+	void zeroWaitAndZeroFailuresAreAllowed() {
+		InnerProperties properties = new InnerProperties();
+		properties.setMaxWait(Duration.ZERO);
+		properties.setBreakerFailures(0);
+
+		assertThatCode(properties::validate).doesNotThrowAnyException();
+	}
+
 	/** 配置文件里的写法能绑上：密钥只有 setter 没有 getter，也要能绑 */
 	@Test
 	void bindsFromConfiguration() {
-		MapConfigurationPropertySource source = new MapConfigurationPropertySource(Map.of(
-			"mugsun.cloud.inner.secret", SECRET,
-			"mugsun.cloud.inner.clock-skew", "30s",
-			"mugsun.cloud.inner.connect-timeout", "1s",
-			"mugsun.cloud.inner.read-timeout", "5s",
-			"mugsun.cloud.inner.long-read-timeout", "90s",
-			"mugsun.cloud.inner.max-request-size", "2MB",
-			"mugsun.cloud.inner.max-response-size", "16MB"));
+		MapConfigurationPropertySource source = new MapConfigurationPropertySource(Map.ofEntries(
+			Map.entry("mugsun.cloud.inner.secret", SECRET),
+			Map.entry("mugsun.cloud.inner.clock-skew", "30s"),
+			Map.entry("mugsun.cloud.inner.connect-timeout", "1s"),
+			Map.entry("mugsun.cloud.inner.read-timeout", "5s"),
+			Map.entry("mugsun.cloud.inner.long-read-timeout", "90s"),
+			Map.entry("mugsun.cloud.inner.max-request-size", "2MB"),
+			Map.entry("mugsun.cloud.inner.max-response-size", "16MB"),
+			Map.entry("mugsun.cloud.inner.max-concurrent", "16"),
+			Map.entry("mugsun.cloud.inner.max-wait", "500ms"),
+			Map.entry("mugsun.cloud.inner.breaker-failures", "5"),
+			Map.entry("mugsun.cloud.inner.breaker-pause", "30s")));
 
 		InnerProperties properties = new Binder(source).bind("mugsun.cloud.inner", InnerProperties.class).get();
 		properties.validate();
@@ -129,5 +177,9 @@ class InnerPropertiesTest {
 		assertThat(properties.getLongReadTimeout()).isEqualTo(Duration.ofSeconds(90));
 		assertThat(properties.getMaxRequestSize()).isEqualTo(DataSize.ofMegabytes(2));
 		assertThat(properties.getMaxResponseSize()).isEqualTo(DataSize.ofMegabytes(16));
+		assertThat(properties.getMaxConcurrent()).isEqualTo(16);
+		assertThat(properties.getMaxWait()).isEqualTo(Duration.ofMillis(500));
+		assertThat(properties.getBreakerFailures()).isEqualTo(5);
+		assertThat(properties.getBreakerPause()).isEqualTo(Duration.ofSeconds(30));
 	}
 }

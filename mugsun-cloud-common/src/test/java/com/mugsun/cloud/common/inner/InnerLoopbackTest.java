@@ -29,6 +29,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -62,7 +68,13 @@ class InnerLoopbackTest {
 
 	private final List<String> traceIdsReceived = new ArrayList<>();
 
-	private Function<InnerCall, Object> behaviour = call -> {
+	/** 测试用的服务器在这里面处理请求：一个请求一个线程，几个请求能同时在处理 */
+	private final ExecutorService serverThreads = Executors.newVirtualThreadPerTaskExecutor();
+
+	/** 要和别的调用同时进行的调用，放到这里面发 */
+	private final ExecutorService background = Executors.newVirtualThreadPerTaskExecutor();
+
+	private volatile Function<InnerCall, Object> behaviour = call -> {
 		Map<String, Object> snapshot = new LinkedHashMap<>();
 		snapshot.put("layer", call.body().path("layer").asText());
 		snapshot.put("features", 128);
@@ -71,7 +83,7 @@ class InnerLoopbackTest {
 	};
 
 	/** 服务端写回响应之前可以在这里动手脚，模拟中途被改 */
-	private Function<byte[], byte[]> tamper = body -> body;
+	private volatile Function<byte[], byte[]> tamper = body -> body;
 
 	private HttpServer server;
 
@@ -84,6 +96,8 @@ class InnerLoopbackTest {
 	@AfterEach
 	void stop() {
 		server.stop(0);
+		background.shutdownNow();
+		serverThreads.shutdownNow();
 		TenantContext.clear();
 	}
 
@@ -188,7 +202,71 @@ class InnerLoopbackTest {
 		assertThat(e.kind()).isEqualTo(Kind.FAILED);
 	}
 
+	/** 对方的名额占满时，调用方得到的是「对方正忙」，对方也确实没有执行：「忙」这个回答过了真的网络，签名仍然对得上 */
+	@Test
+	void whenTheOtherSideIsFullTheCallFailsAsBusyAndIsNotExecuted() throws Exception {
+		InnerProperties serverSide = properties(SECRET);
+		serverSide.setMaxConcurrent(1);
+		serverSide.setMaxWait(Duration.ZERO);
+		HttpServer full = serve(filter(serverSide));
+		try {
+			when(discovery.getInstances(TARGET)).thenReturn(List.of(instance(full.getAddress().getPort())));
+			CountDownLatch entered = new CountDownLatch(1);
+			CountDownLatch release = new CountDownLatch(1);
+			behaviour = call -> {
+				entered.countDown();
+				await(release);
+				return Map.of("features", 128);
+			};
+			InnerClient client = client(SECRET);
+			Future<JsonNode> first = background.submit(
+				() -> TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of())));
+			assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+			InnerCallException e = catchThrowableOfType(InnerCallException.class,
+				() -> TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of())));
+
+			assertThat(e.kind()).isEqualTo(Kind.BUSY);
+			synchronized (calls) {
+				assertThat(calls).as("第二次调用对方没有执行").hasSize(1);
+			}
+			release.countDown();
+			assertThat(first.get(5, TimeUnit.SECONDS).path("features").asInt()).isEqualTo(128);
+		} finally {
+			full.stop(0);
+		}
+	}
+
+	/** 调用方最多等多久，对方是知道的（对方据此给这次调用里的查询设时限）：这个请求头过了真的 HTTP 客户端仍然到得了 */
+	@Test
+	void theOtherSideKnowsHowLongTheCallerWillWait() {
+		List<Integer> secondsLeft = new CopyOnWriteArrayList<>();
+		behaviour = call -> {
+			secondsLeft.add(InnerDeadline.secondsLeft());
+			return Map.of();
+		};
+		InnerClient client = client(SECRET);
+
+		TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of(), Duration.ofSeconds(30)));
+
+		assertThat(secondsLeft).hasSize(2);
+		assertThat(secondsLeft.get(0)).isBetween(9, 10);
+		assertThat(secondsLeft.get(1)).isBetween(29, 30);
+	}
+
 	// ---------- 辅助 ----------
+
+	private static void await(CountDownLatch latch) {
+		try {
+			if (!latch.await(30, TimeUnit.SECONDS)) {
+				throw new IllegalStateException("测试一直没有放行");
+			}
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException(e);
+		}
+	}
 
 	private static InnerProperties properties(String secret) {
 		InnerProperties properties = new InnerProperties();
@@ -211,6 +289,10 @@ class InnerLoopbackTest {
 	}
 
 	private InnerRequestFilter filter(String secret) {
+		return filter(properties(secret));
+	}
+
+	private InnerRequestFilter filter(InnerProperties properties) {
 		InnerNonceStore nonceStore = new InnerNonceStore(null, TARGET) {
 			@Override
 			public synchronized boolean firstUse(String nonce, Duration ttl) {
@@ -232,7 +314,7 @@ class InnerLoopbackTest {
 				return behaviour.apply(call);
 			}
 		};
-		InnerRequestFilter filter = new InnerRequestFilter(properties(secret), nonceStore, mapper, TARGET,
+		InnerRequestFilter filter = new InnerRequestFilter(properties, nonceStore, mapper, TARGET,
 			() -> List.of(endpoint), System::currentTimeMillis);
 		filter.afterSingletonsInstantiated();
 		return filter;
@@ -250,6 +332,7 @@ class InnerLoopbackTest {
 				exchange.close();
 			}
 		});
+		http.setExecutor(serverThreads);
 		http.start();
 		return http;
 	}

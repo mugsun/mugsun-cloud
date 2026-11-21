@@ -73,6 +73,8 @@ class RemoteInsightPort implements ModuleInsightPort {
 			throw new ServiceException(switch (e.kind()) {
 				case NO_INSTANCE -> offline();
 				case NOT_CONFIGURED -> "服务之间的内部调用没有开通，无法查询" + subject + "，请联系管理员";
+				// 对方在，只是这会儿处理不过来：照实说，免得让人以为是坏了
+				case BUSY -> label + "服务正忙，请稍后再试";
 				default -> unavailable();
 			});
 		} catch (RuntimeException e) {

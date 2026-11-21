@@ -46,6 +46,21 @@ public class InnerProperties implements InitializingBean {
 	/** 接受的响应体上限 */
 	private DataSize maxResponseSize = DataSize.ofMegabytes(8);
 
+	/**
+	 * 本服务的每个内部接口同时最多处理几个请求。满了的时候新来的先等 {@link #maxWait}，还轮不到就回「忙」。
+	 * 默认 5，是数据库连接池（默认 10 个连接）的一半：内部接口的查询卡住时，本服务自己的接口还有连接可用
+	 */
+	private int maxConcurrent = 5;
+
+	/** 内部接口处理满了的时候，新来的请求最多等多久；0 是不等 */
+	private Duration maxWait = Duration.ofSeconds(2);
+
+	/** 替同一个租户调同一个实例的同一个接口接连失败几次就熔断（先不调它，直接报失败）；0 是不熔断 */
+	private int breakerFailures = 3;
+
+	/** 熔断以后停多久再放一个请求过去试 */
+	private Duration breakerPause = Duration.ofSeconds(10);
+
 	@Override
 	public void afterPropertiesSet() {
 		validate();
@@ -66,6 +81,17 @@ public class InnerProperties implements InitializingBean {
 		requirePositive("long-read-timeout", longReadTimeout);
 		requireSize("max-request-size", maxRequestSize);
 		requireSize("max-response-size", maxResponseSize);
+		if (maxConcurrent < 1) {
+			throw new IllegalStateException("mugsun.cloud.inner.max-concurrent 至少是 1，现在是 " + maxConcurrent);
+		}
+		if (maxWait == null || maxWait.isNegative()) {
+			throw new IllegalStateException("mugsun.cloud.inner.max-wait 不能是负数");
+		}
+		if (breakerFailures < 0) {
+			throw new IllegalStateException("mugsun.cloud.inner.breaker-failures 不能是负数（不想熔断就配 0），现在是 "
+				+ breakerFailures);
+		}
+		requirePositive("breaker-pause", breakerPause);
 	}
 
 	private static void requirePositive(String name, Duration value) {
@@ -139,5 +165,37 @@ public class InnerProperties implements InitializingBean {
 
 	public void setMaxResponseSize(DataSize maxResponseSize) {
 		this.maxResponseSize = maxResponseSize;
+	}
+
+	public int getMaxConcurrent() {
+		return maxConcurrent;
+	}
+
+	public void setMaxConcurrent(int maxConcurrent) {
+		this.maxConcurrent = maxConcurrent;
+	}
+
+	public Duration getMaxWait() {
+		return maxWait;
+	}
+
+	public void setMaxWait(Duration maxWait) {
+		this.maxWait = maxWait;
+	}
+
+	public int getBreakerFailures() {
+		return breakerFailures;
+	}
+
+	public void setBreakerFailures(int breakerFailures) {
+		this.breakerFailures = breakerFailures;
+	}
+
+	public Duration getBreakerPause() {
+		return breakerPause;
+	}
+
+	public void setBreakerPause(Duration breakerPause) {
+		this.breakerPause = breakerPause;
 	}
 }

@@ -56,7 +56,11 @@ import java.util.regex.Pattern;
  * 所以只有在单体版里本来就不看用户、只看租户的调用才能这样转；用户能不能做这件事，由调用方在发起调用之前判断。
  * 租户取 {@code TenantContext} 当前生效的那个；当前没有租户上下文时不发起调用。
  *
- * <p>连不上某个实例时换一个实例再试一次（比如对方正在滚动发布）。已经连上以后的失败不重试，因为对方可能已经执行过了。
+ * <p>连不上某个实例时换一个实例再试一次（比如对方正在滚动发布）；对方回「忙」时也换，那表示它这次没有执行。
+ * 已经连上以后的其它失败不重试，因为对方可能已经执行过了。
+ *
+ * <p>同一个租户调同一个实例的同一个接口接连失败几次以后，一段时间内不再调它，直接报失败（熔断，见 {@link InnerBreakers}）：
+ * 对方连得上却不回话的时候，用户不用每次都等到超时。各个租户分开记，一个租户自己的故障不连累别的租户。
  */
 @Component
 public class InnerClient {
@@ -87,6 +91,8 @@ public class InnerClient {
 
 	private final LongSupplier clock;
 
+	private final InnerBreakers breakers;
+
 	private final SecureRandom random = new SecureRandom();
 
 	/** 已经提示过「对方在、但本服务没配密钥」的服务名 */
@@ -100,6 +106,15 @@ public class InnerClient {
 
 	InnerClient(InnerProperties properties, DiscoveryClient discoveryClient, ObjectMapper objectMapper, String self,
 				Transport transport, LongSupplier clock) {
+		this(properties, discoveryClient, objectMapper, self, transport, clock, () -> System.nanoTime() / 1_000_000);
+	}
+
+	/**
+	 * @param clock  系统时间（毫秒），写进请求的时间戳
+	 * @param ticker 只增不减的毫秒数，熔断计时用
+	 */
+	InnerClient(InnerProperties properties, DiscoveryClient discoveryClient, ObjectMapper objectMapper, String self,
+				Transport transport, LongSupplier clock, LongSupplier ticker) {
 		this.properties = properties;
 		this.discoveryClient = discoveryClient;
 		this.objectMapper = objectMapper;
@@ -109,6 +124,7 @@ public class InnerClient {
 		this.self = self;
 		this.transport = transport;
 		this.clock = clock;
+		this.breakers = new InnerBreakers(properties.getBreakerFailures(), properties.getBreakerPause().toMillis(), ticker);
 	}
 
 	/**
@@ -155,7 +171,8 @@ public class InnerClient {
 	 * @param readTimeout 等对方返回的时间上限
 	 * @return 对方返回的数据；对方没有返回数据时是 JSON 的 null 节点，不是 Java 的 null
 	 * @throws ServiceException   对方返回了业务失败，消息和对方抛出的一样
-	 * @throws InnerCallException 调用没有成功，原因见 {@link InnerCallException#kind()}
+	 * @throws InnerCallException 调用没有成功，原因见 {@link InnerCallException#kind()}。熔断中（{@code BREAKER_OPEN}）
+	 *                            和对方忙（{@code BUSY}）这两种，对方肯定没有执行
 	 */
 	public JsonNode call(String serviceId, String path, Object body, Duration readTimeout) {
 		if (!InnerProtocol.SERVICE_NAME.matcher(serviceId).matches() || !InnerProtocol.PATH.matcher(path).matches()) {
@@ -171,23 +188,48 @@ public class InnerClient {
 			throw new InnerCallException(Kind.NO_INSTANCE, "注册中心里没有 " + serviceId + " 的实例");
 		}
 		IOException lastConnectFailure = null;
-		for (int i = 0; i < Math.min(MAX_INSTANCES, instances.size()); i++) {
-			URI uri = instances.get(i).getUri().resolve(path);
-			try {
-				return exchange(uri, serviceId, path, tenant, payload, readTimeout);
+		boolean busy = false;
+		int sent = 0;
+		for (ServiceInstance instance : instances) {
+			if (sent == MAX_INSTANCES) {
+				break;
+			}
+			URI uri = instance.getUri().resolve(path);
+			InnerBreakers.Ticket ticket = breakers.enter(serviceId, uri.getAuthority(), path, tenant);
+			if (ticket == null) {
+				// 这个租户调这个实例的这个接口熔断中，看下一个实例
+				continue;
+			}
+			sent++;
+			// 凭单在进下面的 catch 之前就已经交回；exchange 里没标记过结果的都按失败记
+			try (ticket) {
+				return exchange(uri, serviceId, path, tenant, payload, readTimeout, ticket);
 			} catch (ConnectException | HttpConnectTimeoutException e) {
 				lastConnectFailure = e;
 				log.warn("连不上 {} 的实例 {}：{}", serviceId, uri.getAuthority(), e.toString());
 			} catch (IOException e) {
 				log.warn("调用 {} 的 {} 失败：{}", serviceId, path, e.toString());
 				throw new InnerCallException(Kind.FAILED, "调用 " + serviceId + " 的 " + path + " 失败：" + e, e);
+			} catch (InnerCallException e) {
+				if (e.kind() != Kind.BUSY) {
+					throw e;
+				}
+				// 对方说忙，这次没有执行，可以放心换一个实例
+				busy = true;
 			}
+		}
+		if (sent == 0) {
+			throw new InnerCallException(Kind.BREAKER_OPEN, "前几次调用 " + serviceId + " 的 " + path
+				+ " 接连失败，暂时不调它，过一会儿自动再试");
+		}
+		if (busy) {
+			throw new InnerCallException(Kind.BUSY, serviceId + " 的 " + path + " 正忙，这次没有执行");
 		}
 		throw new InnerCallException(Kind.FAILED, "连不上 " + serviceId, lastConnectFailure);
 	}
 
 	private JsonNode exchange(URI uri, String serviceId, String path, String tenant, byte[] payload,
-							  Duration readTimeout) throws IOException {
+							  Duration readTimeout, InnerBreakers.Ticket ticket) throws IOException {
 		// 每次发送都用新的时间和随机串：换实例重试时不能沿用上一次的，否则会被当成重放
 		String timestamp = Long.toString(clock.getAsLong());
 		String nonce = newNonce();
@@ -200,6 +242,8 @@ public class InnerClient {
 		headers.put(InnerProtocol.HEADER_NONCE, nonce);
 		headers.put(InnerProtocol.HEADER_SIGNATURE,
 			InnerProtocol.signRequest(key, "POST", path, timestamp, nonce, self, serviceId, tenant, payload));
+		// 告诉对方这边最多等多久：过了这个时间这边已经按失败处理，它的查询不必再跑
+		headers.put(InnerProtocol.HEADER_WAIT, Long.toString(readTimeout.toMillis()));
 		String traceId = MDC.get(MonitorConstants.TRACE_MDC_KEY);
 		if (traceId != null && TRACE_ID.matcher(traceId).matches()) {
 			headers.put(MonitorConstants.TRACE_HEADER, traceId);
@@ -207,6 +251,10 @@ public class InnerClient {
 
 		Reply reply = transport.post(uri, headers, payload, readTimeout);
 
+		if (reply.status() >= 400 && reply.status() < 500) {
+			// 对方明确拒绝了：它在正常工作，这种失败不计入熔断
+			ticket.answered();
+		}
 		if (reply.status() == 401) {
 			log.warn("{} 拒绝了内部调用 {}：两边的 mugsun.cloud.inner.secret 不一致，或者两台机器的时间差得太多（具体原因在对方的日志里）",
 				serviceId, path);
@@ -229,11 +277,18 @@ public class InnerClient {
 		}
 		JsonNode root = treeReader.readTree(replyBody);
 		if (root.path("ok").asBoolean(false)) {
+			ticket.answered();
 			JsonNode data = root.get("data");
 			return data == null ? NullNode.getInstance() : data;
 		}
-		if ("business".equals(root.path("code").asText())) {
+		String code = root.path("code").asText();
+		if (InnerProtocol.CODE_BUSINESS.equals(code)) {
+			ticket.answered();
 			throw new ServiceException(root.path("msg").asText("操作失败"));
+		}
+		if (InnerProtocol.CODE_BUSY.equals(code)) {
+			ticket.busy();
+			throw new InnerCallException(Kind.BUSY, serviceId + " 的 " + path + " 正忙，这次没有执行");
 		}
 		throw new InnerCallException(Kind.FAILED, "调用 " + serviceId + " 的 " + path + " 失败：" + root.path("msg").asText());
 	}

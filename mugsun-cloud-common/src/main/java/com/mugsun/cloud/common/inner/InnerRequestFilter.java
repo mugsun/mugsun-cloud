@@ -27,6 +27,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -46,8 +50,14 @@ import java.util.function.Supplier;
  * </ol>
  * 没通过校验时不告诉对方具体错在哪，原因只记在日志里；日志不记签名，也不记没校验过格式的请求头。
  *
- * <p>接口在 {@code TenantContext.execute(调用方传来的租户, ...)} 里执行，这时没有登录用户。成功和业务失败都返回 200，
+ * <p>接口在 {@code TenantContext.execute(调用方传来的租户, ...)} 里执行，这时没有登录用户。成功、业务失败和「忙」都返回 200，
  * 响应带签名；其它情况返回不带签名的错误状态码，调用方一律当作调用失败。
+ *
+ * <p>每个接口同时最多处理 {@code mugsun.cloud.inner.max-concurrent} 个请求。满了的时候新来的先等
+ * {@code mugsun.cloud.inner.max-wait}，还轮不到就回「忙」，这次不执行，调用方可以换一个实例。这样一个接口的查询卡住时，
+ * 它占住的数据库连接有上限，本服务别的接口还有连接可用。按接口分开限，一个满了不影响别的；验签通过的请求才来占名额。
+ *
+ * <p>调用方在请求头里说了最多等多久的，处理期间发出的查询到点就取消（{@link InnerQueryTimeout}）。
  */
 @Component
 @Order(InnerRequestFilter.ORDER)
@@ -60,6 +70,9 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 	public static final int ORDER = -160;
 
 	static final String PREFIX = "/inner";
+
+	/** 排队排了这么多毫秒以上的，在日志里写上排了多久 */
+	private static final long QUEUED_WORTH_LOGGING = 100;
 
 	private static final Logger log = LoggerFactory.getLogger(InnerRequestFilter.class);
 
@@ -76,6 +89,9 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 	private final LongSupplier clock;
 
 	private volatile Map<String, InnerEndpoint> endpoints = Map.of();
+
+	/** 每个接口的名额，和 {@link #endpoints} 的路径一一对应 */
+	private volatile Map<String, Gate> gates = Map.of();
 
 	@Autowired
 	public InnerRequestFilter(InnerProperties properties, InnerNonceStore nonceStore, ObjectMapper objectMapper,
@@ -105,12 +121,17 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 	 */
 	@Override
 	public void afterSingletonsInstantiated() {
-		this.endpoints = index(endpointSource.get());
+		Map<String, InnerEndpoint> indexed = index(endpointSource.get());
+		Map<String, Gate> built = new HashMap<>();
+		indexed.keySet().forEach(path -> built.put(path, new Gate(properties.getMaxConcurrent())));
+		this.gates = Map.copyOf(built);
+		this.endpoints = indexed;
 		if (!properties.configured()) {
 			log.info("没有配置 mugsun.cloud.inner.secret（环境变量 MUGSUN_INNER_SECRET），服务之间的内部调用停用："
 				+ "本服务不接受 /inner 请求，也不向别的服务发起调用");
 		} else if (!endpoints.isEmpty()) {
-			log.info("内部接口 {} 个：{}", endpoints.size(), new TreeSet<>(endpoints.keySet()));
+			log.info("内部接口 {} 个：{}，每个同时最多处理 {} 个请求", endpoints.size(), new TreeSet<>(endpoints.keySet()),
+				properties.getMaxConcurrent());
 		}
 	}
 
@@ -165,6 +186,7 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 	}
 
 	private void serve(HttpServletRequest request, HttpServletResponse response, String path) throws IOException {
+		long arrived = System.nanoTime();
 		if (!properties.configured()) {
 			refuse(response, HttpServletResponse.SC_SERVICE_UNAVAILABLE, "disabled", "这个服务没有启用内部调用");
 			return;
@@ -249,28 +271,77 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 			json = objectMapper.createObjectNode();
 		}
 
+		// 调用方最多等多久：排队不超过它，处理期间的查询也跑不过它
+		long callerWait = callerWait(request);
+		long queueLimit = properties.getMaxWait().toMillis();
+		if (callerWait > 0) {
+			queueLimit = Math.min(queueLimit, callerWait);
+		}
+		Gate gate = gates.get(path);
+		long queued = System.nanoTime();
+		if (!gate.enter(queueLimit)) {
+			gate.refused(path, (System.nanoTime() - queued) / 1_000_000);
+			answer(response, path, nonce, caller, failure(InnerProtocol.CODE_BUSY, "这个内部接口正忙，这次没有执行"));
+			return;
+		}
 		InnerCall call = new InnerCall(caller, tenant, json);
 		long started = System.nanoTime();
 		byte[] payload;
 		String outcome;
 		try {
+			if (callerWait > 0) {
+				InnerDeadline.set(arrived + callerWait * 1_000_000L);
+			}
 			Object data = TenantContext.execute(tenant, () -> endpoint.handle(call));
 			payload = success(data);
 			outcome = "成功";
 		} catch (ServiceException e) {
-			payload = failure("business", e.getMessage() == null ? "操作失败" : e.getMessage());
+			payload = failure(InnerProtocol.CODE_BUSINESS, e.getMessage() == null ? "操作失败" : e.getMessage());
 			outcome = "业务失败：" + e.getMessage();
 		} catch (RuntimeException | JsonProcessingException e) {
-			log.error("内部接口 {} 执行出错（调用方 {}，租户 {}）", path, caller, tenant, e);
+			if (InnerDeadline.passed()) {
+				// 多半是查询到点被取消了。调用方已经不等，这里留一行就够，不打堆栈
+				log.warn("内部接口 {} 没能在调用方等待的 {} 秒内做完，不再继续（调用方 {}，租户 {}）：{}", path,
+					callerWait / 1000, caller, tenant, e.toString());
+			} else {
+				log.error("内部接口 {} 执行出错（调用方 {}，租户 {}）", path, caller, tenant, e);
+			}
 			refuse(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "error", "内部接口执行出错");
 			return;
+		} finally {
+			InnerDeadline.clear();
+			gate.leave();
 		}
+		answer(response, path, nonce, caller, payload);
+		long waited = (started - queued) / 1_000_000;
+		log.info("内部调用 {} 来自 {}，租户 {}，用时 {}ms{}，{}", path, caller, tenant,
+			(System.nanoTime() - started) / 1_000_000,
+			waited >= QUEUED_WORTH_LOGGING ? "（之前排队 " + waited + "ms）" : "", outcome);
+	}
+
+	/**
+	 * 调用方说它最多等多少毫秒。没说或者格式不对返回 0，表示不设时限；说了就限制在 1 秒到 long-read-timeout 之间。
+	 * 这个请求头不在签名里，所以这里对它的值不做别的用途。
+	 */
+	private long callerWait(HttpServletRequest request) {
+		String value = request.getHeader(InnerProtocol.HEADER_WAIT);
+		if (value == null || !InnerProtocol.WAIT.matcher(value).matches()) {
+			return 0;
+		}
+		long millis = Long.parseLong(value);
+		if (millis == 0) {
+			return 0;
+		}
+		return Math.max(1000, Math.min(millis, properties.getLongReadTimeout().toMillis()));
+	}
+
+	/** 回一个带签名的 200 */
+	private void answer(HttpServletResponse response, String path, String nonce, String caller, byte[] payload)
+		throws IOException {
 		response.setStatus(HttpServletResponse.SC_OK);
 		response.setHeader(InnerProtocol.HEADER_SIGNATURE,
 			InnerProtocol.signResponse(properties.key(), path, nonce, caller, self, payload));
 		write(response, payload);
-		log.info("内部调用 {} 来自 {}，租户 {}，用时 {}ms，{}", path, caller, tenant,
-			(System.nanoTime() - started) / 1_000_000, outcome);
 	}
 
 	private static boolean isJson(String contentType) {
@@ -336,5 +407,52 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 		response.setHeader("Cache-Control", "no-store");
 		response.setContentLength(payload.length);
 		response.getOutputStream().write(payload);
+	}
+
+	/** 一个内部接口的名额：同时最多放这么多个请求进去处理 */
+	private static final class Gate {
+
+		/** 「忙」的日志最少隔这么久打一行 */
+		private static final long LOG_EVERY_NANOS = 10_000_000_000L;
+
+		private final int limit;
+
+		/** 先到先得：等着的请求不会被后来的插队 */
+		private final Semaphore permits;
+
+		private final AtomicInteger refusedSinceLogged = new AtomicInteger();
+
+		private final AtomicLong loggedAt = new AtomicLong(System.nanoTime() - LOG_EVERY_NANOS);
+
+		private Gate(int limit) {
+			this.limit = limit;
+			this.permits = new Semaphore(limit, true);
+		}
+
+		/** 占一个名额，最多等这么多毫秒。没占到返回 false */
+		private boolean enter(long waitMillis) {
+			try {
+				return permits.tryAcquire(waitMillis, TimeUnit.MILLISECONDS);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return false;
+			}
+		}
+
+		private void leave() {
+			permits.release();
+		}
+
+		/** 回了一次「忙」。日志 10 秒最多一行，写上这一行代表几次：忙的时候不能每个请求刷一行 */
+		private void refused(String path, long waitedMillis) {
+			int count = refusedSinceLogged.incrementAndGet();
+			long now = System.nanoTime();
+			long last = loggedAt.get();
+			if (now - last >= LOG_EVERY_NANOS && loggedAt.compareAndSet(last, now)) {
+				refusedSinceLogged.addAndGet(-count);
+				log.warn("内部接口 {} 同时在处理的请求到了上限 {} 个（mugsun.cloud.inner.max-concurrent），新来的等了 {}ms 还没轮到，"
+					+ "回了「忙」。这样的日志 10 秒最多一行，这一行代表 {} 次", path, limit, waitedMillis, count);
+			}
+		}
 	}
 }

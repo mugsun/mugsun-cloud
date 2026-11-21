@@ -97,7 +97,13 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 对方没有部署时，效果要和单体版没装那个模块时一样；对方在但调用失败时，要和单体版里那个模块出错时一样。现有的三处可以参考：ai 的 `RemoteInsightPort`、track 的 `RemoteTrackAskLlmGateway`、system 的 `RemoteGenAiDraftEnhancer`。
 - 调用方只看得到注册中心里有没有对方的实例，分不出它是没有部署，还是部署了、此刻不在（正在重启，或者挂了）。这时给用户的话要在两种情况下都是真的，不要说「没有部署」。
 - 给用户看的提示里不带地址、服务名和状态码，具体原因只记日志。日志里不记密钥和签名。
-- 内部接口要有测试：验签的规则在 `InnerRequestFilterTest`，两头接起来的情况在 `InnerLoopbackTest`，都不需要 Nacos 和 Redis。
+- 对方连得上、但是不回话或者忙不过来时有三道保护，都在公共层，默认开着：调用方的熔断（`InnerBreakers`，按实例、接口、租户分开记），被调用方每个接口同时处理的上限（`InnerRequestFilter` 里的 `Gate`，满了回「忙」），按调用方的等待时间给查询设时限（`InnerQueryTimeout`）。效果和配置项见 [docs/deployment.md](./docs/deployment.md) 第 4 节的「对方出了问题时的三道保护」。写接口和发起调用时要配合的是下面几条。
+- 内部接口处理期间一直占着一个名额，一个接口默认只有 5 个（`mugsun.cloud.inner.max-concurrent`），所有租户共用。接口里只查库和计算，不要在里面等别的服务、等锁、睡眠。要等大模型这类慢东西的，在那个服务的 `application.yml` 里把上限配大并写明原因，参考 ai 服务；配大之前先确认等的时候不占数据库连接（不在事务里）。
+- 接口的实现经 MyBatis（Mapper、`Db`）查库，这样的语句自动带时限：调用方不等了，语句被取消。用 `JdbcTemplate` 或者直接用 JDBC 发的语句不带，调用方不等了它还在跑；接口里另开线程去查的也不带。现有的一处是 track 的统计接口（查询写在 mugsun-boot 里），记在 README 的「目前的限制」里。
+- 业务上的「不行」在接口里抛 `ServiceException`：调用方收到的是同一句话，不算调用失败。别的异常会变成 500，调用方按失败记，同一个租户接连 3 次就熔断 10 秒。所以「参数不对」「模块没启用」这类正常的拒绝不要用别的异常表示。
+- 调用方要分清 `InnerCallException` 的几种原因：`absent()` 为真是对方不在；`BUSY`（对方满了）和 `BREAKER_OPEN`（熔断中）这两种，对方肯定没有执行。给用户的话，`BUSY` 说「正忙，请稍后再试」，其余的失败说「暂时不可用」，参考 `RemoteInsightPort`。不要在调用方再套一层重试：`InnerClient` 已经会换实例，熔断中再试只是多报一次失败，其它的失败对方可能已经执行过了。
+- 调用方报来的等待时间（`X-Mugsun-Inner-Wait`）不参与签名，只是提示：验签通过以后才读，并且限制在 1 秒到 `long-read-timeout` 之间。不要拿它做别的判断；也不要把它加进签名，加了以后新旧版本的服务在滚动发布期间互相调不通。「忙」的回答是签了名的，调用方不采信没签名的「忙」。
+- 内部接口要有测试，都不需要 Nacos 和 Redis：验签的规则、同时处理的上限、等待时间在 `InnerRequestFilterTest`，熔断在 `InnerBreakersTest`，查询时限在 `InnerQueryTimeoutTest`，调用方怎么处理各种回答在 `InnerClientTest`，两头接起来的情况在 `InnerLoopbackTest`。这几道保护在真实的故障里管不管用，单元测试看不出来：改了它们以后，要起整套服务，把对方冻住、把表锁住、让请求一起来，实际测一遍等多久、占多少连接。
 
 ## 部署文件的约定
 

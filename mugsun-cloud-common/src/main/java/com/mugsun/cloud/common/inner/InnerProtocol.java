@@ -17,6 +17,9 @@ import java.util.regex.Pattern;
  * 验签都会失败。响应也签名，并带上请求的随机串：调用方据此确认回话的确实是拿着密钥的服务，而且回的是这一次请求。
  *
  * <p>各项用换行连接。每一项的格式都先按下面的规则校验过，不含换行，所以不会出现两组不同的值拼出同一个串的情况。
+ *
+ * <p>被调用方签了名的响应有三种：成功（{@code ok} 为 true）、业务失败（{@link #CODE_BUSINESS}）、
+ * 忙（{@link #CODE_BUSY}，这次没有执行）。
  */
 final class InnerProtocol {
 
@@ -30,6 +33,21 @@ final class InnerProtocol {
 
 	static final String HEADER_SIGNATURE = "X-Mugsun-Inner-Signature";
 
+	/**
+	 * 调用方最多等多少毫秒。被调用方据此给处理这次调用时发出的查询设时限，调用方不等了，查询也不再跑。
+	 *
+	 * <p>这一项不在签名里：加进签名的话，滚动升级期间新旧版本的服务互相验不过签。它只决定查询最多跑多久，
+	 * 被调用方还会把它限制在 1 秒到 {@code long-read-timeout} 之间，改它换不来别的东西。没带或者格式不对时，
+	 * 被调用方不设时限，和没有这一项的旧版本一样。
+	 */
+	static final String HEADER_WAIT = "X-Mugsun-Inner-Wait";
+
+	/** 响应里的代码：业务上的失败，消息要原样带给用户 */
+	static final String CODE_BUSINESS = "business";
+
+	/** 响应里的代码：这个接口同时在处理的请求到了上限，这次没有执行，调用方可以换一个实例 */
+	static final String CODE_BUSY = "busy";
+
 	/** 服务名（spring.application.name） */
 	static final Pattern SERVICE_NAME = Pattern.compile("[A-Za-z0-9._-]{1,64}");
 
@@ -40,6 +58,9 @@ final class InnerProtocol {
 	static final Pattern TIMESTAMP = Pattern.compile("[0-9]{1,15}");
 
 	static final Pattern NONCE = Pattern.compile("[A-Za-z0-9_-]{16,64}");
+
+	/** 等待的毫秒数 */
+	static final Pattern WAIT = Pattern.compile("[0-9]{1,9}");
 
 	/** 签名：64 位小写十六进制 */
 	static final Pattern SIGNATURE = Pattern.compile("[0-9a-f]{64}");

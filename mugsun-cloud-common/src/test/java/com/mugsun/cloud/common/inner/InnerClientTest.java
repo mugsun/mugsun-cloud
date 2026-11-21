@@ -29,6 +29,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,6 +52,13 @@ class InnerClientTest {
 	private static final String PATH = "/inner/gis/insight/snapshot";
 
 	private static final long NOW = 1_700_000_000_000L;
+
+	private static final String OK_REPLY = "{\"ok\":true,\"data\":{\"count\":3}}";
+
+	private static final String BUSY_REPLY = "{\"ok\":false,\"code\":\"busy\",\"msg\":\"这个内部接口正忙，这次没有执行\"}";
+
+	/** 熔断计时用的假时钟（毫秒），测试自己往前拨 */
+	private final AtomicLong ticker = new AtomicLong();
 
 	private final ObjectMapper mapper = new ObjectMapper();
 
@@ -111,7 +119,20 @@ class InnerClientTest {
 
 		assertThat(sent.get(0).headers().keySet()).containsExactlyInAnyOrder("Content-Type",
 			InnerProtocol.HEADER_CALLER, InnerProtocol.HEADER_TENANT, InnerProtocol.HEADER_TIMESTAMP,
-			InnerProtocol.HEADER_NONCE, InnerProtocol.HEADER_SIGNATURE);
+			InnerProtocol.HEADER_NONCE, InnerProtocol.HEADER_SIGNATURE, InnerProtocol.HEADER_WAIT);
+	}
+
+	/** 把「这边最多等多久」告诉对方，对方据此取消跑得太久的查询 */
+	@Test
+	void tellsTheOtherSideHowLongItWillWait() {
+		oneInstance();
+		InnerClient client = client();
+
+		TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		TenantContext.execute("000000", () -> client.callSlow(TARGET, PATH, Map.of()));
+
+		assertThat(sent.get(0).headers().get(InnerProtocol.HEADER_WAIT)).isEqualTo("10000");
+		assertThat(sent.get(1).headers().get(InnerProtocol.HEADER_WAIT)).isEqualTo("120000");
 	}
 
 	/** 在「不按租户过滤」的上下文里发起的调用，对方也不过滤 */
@@ -462,7 +483,260 @@ class InnerClientTest {
 		}
 	}
 
+	// ---------- 熔断 ----------
+
+	/** 对方连得上却不回话时，前几个请求等到超时，之后的请求不再发、马上失败，用户不用每次都等 */
+	@Test
+	void afterRepeatedTimeoutsCallsFailAtOnceWithoutBeingSent() {
+		oneInstance();
+		responder = request -> {
+			throw new HttpTimeoutException("request timed out");
+		};
+		InnerClient client = client();
+		for (int i = 0; i < 3; i++) {
+			assertThat(failureOf(client).kind()).isEqualTo(Kind.FAILED);
+		}
+		assertThat(sent).hasSize(3);
+
+		InnerCallException e = failureOf(client);
+
+		assertThat(e.kind()).isEqualTo(Kind.BREAKER_OPEN);
+		assertThat(e.absent()).as("熔断不等于对方没有部署").isFalse();
+		assertThat(sent).hasSize(3);
+	}
+
+	@Test
+	void afterThePauseOneCallIsLetThroughAndAnAnswerRestoresNormalService() {
+		oneInstance();
+		responder = request -> {
+			throw new HttpTimeoutException("request timed out");
+		};
+		InnerClient client = client();
+		for (int i = 0; i < 3; i++) {
+			failureOf(client);
+		}
+		ticker.addAndGet(9_999);
+		assertThat(failureOf(client).kind()).isEqualTo(Kind.BREAKER_OPEN);
+
+		ticker.addAndGet(1);
+		responder = request -> signedOk(request, OK_REPLY);
+		JsonNode data = TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+
+		assertThat(data.path("count").asInt()).isEqualTo(3);
+		assertThat(sent).hasSize(4);
+		TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		assertThat(sent).hasSize(5);
+	}
+
+	/** 两个实例坏了一个：熔断以后请求只发给好的那个，不再有请求去坏的那个上面等超时 */
+	@Test
+	void aBrokenInstanceIsLeftAloneWhileTheHealthyOneKeepsServing() {
+		twoInstances();
+		responder = request -> {
+			if (request.uri().getHost().equals("10.0.0.5")) {
+				throw new HttpTimeoutException("request timed out");
+			}
+			return signedOk(request, OK_REPLY);
+		};
+		InnerClient client = client();
+		// 每次调用随机先试一个实例，碰上坏的那个就失败一次；失败满三次它就被熔断
+		int failures = 0;
+		for (int i = 0; i < 500 && failures < 3; i++) {
+			if (failureOf(client) != null) {
+				failures++;
+			}
+		}
+		assertThat(failures).isEqualTo(3);
+		sent.clear();
+
+		for (int i = 0; i < 50; i++) {
+			TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		}
+
+		assertThat(sent).hasSize(50).allMatch(request -> request.uri().getHost().equals("10.0.0.6"));
+	}
+
+	/**
+	 * 有的故障只跟一个租户有关（它的独立数据库连不上、它自己配的大模型不回话）。熔断按租户分开：
+	 * 这个租户被熔断以后，别的租户照常调得通；别的租户调通了，也不会让出故障的租户又去等超时
+	 */
+	@Test
+	void oneTenantsFailuresDoNotStopCallsForOtherTenants() {
+		oneInstance();
+		responder = request -> {
+			if ("T10001".equals(request.headers().get(InnerProtocol.HEADER_TENANT))) {
+				throw new HttpTimeoutException("request timed out");
+			}
+			return signedOk(request, OK_REPLY);
+		};
+		InnerClient client = client();
+		for (int i = 0; i < 3; i++) {
+			assertThat(failureOf(client, "T10001").kind()).isEqualTo(Kind.FAILED);
+		}
+		assertThat(failureOf(client, "T10001").kind()).isEqualTo(Kind.BREAKER_OPEN);
+		sent.clear();
+
+		for (int i = 0; i < 20; i++) {
+			TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		}
+
+		assertThat(sent).hasSize(20);
+		assertThat(failureOf(client, "T10001").kind()).as("别的租户调通了，出故障的租户仍然熔断着").isEqualTo(Kind.BREAKER_OPEN);
+		assertThat(sent).hasSize(20);
+	}
+
+	/** 连不上也算失败：注册中心还没摘掉一个已经断电的实例时，不用每次都先在它身上耗掉连接超时 */
+	@Test
+	void anUnreachableInstanceIsSkippedAfterRepeatedConnectFailures() {
+		twoInstances();
+		responder = request -> {
+			if (request.uri().getHost().equals("10.0.0.5")) {
+				throw new HttpConnectTimeoutException("connect timed out");
+			}
+			return signedOk(request, OK_REPLY);
+		};
+		InnerClient client = client();
+		// 连不上会换另一个实例，所以每次调用都成功；一直调到坏的那个被试过三次
+		for (int i = 0; i < 500 && sentTo("10.0.0.5") < 3; i++) {
+			TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		}
+		assertThat(sentTo("10.0.0.5")).isEqualTo(3);
+		sent.clear();
+
+		for (int i = 0; i < 50; i++) {
+			TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		}
+
+		assertThat(sent).hasSize(50).allMatch(request -> request.uri().getHost().equals("10.0.0.6"));
+	}
+
+	/** 对方明确答复了的失败不计入：它在正常工作，熔断帮不上忙，还会把「密钥不一致」这样的真正原因盖住 */
+	@Test
+	void clearAnswersNeverOpenTheBreaker() {
+		oneInstance();
+		InnerClient client = client();
+
+		responder = request -> new InnerClient.Reply(401, null, new byte[0]);
+		for (int i = 0; i < 5; i++) {
+			assertThat(failureOf(client).kind()).isEqualTo(Kind.REJECTED);
+		}
+		responder = request -> new InnerClient.Reply(404, null, "{}".getBytes(StandardCharsets.UTF_8));
+		for (int i = 0; i < 5; i++) {
+			assertThat(failureOf(client).kind()).isEqualTo(Kind.FAILED);
+		}
+		responder = request -> signedOk(request, "{\"ok\":false,\"code\":\"business\",\"msg\":\"图层模块没有启用\"}");
+		for (int i = 0; i < 5; i++) {
+			assertThatThrownBy(() -> TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of())))
+				.isInstanceOf(ServiceException.class);
+		}
+
+		assertThat(sent).hasSize(15);
+	}
+
+	@Test
+	void serverErrorsAndUntrustedRepliesDoCount() {
+		List<InnerClient.Reply> bad = List.of(
+			new InnerClient.Reply(500, null, "{}".getBytes(StandardCharsets.UTF_8)),
+			new InnerClient.Reply(200, "0".repeat(64), OK_REPLY.getBytes(StandardCharsets.UTF_8)));
+		for (InnerClient.Reply reply : bad) {
+			sent.clear();
+			oneInstance();
+			responder = request -> reply;
+			InnerClient client = client();
+			for (int i = 0; i < 3; i++) {
+				assertThat(failureOf(client).kind()).isEqualTo(Kind.FAILED);
+			}
+
+			assertThat(failureOf(client).kind()).as("HTTP " + reply.status()).isEqualTo(Kind.BREAKER_OPEN);
+			assertThat(sent).hasSize(3);
+		}
+	}
+
+	@Test
+	void breakerCanBeTurnedOff() {
+		oneInstance();
+		responder = request -> {
+			throw new HttpTimeoutException("request timed out");
+		};
+		InnerProperties properties = properties();
+		properties.setBreakerFailures(0);
+		InnerClient client = client(properties);
+
+		for (int i = 0; i < 10; i++) {
+			assertThat(failureOf(client).kind()).isEqualTo(Kind.FAILED);
+		}
+		assertThat(sent).hasSize(10);
+	}
+
+	// ---------- 对方忙 ----------
+
+	/** 对方回「忙」表示这次没有执行，换一个实例再发不会让同一件事做两遍 */
+	@Test
+	void whenOneInstanceIsBusyAnotherIsTried() {
+		twoInstances();
+		responder = request -> signedOk(request, sent.size() == 1 ? BUSY_REPLY : OK_REPLY);
+
+		JsonNode data = TenantContext.execute("000000", () -> client().call(TARGET, PATH, Map.of()));
+
+		assertThat(data.path("count").asInt()).isEqualTo(3);
+		assertThat(sent).hasSize(2);
+		assertThat(sent.get(0).uri()).isNotEqualTo(sent.get(1).uri());
+		assertThat(sent.get(0).nonce()).isNotEqualTo(sent.get(1).nonce());
+	}
+
+	@Test
+	void whenEveryInstanceIsBusyTheCallFailsAsBusy() {
+		when(discovery.getInstances(TARGET)).thenReturn(List.of(instance("10.0.0.5"), instance("10.0.0.6"),
+			instance("10.0.0.7")));
+		responder = request -> signedOk(request, BUSY_REPLY);
+
+		InnerCallException e = failureOf(client());
+
+		assertThat(e.kind()).isEqualTo(Kind.BUSY);
+		assertThat(e.absent()).isFalse();
+		assertThat(sent).hasSize(2);
+	}
+
+	/** 「忙」是对方自己在限制同时处理的个数，过一下就好：不因此熔断，下一次照常发 */
+	@Test
+	void busyAnswersAloneNeverOpenTheBreaker() {
+		oneInstance();
+		responder = request -> signedOk(request, BUSY_REPLY);
+		InnerClient client = client();
+
+		for (int i = 0; i < 10; i++) {
+			assertThat(failureOf(client).kind()).isEqualTo(Kind.BUSY);
+		}
+		assertThat(sent).hasSize(10);
+	}
+
+	/** 没有签名的「忙」不算数，和别的没通过验签的响应一样处理 */
+	@Test
+	void anUnsignedBusyReplyIsNotTrusted() {
+		twoInstances();
+		responder = request -> new InnerClient.Reply(200, null, BUSY_REPLY.getBytes(StandardCharsets.UTF_8));
+
+		InnerCallException e = failureOf(client());
+
+		assertThat(e.kind()).isEqualTo(Kind.FAILED);
+		assertThat(sent).hasSize(1);
+	}
+
 	// ---------- 辅助 ----------
+
+	/** 调一次，返回它抛出的 InnerCallException；调用成功返回 null */
+	private InnerCallException failureOf(InnerClient client) {
+		return failureOf(client, "000000");
+	}
+
+	private InnerCallException failureOf(InnerClient client, String tenant) {
+		return catchThrowableOfType(InnerCallException.class,
+			() -> TenantContext.execute(tenant, () -> client.call(TARGET, PATH, Map.of())));
+	}
+
+	private long sentTo(String host) {
+		return sent.stream().filter(request -> request.uri().getHost().equals(host)).count();
+	}
 
 	/** 执行期间 InnerClient 打出的 WARN 日志 */
 	private static List<String> warningsDuring(Runnable action) {
@@ -498,7 +772,7 @@ class InnerClientTest {
 			sent.add(request);
 			return responder.reply(request);
 		};
-		return new InnerClient(properties, discovery, mapper, SELF, transport, () -> NOW);
+		return new InnerClient(properties, discovery, mapper, SELF, transport, () -> NOW, ticker::get);
 	}
 
 	private void oneInstance() {

@@ -145,12 +145,26 @@ class RemoteInsightPortsTest {
 			.hasMessage("服务之间的内部调用没有开通，无法查询图层，请联系管理员");
 	}
 
+	/** 对方在，只是这会儿处理不过来：照实说「正忙」，不说「不可用」 */
+	@Test
+	void saysSoWhenTheOtherServiceIsBusy() {
+		clientFailsWith(new InnerCallException(Kind.BUSY, "mugsun-gis 的 " + GIS_PATH + " 正忙，这次没有执行"));
+
+		assertThatThrownBy(() -> gis().snapshot(Map.of()))
+			.isInstanceOf(ServiceException.class)
+			.hasMessage("地理信息服务正忙，请稍后再试");
+		assertThatThrownBy(() -> track().snapshot(Map.of()))
+			.isInstanceOf(ServiceException.class)
+			.hasMessage("埋点服务正忙，请稍后再试");
+	}
+
 	/** 这些消息会给用户看：服务名、路径、状态码、异常类名都不能带出去 */
 	@Test
 	void hidesTheDetailsOfEveryOtherFailure() {
 		List<RuntimeException> failures = List.of(
 			new InnerCallException(Kind.REJECTED, "mugsun-gis 拒绝了内部调用 " + GIS_PATH),
 			new InnerCallException(Kind.FAILED, "调用 mugsun-gis 的 " + GIS_PATH + " 失败：HTTP 500"),
+			new InnerCallException(Kind.BREAKER_OPEN, "前几次调用 mugsun-gis 的 " + GIS_PATH + " 接连失败，暂时不调它"),
 			new IllegalArgumentException("服务名或内部接口路径不合规：mugsun-gis " + GIS_PATH),
 			new IllegalStateException("java.net.ConnectException: Connection refused"));
 		for (RuntimeException failure : failures) {

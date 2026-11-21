@@ -16,6 +16,12 @@ public class InnerCallException extends RuntimeException {
 		/** 对方没让过：两边的密钥不一致，或者机器时间差得太多 */
 		REJECTED,
 
+		/** 对方正忙：那个接口同时在处理的请求到了上限，这次没有执行 */
+		BUSY,
+
+		/** 熔断中：前几次调用接连失败，这段时间先不调它，这次没有发请求 */
+		BREAKER_OPEN,
+
 		/** 其它：连不上、超时、对方出错、响应没有通过验签 */
 		FAILED
 	}
