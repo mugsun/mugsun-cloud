@@ -41,7 +41,10 @@
     "commonControllers": [
       "controller.PingController"
     ],
-    "systemClasses": [],
+    "systemClasses": [
+      "config.DataInitializer",
+      "config.*SchemaRunner"
+    ],
     "resources": [
       { "match": "application.yml", "to": "common", "as": "mugsun-boot-defaults.yml" },
       { "match": "application-*.yml", "to": "common" },
@@ -53,5 +56,7 @@
   "extras": [
     { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" }
   ],
-  "modules": []
+  "modules": [
+    { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" }
+  ]
 }

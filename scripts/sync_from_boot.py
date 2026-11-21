@@ -141,7 +141,8 @@ class JavaIndex:
 
 
 def expand(index, patterns):
-    """规则里的类名写法：相对 com.mugsun.boot 的类名；`包.*` 表示包下的类，`包.**` 连子包一起。"""
+    """规则里的类名写法：相对 com.mugsun.boot 的类名；`包.*` 表示包下的类，`包.**` 连子包一起；
+    类名里带 `*`（如 `config.*SchemaRunner`）表示这个包下名字匹配的类。"""
     out = set()
     for pattern in patterns:
         full = ROOT_PKG + "." + pattern
@@ -151,6 +152,10 @@ def expand(index, patterns):
         elif pattern.endswith(".*"):
             base = full[:-2]
             found = {c for c in index.paths if c.rpartition(".")[0] == base}
+        elif "*" in pattern:
+            base, _, name = full.rpartition(".")
+            found = {c for c in index.paths
+                     if c.rpartition(".")[0] == base and fnmatch.fnmatchcase(c.rpartition(".")[2], name)}
         else:
             found = {full} if full in index.paths else set()
         if not found:
@@ -199,6 +204,29 @@ def partition_core(index, rules):
 
 def short(fqn):
     return fqn[len(ROOT_PKG) + 1:] if fqn.startswith(ROOT_PKG + ".") else fqn
+
+
+def module_core_refs(files, module, index):
+    """可选模块的源码引用到的 core 类：{core 类: 引用它的一个模块文件}。"""
+    refs = {}
+    prefix = module["module"] + "/src/main/java/"
+    for path in sorted(files):
+        if not path.startswith(prefix) or not path.endswith(".java"):
+            continue
+        body = strip_comments(files[path].decode("utf-8"))
+        found = set()
+        for match in IMPORT_RE.finditer(body):
+            name, star = match.group(2), match.group(3)
+            if star and name in index.by_pkg:
+                found |= {name + "." + simple for simple in index.by_pkg[name]
+                          if re.search(r"\b" + re.escape(simple) + r"\b", body)}
+        for match in re.finditer(re.escape(ROOT_PKG) + r"\.[\w.]+", body):
+            target = index._resolve(match.group(0))
+            if target:
+                found.add(target)
+        for cls in found:
+            refs.setdefault(cls, path[len(prefix):])
+    return refs
 
 
 def split_factories(content, owner_of):
@@ -276,6 +304,14 @@ def plan(rules, boot, ref):
 
     for module in modules:
         base = module["module"] + "/src/main/"
+        refs = module_core_refs(files, module, index)
+        outside = sorted(cls for cls in refs if cls not in common)
+        if outside:
+            lines = ["%s 引用了不在公共层的类，拆出去的服务里没有这些类，编译不过：" % module["module"]]
+            for cls in outside:
+                lines.append("  %s（引用处：%s）" % (short(cls), refs[cls]))
+            lines.append("处理办法：把这些类加进 core.commonClasses，它们引用的类会一起进公共层。")
+            die("\n".join(lines))
         for path in sorted(files):
             if path.startswith(base):
                 out[module["target"]][path[len(base):]] = files[path]
