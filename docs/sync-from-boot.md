@@ -23,12 +23,12 @@
 | --- | --- |
 | `mugsun-boot-gis` | `mugsun-cloud-service/mugsun-cloud-gis/src/boot` |
 | `mugsun-boot-track` | `mugsun-cloud-service/mugsun-cloud-track/src/boot` |
+| `mugsun-boot-ai` | `mugsun-cloud-service/mugsun-cloud-ai/src/boot` |
 
 没有同步的部分：
 
 - `MugsunApplication`。每个服务有自己的启动类。
 - 测试代码。
-- `mugsun-boot-ai`。这个模块对应的服务还没拆。
 
 `application.yml` 改名是因为每个服务有自己的 `application.yml`。服务的配置先引入 `mugsun-boot-defaults.yml`，再引入微服务版的 `mugsun-cloud-defaults.yml`，最后写自己的端口和服务名。
 
@@ -76,6 +76,18 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 { "module": "mugsun-boot-core", "classes": ["system.file.FileStorageTikaConfig"], "to": "mugsun-cloud-service/mugsun-cloud-track" }
 ```
 
+可选模块里的类也能这样拷给 system。删租户在 system 里做，要顺带删掉这个租户的 AI 密钥，而密钥表的实体和 Mapper 在 AI 模块里。把它们拷给 system，system 的 `CloudAiSecretPurger` 就能直接删这张表，不用等 ai 服务在线：
+
+```json
+{
+  "module": "mugsun-boot-ai",
+  "classes": ["ai.entity.AiSecret", "ai.mapper.AiSecretMapper", "ai.support.AiDateTimeDeserializer"],
+  "to": "mugsun-cloud-service/mugsun-cloud-system"
+}
+```
+
+`AiDateTimeDeserializer` 是 `AiSecret` 引用到的类，要一起拷。这三个类同时也随整个模块在 ai 服务里，两边的内容相同。
+
 列在 `extras` 里的类不能引用没有一起拷贝的类，否则脚本报错。
 
 ## mugsun-boot 有新提交时
@@ -110,11 +122,16 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | 父 pom 和 `mugsun-boot-core/pom.xml` 的依赖、版本号 | 父 pom、`mugsun-cloud-common/pom.xml`、system 的 pom |
 | `mugsun-boot-gis/pom.xml` 的依赖 | `mugsun-cloud-gis` 的 pom |
 | `mugsun-boot-track/pom.xml` 的依赖 | `mugsun-cloud-track` 的 pom |
+| `mugsun-boot-ai/pom.xml` 的依赖 | `mugsun-cloud-ai` 的 pom |
 | sms4j 间接带入的 `hutool-http` 的版本，mugsun-bom 升级 sms4j 时会变 | 父 pom 的 `hutool-http.version` |
 | `mugsun-boot-ai/pom.xml` 里 tika 的版本 | 父 pom 的 `tika.version` |
 | 单体版包里 `commons-io`、`commons-collections4` 的版本，tika 的版本变了它们会跟着变 | 父 pom 的 `commons-io.version`、`commons-collections4.version` |
 | `OptionalModuleConfiguration` 里 GIS 模块状态的判断规则 | system 的 `CloudGisModuleStatus` |
 | 埋点模块里 `TrackModuleStatus` 的实现和 `mugsun.track.enabled` 的规则 | system 的 `CloudTrackModuleStatus` |
+| AI 模块里 `AiModuleStatus` 的实现和 `mugsun.ai.enabled` 的规则 | system 的 `CloudAiModuleStatus` |
+| 可选模块里实现 `TenantCredentialPurger` 的类，现在只有 AI 模块的 `AiSecretTenantPurger` | system 里对应的清理，现在是 `CloudAiSecretPurger`。模块增减了实现时，那个服务的 `TenantPurgerGuardTest` 会失败 |
+| 模块之间互相调用的接口 `ModuleInsightPort`、`TrackAskLlmGateway`、`GenAiDraftEnhancer`，和它们在单体版里的实现 | 调用方的 `RemoteInsightPort`、`RemoteTrackAskLlmGateway`、`RemoteGenAiDraftEnhancer`，和被调用方的 `LocalInsightEndpoint`、`TrackAskIntentEndpoint`、`GenDraftEndpoint` |
+| 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | system 的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 
 ## 第三方库的版本
@@ -165,7 +182,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 可选模块只能引用公共层的类，拆出去的服务里没有 system 的代码。脚本会检查这一点，引用了留在 system 的类就报错并列出来。这时有两种处理：
 
 - 那个类各服务都能带：把它加进 `commonClasses`。track 要发站内信，`message.MessageService` 和 `websocket.RedisWsMessageSender` 就是这样进公共层的。
-- 那个类只能在 system 里跑：先设计服务间调用，再拆这个模块。
+- 那个类只能在 system 里跑：改成调用 system 的内部接口，做法见 [AGENTS.md](../AGENTS.md) 的「服务之间的调用」。这要先改 mugsun-boot，把那次引用抽成一个接口。
 
 另外还要做这几件事：
 
@@ -178,6 +195,9 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
    - `system.file.FileStorageTikaConfig` 单独拷给了 track。它管文件类型怎么识别，不带的话 track 用的是组件的默认识别方式，和单体版不是同一份配置。
 6. 新服务带了 PowerJob 依赖的话，在启动类上排除 `PowerJobAutoConfiguration`，照 `TrackApplication` 的写。执行器只在 system 上启动。
 7. 打包后跑 `python3 scripts/compare_libs.py`，新服务包里第三方库的版本要和单体版一致。不一致时的处理见上面的「第三方库的版本」。
+8. 找出模块之间靠接口互相调用的地方：单体版里一个模块提供实现，另一个模块或 core 注入使用。拆开后使用方的进程里没有那个实现，要在使用方写一个走内部接口的实现，在提供方写对应的 `InnerEndpoint`。AI 问图层和埋点「问数据」就是这样接上的。对方没部署、调不通时的表现，要和单体版没装那个模块时一样。
+9. 找出模块替 system 做的事：模块里实现了 core 的扩展接口、由 system 的代码来调用的类，拆出去以后 system 里就没有了，而且不会报错。删租户时清 AI 密钥的 `TenantCredentialPurger` 是一例，要在 system 里补一个。
+10. 找出按类名存在库里、运行时再按类名去找的类。审批流节点上记的监听器类名是一例：AI 预审节点的监听器随模块去了 ai 服务，system 里找不到它，流程引擎不报错，直接跳过。这类功能拆开后要么接上，要么明确拦下，不能让它悄悄失效。
 
 ## 为什么包名不改
 

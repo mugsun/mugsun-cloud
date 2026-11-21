@@ -6,7 +6,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 
 接口路径和返回格式与单体版相同，管理后台 [mugsun-pc](https://github.com/mugsun/mugsun-pc) 照原样连网关的 8080 端口。
 
-目前有三个业务服务：system 是单体版 `mugsun-boot-core` 的全部功能，gis 是单体版的 GIS 模块，track 是单体版的埋点分析模块。AI 还没有拆过来，见[目前的限制](#目前的限制)。
+目前有四个业务服务：system 是单体版 `mugsun-boot-core` 的全部功能，gis、track、ai 分别是单体版的 GIS、埋点分析和 AI 模块。和单体版不一样的地方见[目前的限制](#目前的限制)。
 
 ## 组成
 
@@ -16,9 +16,8 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务：账号权限、租户、工作流等，对应单体版的 `mugsun-boot-core` |
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务：`/system/gis/**` 下的全部接口，对应单体版的 `mugsun-boot-gis`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
-| `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源等 |
-
-后面要拆出的服务和预留的端口：ai 8104。
+| `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
+| `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源、服务之间的调用等 |
 
 服务注册和发现用 Nacos。数据库（PostgreSQL）和 Redis 的用法与单体版相同，主库和埋点库的库表也是同一套。
 
@@ -61,22 +60,37 @@ deploy/dev/nacos.sh up
 ./mvnw -B package -DskipTests
 ```
 
-然后开四个终端，依次启动 system、gis、track 和网关。system 要最先启动并等它启动完成：主库的库表由它来建，密钥也由它首次生成。
+生成一把服务之间互相调用用的密钥，下面四个业务服务都用这一个值：
+
+```bash
+openssl rand -hex 32
+```
+
+然后开五个终端，依次启动 system、gis、track、ai 和网关。system 要最先启动并等它启动完成：主库的库表由它来建，加密数据用的那几把密钥也由它首次生成。
 
 ```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
 export MUGSUN_INIT_PASSWORD='<admin 的初始口令>'
 java -jar mugsun-cloud-service/mugsun-cloud-system/target/mugsun-cloud-system.jar --spring.profiles.active=dev
 ```
 
 ```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
 java -jar mugsun-cloud-service/mugsun-cloud-gis/target/mugsun-cloud-gis.jar --spring.profiles.active=dev
 ```
 
 ```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
 java -jar mugsun-cloud-service/mugsun-cloud-track/target/mugsun-cloud-track.jar --spring.profiles.active=dev
+```
+
+```bash
+export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
+java -jar mugsun-cloud-service/mugsun-cloud-ai/target/mugsun-cloud-ai.jar --spring.profiles.active=dev
 ```
 
 ```bash
@@ -84,9 +98,9 @@ export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-gateway/target/mugsun-cloud-gateway.jar
 ```
 
-`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis 和 track 服务可以不启动，见 [gis 和 track 服务可以不部署](#gis-和-track-服务可以不部署)。
+`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。
 
-system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。gis 和 track 的接口文档在它们自己的端口上，路径相同。
+system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。其它服务的接口文档在它们自己的端口上，路径相同。
 
 | 要看什么 | 命令 |
 | --- | --- |
@@ -98,7 +112,8 @@ system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。gis �
 
 - `MUGSUN_SERVICE_IP` 是服务注册到 Nacos 的地址。不设置时自动取一块网卡的地址，开着 VPN 或有多块网卡时可能取错，网关就连不上服务。本机开发建议写成 `127.0.0.1`。
 - `MUGSUN_INIT_PASSWORD` 只在首次建库时用来创建 `admin`，和单体版一样。
-- system、gis 和 track 服务要显式带 `--spring.profiles.active=dev`。没配 profile 按生产处理，缺密钥会拒绝启动。
+- `MUGSUN_INNER_SECRET` 是服务之间互相调用用的密钥，四个业务服务要一样，网关不用。不设置时服务照常启动，只是跨服务的功能用不了，见[服务之间的调用](#服务之间的调用)。
+- 各业务服务都要显式带 `--spring.profiles.active=dev`。没配 profile 按生产处理，缺密钥会拒绝启动。
 - 埋点库 `mugsun_track` 由 track 服务迁移。单体版的 compose 已经把这个库建好；用自己的 PostgreSQL 时，库不存在 track 会自己建，数据库账号要有 `CREATEDB` 权限。
 - 网关默认端口和单体版一样是 8080，同一台机器上两个不能都用默认端口。
 - 本地的个性化配置写在启动目录下的 `config/application-local.yml`，这个文件不进仓库。模板在 mugsun-boot 的 `config/application-local.yml.example`。
@@ -115,27 +130,45 @@ system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。gis �
 | `MUGSUN_NACOS_GROUP` | Nacos 分组 | `DEFAULT_GROUP` |
 | `MUGSUN_SERVICE_IP` | 服务注册到 Nacos 的地址 | 自动取网卡地址 |
 | `MUGSUN_OPENAPI_TRUSTED_PROXIES` | 网关前面的反向代理的地址段。配给网关，不再配给后端服务 | 空，即网关直接面向客户端 |
+| `MUGSUN_INNER_SECRET` | 服务之间互相调用用的密钥，至少 32 个字符。各业务服务配成同一个值，网关不用配 | 空，即不开通服务之间的调用 |
 
 上线前先看[部署注意事项](./docs/deployment.md)，里面是微服务版和单体版不一样、配错会出安全问题的地方。
 
-## gis 和 track 服务可以不部署
+## 可选服务可以不部署
+
+gis、track 和 ai 三个服务可以不部署。
 
 | 服务 | 部署了 | 没部署 |
 | --- | --- | --- |
 | gis | 管理后台显示 GIS 菜单，`/system/gis/**` 由网关转给它 | 菜单里没有 GIS，登录信息里 `gisEnabled` 为 `false`，`/system/gis/**` 返回 503 |
 | track | 管理后台显示埋点分析菜单，`/track/**` 和 `/system/track/**` 由网关转给它 | 菜单里没有埋点分析，登录信息里 `trackEnabled` 为 `false`，这两类路径返回 503 |
+| ai | 管理后台显示 AI 菜单，`/system/ai/**` 和 `/v1/**` 由网关转给它 | 菜单里没有 AI，登录信息里 `aiEnabled` 为 `false`，这两类路径返回 503 |
 
 system 按注册中心里有没有对应服务的实例来判断。服务启动后几秒内菜单出现；停掉后过一分钟菜单才消失，这样重启服务时菜单不会闪。
 
 单体版的开关照样可用：
 
-- 系统参数 `gis.module.enabled` 设成 `false`，运行时关掉 GIS，不用停服务。埋点没有对应的系统参数。
-- 给 system 设置 `MUGSUN_GIS_ENABLED=false` 或 `MUGSUN_TRACK_ENABLED=false`，system 就当这个模块不存在，菜单隐藏。
-- gis 和 track 服务自己不接受这两个值，带着 `false` 会拒绝启动：不需要某个模块就不要部署它的服务。
+- 系统参数 `gis.module.enabled`、`ai.module.enabled` 设成 `false`，运行时关掉 GIS 或 AI，不用停服务。埋点没有对应的系统参数。
+- 给 system 设置 `MUGSUN_GIS_ENABLED=false`、`MUGSUN_TRACK_ENABLED=false` 或 `MUGSUN_AI_ENABLED=false`，system 就当这个模块不存在，菜单隐藏。
+- gis、track 和 ai 服务自己不接受这几个值，带着 `false` 会拒绝启动：不需要某个模块就不要部署它的服务。
+
+## 服务之间的调用
+
+有三个功能要一个服务去调另一个服务：
+
+| 功能 | 谁调谁 | 对方没部署时 |
+| --- | --- | --- |
+| AI 问图层、AI 解读埋点数据 | ai 向 gis、track 取库里的实数 | 提示对应的服务没有部署 |
+| 埋点分析的「问数据」用大模型解析提问 | track 调 ai | 只按规则解析提问，和单体版没装 AI 模块时一样 |
+| 代码生成的建模草稿用大模型出 | system 调 ai | 按规则解析描述，和单体版没装 AI 模块时一样 |
+
+这些调用走各服务 `/inner` 开头的内部接口，直接连对方的端口，不经网关。请求和响应都用 `MUGSUN_INNER_SECRET` 签名。带过去的身份只有租户，不带用户的登录令牌；用户有没有权限用这个功能，由发起调用的服务先判断。
+
+没配 `MUGSUN_INNER_SECRET` 时服务照常启动，只是不接受也不发起内部调用：AI 问图层、解读埋点数据会提示内部调用没有开通，另外两个功能改用规则。配置要求和排查办法见[部署注意事项](./docs/deployment.md)的第 4 节。
 
 ## 网关做了什么
 
-- 按路径把请求转给对应的服务，路径不改写。`/system/gis/**` 转给 gis，`/track/**` 和 `/system/track/**` 转给 track，其余全部转给 system。WebSocket 也经网关转发。
+- 按路径把请求转给对应的服务，路径不改写。`/system/gis/**` 转给 gis，`/track/**` 和 `/system/track/**` 转给 track，`/system/ai/**` 和 `/v1/**` 转给 ai，其余全部转给 system。WebSocket 也经网关转发。
 - 算出客户端的真实地址写进 `X-Forwarded-For` 等请求头。客户端自己带来的这类请求头一律删掉，只有来自可信代理的才采信。
 - 拦下以 `/inner` 开头的路径。这个前缀留给服务之间互相调用的内部接口，不对外。
 - 统一应答跨域请求，规则和单体版一致。
@@ -145,8 +178,8 @@ system 按注册中心里有没有对应服务的实例来判断。服务启动�
 
 ## 目前的限制
 
-- AI 还没有拆过来，它的接口在这个版本里不存在。埋点分析的「问数据」因此没有大模型可用，只按规则解析问题。
-- 还没有服务之间的调用和内部接口的鉴权，现有的服务用不到：track 发告警站内信是直接写共用的主库，实时推送经 Redis 交给 system。服务端口不能让网关以外的机器访问到。
+- 审批流里的 AI 预审节点在这个版本里用不了。流程要走到这种节点时，发起、审批通过、退回、撤回都会被拒绝，流程留在原来的位置；带这种节点的流程要先在流程设计里去掉它再用。从单体版迁过来之前先看[部署注意事项](./docs/deployment.md)的第 15 节。
+- 服务之间的调用只签名，不加密，各服务共用一把密钥。服务端口不能让网关和其它服务以外的机器访问到。
 - PowerJob 执行器只在 system 上启动。埋点的三个 PowerJob 处理器在这个版本里用不了，替代办法见[部署注意事项](./docs/deployment.md)。
 - 只读演示模式（`demo` profile）没有在微服务版里验证过。
 - 在 system 里改了数据权限规则、接口权限或租户数据源，其它服务最长 30 秒后生效，见[部署注意事项](./docs/deployment.md)。
