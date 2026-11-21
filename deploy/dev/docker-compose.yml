@@ -1,0 +1,25 @@
+# 本地开发用的注册中心：Nacos 单机模式，数据在容器里，删掉容器就清空。
+# 用同目录的 nacos.sh 启动：它在首次启动时生成 .env（随机密钥，不进仓库），并算好 gRPC 端口。
+# 端口只绑定本机回环地址，客户端接入没有开鉴权。只给本地开发用，生产环境的要求见 docs/deployment.md。
+name: mugsun-cloud-dev
+
+services:
+  nacos:
+    image: ${MUGSUN_NACOS_IMAGE:-nacos/nacos-server:v3.0.3}
+    container_name: mugsun-cloud-nacos
+    environment:
+      MODE: standalone
+      # Nacos 3 启动时必须有这三项，没有默认值
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN:?先执行 ./nacos.sh up，由它生成 .env}
+      NACOS_AUTH_IDENTITY_KEY: ${NACOS_AUTH_IDENTITY_KEY:?先执行 ./nacos.sh up，由它生成 .env}
+      NACOS_AUTH_IDENTITY_VALUE: ${NACOS_AUTH_IDENTITY_VALUE:?先执行 ./nacos.sh up，由它生成 .env}
+      # 镜像默认给 1g 堆，本地开发用不到
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      JVM_XMN: 128m
+    ports:
+      # 客户端先连主端口，再连「主端口 + 1000」的 gRPC 端口，两个宿主机端口必须相差 1000（nacos.sh 会算）
+      - "127.0.0.1:${MUGSUN_NACOS_PORT:-8848}:8848"
+      - "127.0.0.1:${MUGSUN_NACOS_GRPC_PORT:-9848}:9848"
+      # 控制台。容器里是 8080，和网关的默认端口相同，所以宿主机上换一个
+      - "127.0.0.1:${MUGSUN_NACOS_CONSOLE_PORT:-8849}:8080"
