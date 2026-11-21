@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud-service</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-track</artifactId>
+	<name>mugsun-cloud-track</name>
+	<description>track 服务：埋点采集、分析看板、错误监控、会话回放等（mugsun-boot-track 模块）</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-common</artifactId>
+		</dependency>
+		<!-- mugsun-boot-track 只依赖 mugsun-boot-core。以下是 core 的依赖里它用得到、公共层又没带的那些 -->
+		<!-- 会话回放、接口报文和 sourcemap 存在文件存储里 -->
+		<dependency>
+			<groupId>org.dromara.x-file-storage</groupId>
+			<artifactId>x-file-storage-spring</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>io.minio</groupId>
+			<artifactId>minio</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>com.aliyun.oss</groupId>
+			<artifactId>aliyun-sdk-oss</artifactId>
+		</dependency>
+		<!-- 模块里有三个 PowerJob 处理器，编译和装配都要它的接口；执行器在这个服务里默认不启动，见 application.yml -->
+		<dependency>
+			<groupId>tech.powerjob</groupId>
+			<artifactId>powerjob-worker-spring-boot-starter</artifactId>
+		</dependency>
+		<!-- 事件入库时用它从 User-Agent 解析浏览器和操作系统。单体版里由 core 的短信组件 sms4j 间接带入，这个服务不带 sms4j。
+		     排除它自带的 hutool-core，让 hutool-core 跟着公共层的 hutool-crypto 走，和单体版打出的包一致 -->
+		<dependency>
+			<groupId>cn.hutool</groupId>
+			<artifactId>hutool-http</artifactId>
+			<version>${hutool-http.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>cn.hutool</groupId>
+					<artifactId>hutool-core</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>mugsun-cloud-track</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<skip>false</skip>
+					<mainClass>com.mugsun.cloud.track.TrackApplication</mainClass>
+					<!-- 和 java -jar 一致：以仓库根目录为工作目录，读 ./config/application-local.yml -->
+					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+					<profiles>
+						<profile>dev</profile>
+					</profiles>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

@@ -1,0 +1,16 @@
+# track 服务的配置。分两段，写法和理由见 system 服务的 application.yml：
+# 第一段只负责导入 mugsun-boot 的默认配置和微服务版共用的改动，第二段是这个服务自己的配置。
+# 埋点模块自己的配置（埋点库的数据源、mugsun.track.*）在 mugsun-module-track.yml 里，由 boot 的默认配置导入，变量名和单体版相同。
+# 埋点库（默认 mugsun_track）由这个服务自己建库和迁移，和主库的 spring.flyway.enabled 无关。
+# PowerJob 执行器在这个服务里不启动，powerjob.worker.* 在这里不起作用，原因见 TrackApplication。
+spring:
+  config:
+    import:
+      - classpath:mugsun-boot-defaults.yml
+      - classpath:mugsun-cloud-defaults.yml
+---
+server:
+  port: 8103
+spring:
+  application:
+    name: mugsun-track
