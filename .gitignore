@@ -1,0 +1,28 @@
+target/
+build/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+logs/
+*.log
+*.tmp
+application-local.yml
+.DS_Store
+Thumbs.db
+**/__pycache__/
+
+# 本地开发密钥文件
+.mugsun/
+
+# deploy/dev/nacos.sh 生成的本机密钥
+.env
