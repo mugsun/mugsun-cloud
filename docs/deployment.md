@@ -679,6 +679,9 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show    # 看 a
 | `MUGSUN_JAVA_OPTS` | 网关和四个服务的 JVM 参数 | `-Xmx512m` |
 | `MUGSUN_SYSTEM_REPLICAS` | system 起几个实例。多个实例要注意的事项见第 7 节 | `1` |
 | `MUGSUN_GIS_XYZ_ALLOW_BENCHMARK_NET` | gis 取底图瓦片时，放行解析到 `198.18.0.0/15` 的域名。什么时候开见下面「几种改法」 | `false` |
+| `MUGSUN_GATEWAY_ACCESS_LOG`、`MUGSUN_GATEWAY_SLOW_MILLIS` | 网关的访问日志记哪些请求、多慢算慢请求，写法见第 10 节「网关的访问日志」 | `all`、`3000` |
+| `MUGSUN_GATEWAY_DENY_IPS`、`MUGSUN_GATEWAY_ALLOW_IPS`、`MUGSUN_GATEWAY_RESTRICTED_PATHS`、`MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS` | 网关的黑名单、白名单、不对外开放的路径，写法见第 10 节「按客户端地址限制访问」。用之前先看下面的「网关看到的客户端地址」 | 空，即不限制 |
+| `MUGSUN_GATEWAY_RATE_LIMIT`、`MUGSUN_GATEWAY_RATE_LIMIT_PATHS`、`MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS` | 网关的限流，写法见第 10 节「限流」。同样先看「网关看到的客户端地址」 | 空，即不限流 |
 | `MUGSUN_PG_IMAGE` | PostgreSQL 的镜像 | `ghcr.io/mugsun/postgis-pgvector:16-3.4` |
 | `MUGSUN_NACOS_IMAGE` | Nacos 的镜像 | `nacos/nacos-server:v3.0.3`，固定摘要 |
 | `MUGSUN_PC_SRC` | 管理后台的源码，可以写本机的目录 | GitHub 上 mugsun-pc 的一个固定提交 |
@@ -689,7 +692,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show    # 看 a
 
 `MUGSUN_PUBLIC_URL` 决定的是库里登记的文件地址。生产配置默认不开本地存储直出（`enable-access: false`），实测这个地址直接打开是 404，文件要登录以后在管理后台里下载。
 
-编排只把写在各服务 `environment` 里的变量传进容器。后端别的配置项要改，先把对应的变量加进编排文件，只写进 `.env` 不生效。
+编排只把写在各服务 `environment` 里的变量传进容器。后端别的配置项要改，先把对应的变量加进编排文件，只写进 `.env` 不生效。网关的开关里，只有动态路由的 `MUGSUN_GATEWAY_DYNAMIC_ROUTES` 没有传，原因见「这份编排没有做的」；其余的都传了，自检会查有没有漏。网关的开关留空和不写一样，按默认值。
 
 几种改法：
 
@@ -744,6 +747,34 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show nacos    #
 ```bash
 docker compose -f deploy/docker/docker-compose.yml run --rm nacos-init status
 ```
+
+### 网关看到的客户端地址
+
+第 10 节的黑名单、白名单、不对外开放的路径和限流都按客户端地址算，登录日志里记的也是这个地址。在这份编排里它是这样来的：管理后台的 Nginx 把连上它的那一方的地址写进 `X-Forwarded-For`（客户端自己带来的不算），网关只采信 Nginx 传来的这一个。所以网关看到的客户端地址，就是管理后台的容器看到的对方地址。
+
+容器之间互相访问时这个地址是对的：自检里从同一个网段的另一个容器登录，登录日志记下的是那个容器的地址。
+
+从宿主机的端口进来的请求，要看 Docker 怎么转发。在 Mac 上的 Docker Desktop 4.38 实测，客户端真实的地址传不进容器，所有请求都是同一个地址：
+
+| `MUGSUN_HTTP_BIND` | 从哪里访问 | 网关看到的客户端地址 |
+| --- | --- | --- |
+| `127.0.0.1`（默认） | 宿主机本机 | 容器网段的网关地址，默认网段下是 `172.30.89.128` |
+| `0.0.0.0` | 宿主机本机、局域网里的另一台机器 | 都是 `192.168.65.1`（Docker Desktop 内部的地址） |
+
+这样的环境里，按地址的开关分不出谁是谁：
+
+- 限流：所有人共用一个限额，限额要按总量定。
+- 黑名单：写客户端真实的地址拦不住，写上表里的地址会把所有人拦掉。
+- 白名单：不写上表里的地址，所有人都进不来；写了就等于没有白名单。
+- 不对外开放的路径：放行名单留空（谁都不能经网关访问）照样有效；放行名单里写了上表里的地址，就等于对所有人开放。
+
+Linux 服务器上的 Docker 没有实测过。用按地址的开关之前先确认一下：从两台机器各访问一次管理后台，再看网关的访问日志。
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml logs gateway | grep ' ACCESS ' | tail
+```
+
+两台机器的请求在日志里的 `ip=` 是它们各自的地址，按地址的开关才分得出客户端。管理后台前面还有 TLS 终端或负载均衡时，要用 `MUGSUN_GATEWAY_CIDRS` 写上那一层的网段，管理后台才采信它传来的客户端地址；这种部署没有在这份编排上实测过。
 
 ### 启动、停止和重启时的表现
 
@@ -813,7 +844,7 @@ docker compose -f deploy/docker/docker-compose.yml down -v    # 连数据和密�
 
 `deploy/docker/smoke.sh` 从零构建并启动一套独立的环境，项目名、端口和网段都和正式那一套错开，不动正式那一套的容器和卷。这套环境里 system 起两个实例，从空库一起启动。镜像和正式那一套是同一组标签，脚本会按当前的源码重新构建它们，正式那一套下次执行 `up` 时会换成新构建的镜像。正式那一套在运行时执行这个脚本，没有实测过。它做这几件事：
 
-1. 逐项检查上面的约定：口令不在日志和容器配置里，只映射一个端口，固定地址，密钥分卷，时区一致。再看四个业务服务的每个实例是不是都领到了机器号、各不相同（第 7 节）。
+1. 逐项检查上面的约定：口令不在日志和容器配置里，只映射一个端口，固定地址，密钥分卷，时区一致。网关的开关除了动态路由都传进了容器，不对外开放的路径和限流在起作用。再看四个业务服务的每个实例是不是都领到了机器号、各不相同（第 7 节）。
 2. 登录、改口令、上报并查到第一条埋点，再让 ai 服务去取 gis 和 track 的数据，确认服务之间的调用是通的。
 3. 两个 system 实例之间：从空库一起启动，都没有重启过；登录态在两个实例上都有效；在一个实例上保存、删除数据权限规则，另一个实例 5 秒内跟上；正常停掉一个实例，停的过程中经网关连续访问 15 秒，一次失败都不能有。
 4. 重启 Nacos，再把全部容器停掉、打乱顺序重新启动，看整套能不能自己恢复。
@@ -831,4 +862,5 @@ deploy/docker/smoke.sh
 - 没有备份。数据在 `pg-data`、`redis-data` 和 `files` 三个卷里。
 - 没有包含 PowerJob 的调度中心。邮件和短信是占位的配置，发不出去。
 - 容器没有设内存和 CPU 的上限。
+- 在 Docker Desktop 上，从宿主机端口进来的请求拿不到客户端真实的地址，按地址的黑白名单和限流分不出谁是谁，见「网关看到的客户端地址」。
 - 没有接上动态路由（第 10 节「改路由不用重启网关」）：开关没有传进网关容器，接入账号的角色 `mugsun-service` 也只有注册和查询服务的权限，读不了配置。

@@ -276,6 +276,19 @@ services:
       # 只采信管理后台容器（Nginx）这一个固定地址传来的 X-Forwarded-For，不采信整个网段。
       # 单体版里这个变量配给后端，微服务版配给网关（docs/deployment.md 第 2 节）
       MUGSUN_OPENAPI_TRUSTED_PROXIES: ${MUGSUN_NET_PREFIX:-172.30.89}.10/32
+      # 网关的开关：访问日志、按客户端地址限制访问、限流，写法见 docs/deployment.md 第 10 节。
+      # 默认值只写在网关一处，这里不再写一遍：没配的传进去是空值，网关把空值当成没配。
+      # 网关加了新开关要在这里补上，否则写进 .env 也不生效（smoke.sh 会查）。
+      # 按地址的那几项在这份编排里认的是谁，见第 16 节「网关看到的客户端地址」
+      MUGSUN_GATEWAY_ACCESS_LOG: ${MUGSUN_GATEWAY_ACCESS_LOG:-}
+      MUGSUN_GATEWAY_SLOW_MILLIS: ${MUGSUN_GATEWAY_SLOW_MILLIS:-}
+      MUGSUN_GATEWAY_DENY_IPS: ${MUGSUN_GATEWAY_DENY_IPS:-}
+      MUGSUN_GATEWAY_ALLOW_IPS: ${MUGSUN_GATEWAY_ALLOW_IPS:-}
+      MUGSUN_GATEWAY_RESTRICTED_PATHS: ${MUGSUN_GATEWAY_RESTRICTED_PATHS:-}
+      MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS: ${MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS:-}
+      MUGSUN_GATEWAY_RATE_LIMIT: ${MUGSUN_GATEWAY_RATE_LIMIT:-}
+      MUGSUN_GATEWAY_RATE_LIMIT_PATHS: ${MUGSUN_GATEWAY_RATE_LIMIT_PATHS:-}
+      MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS: ${MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS:-}
     volumes:
       - secrets-gateway:/secrets:ro
     networks:

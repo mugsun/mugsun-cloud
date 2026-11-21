@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定、各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
+# 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定、网关的开关传进了容器并且在起作用、
+# 各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
 # 服务之间互相调用 → 两个 system 实例之间保持一致，从空库一起启动都没有重启过，正常停掉一个的过程中经网关的访问不能有失败
 # → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
@@ -16,6 +17,14 @@ export MUGSUN_HTTP_PORT="${MUGSUN_HTTP_PORT:-18188}"
 export MUGSUN_NET_PREFIX="${MUGSUN_NET_PREFIX:-172.30.90}"
 # system 默认起两个实例：从空库一起启动，下面每一步都带着两个实例
 export MUGSUN_SYSTEM_REPLICAS="${MUGSUN_SYSTEM_REPLICAS:-2}"
+# 网关的开关在自检里用固定的一组值，不跟调用方的环境和 .env 走：下面有检查靠这几个值，
+# 而且正式环境配的白名单、限流会把自检自己的请求拦掉。空的也要写出来，不写的话 .env 里的值会生效。
+# 留空的那几个顺便验证了「什么都不配」时网关的样子：编排把空值传进容器，网关要起得来，访问日志照默认记
+export MUGSUN_GATEWAY_ACCESS_LOG="" MUGSUN_GATEWAY_SLOW_MILLIS=""
+export MUGSUN_GATEWAY_DENY_IPS=203.0.113.7 MUGSUN_GATEWAY_ALLOW_IPS=""
+export MUGSUN_GATEWAY_RESTRICTED_PATHS=/smoke-restricted MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS=""
+export MUGSUN_GATEWAY_RATE_LIMIT="" MUGSUN_GATEWAY_RATE_LIMIT_PATHS="/smoke-limited=3/60s"
+export MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS=""
 DC=(docker compose -f docker-compose.yml)
 # 拆出新服务时：在 APP_SERVICES 里补上名字，并在下面的 serving 里加一条它的接口
 APP_SERVICES="system gis track ai"
@@ -167,6 +176,51 @@ trusted=$("${DC[@]}" exec -T gateway printenv MUGSUN_OPENAPI_TRUSTED_PROXIES)
 [ "${trusted}" = "${net}.10/32" ] || fail "网关采信的代理不是管理后台这一个地址：${trusted}"
 # 管理后台按固定地址把请求转给网关。写名字的话 Nginx 只在启动时解析一次，那时网关没在运行就会解析到别处去
 [[ "${ngx}" == *"proxy_pass http://${net}.12:8080/;"* ]] || fail "管理后台没有按固定地址把请求转给网关"
+
+# ---- 网关的开关：网关认的每一个，编排都传进了容器；传进去的在起作用 ----
+# 编排只把写在 environment 里的变量传进容器，漏传的开关写进 .env 也不生效，而且没有任何提示。
+# 故意不传的写在 not_passed 里：动态路由要网关接入 Nacos 的账号能读配置，这份编排没有给这个权限
+not_passed="MUGSUN_GATEWAY_DYNAMIC_ROUTES"
+# 只认写成 ${MUGSUN_GATEWAY_...} 的：注释里也会提到这个前缀
+declared=$(grep -oE '\$\{MUGSUN_GATEWAY_[A-Z0-9_]+' ../../mugsun-cloud-gateway/src/main/resources/application.yml \
+	| cut -c3- | sort -u) \
+	|| fail "网关的 application.yml 里没有找到 MUGSUN_GATEWAY_ 开头的开关"
+gateway_env=$("${DC[@]}" exec -T gateway env)
+passed=0
+for name in ${declared}; do
+	[[ " ${not_passed} " != *" ${name} "* ]] || continue
+	want=$(printenv "${name}") || fail "自检没有给网关的开关 ${name} 定值：在这个脚本开头补上"
+	[[ $'\n'"${gateway_env}"$'\n' == *$'\n'"${name}=${want}"$'\n'* ]] \
+		|| fail "网关的开关 ${name} 没有照自检定的值传进网关容器：在 docker-compose.yml 的 gateway 服务里补上"
+	passed=$((passed + 1))
+done
+# 不对外开放的路径：自检把 /smoke-restricted 设成了不对外开放，没有配能访问的地址，谁经网关访问都是 403；
+# 前缀按整段比较，旁边的 /smoke-restrictedx 不受影响。管理后台的 Nginx 去掉 /api 以后再转给网关
+code=$(http_code /api/smoke-restricted/x)
+[ "${code}" = 403 ] || fail "网关没有拦住不对外开放的路径，返回了 ${code}"
+code=$(http_code /api/smoke-restrictedx)
+[ "${code}" != 403 ] || fail "不对外开放的路径把旁边的 /smoke-restrictedx 也拦了"
+# 限流：自检给 /smoke-limited 单独定了 60 秒 3 个。前 3 个网关放行（后面有没有这个接口不要紧），第 4 个返回 429
+for n in 1 2 3; do
+	code=$(http_code /api/smoke-limited)
+	[ "${code}" != 429 ] || fail "限额是 60 秒 3 个，第 ${n} 个请求就被限流了"
+done
+code=$(http_code /api/smoke-limited)
+[ "${code}" = 429 ] || fail "限额是 60 秒 3 个，第 4 个请求没有被限流，返回了 ${code}"
+# 访问日志：被限流的那个请求有一行。里面的 ip 是网关认定的客户端地址，按地址的名单和限流认的就是它。
+# 它应该是管理后台的 Nginx 看到的对端地址；是管理后台自己的地址就说明网关没有采信它传来的 X-Forwarded-For
+seen=""
+for _ in 1 2 3 4 5; do
+	line=$("${DC[@]}" logs --no-color gateway 2>&1 | grep ' ACCESS ' | grep ' uri=/smoke-limited status=429 ' | tail -n 1 || true)
+	if [[ "${line}" =~ \ ip=([^ ]+)\ method= ]]; then
+		seen="${BASH_REMATCH[1]}"
+		break
+	fi
+	sleep 1
+done
+[ -n "${seen}" ] || fail "网关的访问日志里没有被限流的那个请求"
+[ "${seen}" != "${net}.10" ] || fail "网关把管理后台的地址当成了客户端地址：没有采信它传来的 X-Forwarded-For"
+echo ">> 网关的 ${passed} 个开关都传进了容器，不对外开放的路径和限流在起作用；从宿主机的端口进来的请求，网关认定的客户端地址是 ${seen}"
 
 # ---- 进程和密钥 ----
 for svc in ${JAVA_SERVICES}; do
