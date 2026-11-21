@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定 → 登录、上报并查到第一条埋点、
+# 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定、各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
 # 服务之间互相调用 → 两个 system 实例之间保持一致，正常停掉一个的过程中经网关的访问不能有失败
 # → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
@@ -204,6 +204,21 @@ done
 
 # ---- Nacos：五个服务都用接入账号登记上了 ----
 wait_registered 60
+
+# ---- 机器号：四个业务服务的每个实例都领到了一个，各不相同 ----
+# 程序生成的主键里带着机器号：两个实例的机器号相同，同一毫秒往同一张表里写的两条主键就可能相同
+# （docs/deployment.md 第 7 节）。实例领到号的时候在日志里报一次
+machine_numbers=""
+for svc in ${APP_SERVICES}; do
+	for c in $(cid "${svc}"); do
+		line=$(docker logs "${c}" 2>&1 | grep '本实例的机器号：' | tail -n 1 || true)
+		[[ "${line}" =~ 本实例的机器号：([0-9]+) ]] || fail "${svc} 的实例没有领到机器号：日志里没有「本实例的机器号」"
+		machine_numbers+=" ${BASH_REMATCH[1]}"
+	done
+done
+# shellcheck disable=SC2086
+[ -z "$(printf '%s\n' ${machine_numbers} | sort | uniq -d)" ] || fail "有实例领到了相同的机器号：${machine_numbers}"
+echo ">> 四个业务服务的每个实例各领到一个机器号，各不相同：${machine_numbers}"
 
 # ---- 登录、上报埋点、服务之间互相调用：在编排网络里的一次性容器里执行 ----
 # Python 依赖的版本和 sha256 都写死在清单里（--require-hashes）。
