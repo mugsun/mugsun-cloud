@@ -50,13 +50,30 @@ class SharedStateSyncTaskTest {
 		tenant -> {
 		});
 
+	/** 清了几次缓存的租户和套餐 */
+	private final AtomicInteger tenantCacheRuns = new AtomicInteger();
+
+	/** 不是 null 时，清租户缓存的那一步抛这个异常 */
+	private RuntimeException tenantCacheFailure;
+
+	/** 清租户缓存的那一步执行时，线程上有没有「正在重新加载」的标记 */
+	private final AtomicBoolean tenantCachesClearedWhileSyncing = new AtomicBoolean();
+
 	/** Redis 里现在的版本。null 表示 Redis 读不到 */
 	private String version = "";
 
 	private long now;
 
 	private final SharedStateSyncTask task = new SharedStateSyncTask(dataScopeRules, apiScopeRules, dataSources,
-		this::readVersion, INTERVAL_MS, CHECK_MS, () -> now);
+		this::clearTenantCaches, this::readVersion, INTERVAL_MS, CHECK_MS, () -> now);
+
+	private void clearTenantCaches() {
+		tenantCacheRuns.incrementAndGet();
+		tenantCachesClearedWhileSyncing.set(SharedStateSyncTask.isSyncing());
+		if (tenantCacheFailure != null) {
+			throw tenantCacheFailure;
+		}
+	}
 
 	private String readVersion() {
 		if (version == null) {
@@ -81,24 +98,28 @@ class SharedStateSyncTaskTest {
 
 		assertRuleLoads(0);
 		assertThat(dataSourceRuns).hasValue(0);
+		assertThat(tenantCacheRuns).hasValue(0);
 	}
 
 	@Test
 	void loadsOnceRightAfterStartupThenWaitsForAChange() {
 		task.becomeReady();
-		// 启动完成时先对一遍数据源，规则在启动过程中已经加载过
+		// 启动完成时先对一遍数据源，规则在启动过程中已经加载过，租户和套餐还没有缓存
 		assertThat(dataSourceRuns).hasValue(1);
 		assertRuleLoads(0);
+		assertThat(tenantCacheRuns).hasValue(0);
 
 		// 第一次读到版本：启动期间别的实例可能改过东西，先加载一遍
 		tickAfter(CHECK_MS);
 		assertRuleLoads(1);
 		assertThat(dataSourceRuns).hasValue(2);
+		assertThat(tenantCacheRuns).hasValue(1);
 
 		tickAfter(CHECK_MS);
 		tickAfter(CHECK_MS);
 		assertRuleLoads(1);
 		assertThat(dataSourceRuns).hasValue(2);
+		assertThat(tenantCacheRuns).hasValue(1);
 	}
 
 	@Test
@@ -110,9 +131,11 @@ class SharedStateSyncTaskTest {
 		tickAfter(CHECK_MS);
 		assertRuleLoads(2);
 		assertThat(dataSourceRuns).hasValue(3);
+		assertThat(tenantCacheRuns).hasValue(2);
 
 		tickAfter(CHECK_MS);
 		assertRuleLoads(2);
+		assertThat(tenantCacheRuns).hasValue(2);
 	}
 
 	@Test
@@ -122,9 +145,12 @@ class SharedStateSyncTaskTest {
 
 		tickAfter(INTERVAL_MS - CHECK_MS);
 		assertRuleLoads(1);
+		assertThat(tenantCacheRuns).hasValue(1);
 
 		tickAfter(CHECK_MS);
 		assertRuleLoads(2);
+		// 有人绕过管理页面直接在库里停用了租户，靠这一遍跟上
+		assertThat(tenantCacheRuns).hasValue(2);
 	}
 
 	@Test
@@ -167,6 +193,28 @@ class SharedStateSyncTaskTest {
 	}
 
 	@Test
+	void aFailureWhileClearingTenantCachesIsRetriedAndDoesNotStopTheRest() {
+		task.becomeReady();
+		tickAfter(CHECK_MS);
+
+		version = "改过一次";
+		tenantCacheFailure = new IllegalStateException("清不掉");
+		tickAfter(CHECK_MS);
+		// 规则和数据源照常更新
+		assertRuleLoads(2);
+		assertThat(dataSourceRuns).hasValue(3);
+		assertThat(tenantCacheRuns).hasValue(2);
+
+		// 没清成，这个版本就不算见过：下一次检查接着试
+		tenantCacheFailure = null;
+		tickAfter(CHECK_MS);
+		assertThat(tenantCacheRuns).hasValue(3);
+
+		tickAfter(CHECK_MS);
+		assertThat(tenantCacheRuns).hasValue(3);
+	}
+
+	@Test
 	void stopsLoadingWhenTheApplicationStopsAcceptingTraffic() {
 		task.becomeReady();
 		tickAfter(CHECK_MS);
@@ -190,6 +238,7 @@ class SharedStateSyncTaskTest {
 		tickAfter(CHECK_MS);
 
 		assertThat(whileLoading).isTrue();
+		assertThat(tenantCachesClearedWhileSyncing).isTrue();
 		assertThat(SharedStateSyncTask.isSyncing()).isFalse();
 	}
 

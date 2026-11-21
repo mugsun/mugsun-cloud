@@ -25,9 +25,10 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
 /**
- * 让本实例内存里的三样东西跟上库里的改动：数据权限规则、接口权限规则和角色授权、租户独立数据源。
+ * 让本实例内存里的四样东西跟上库里的改动：数据权限规则、接口权限规则和角色授权、租户独立数据源，还有缓存的租户和套餐
+ * （见 {@link TenantCacheSync}：这一样不是重新加载，是把缓存清掉，下一次用到时再查库）。
  *
- * <p>这三样以库里的为准。每条 SQL、每次接口调用都要查它们，所以 mugsun-boot 在每个进程的内存里各留了一份；数据源是连接池，
+ * <p>前三样以库里的为准。每条 SQL、每次接口调用都要查它们，所以 mugsun-boot 在每个进程的内存里各留了一份；数据源是连接池，
  * 本来就只能在进程里。单体版只有一个进程，管理员一保存，控制器顺手刷新内存里的那一份就够了。拆成多个服务、
  * 每个服务又可以起多个实例以后，保存只发生在处理那次请求的 system 实例里，别的实例内存里的那一份没人刷新：
  * 收回的授权在别处还作数，改用独立库的租户在别处还往主库写。所以每个服务的每个实例（包括 system）都跑这个任务：
@@ -48,7 +49,7 @@ import java.util.function.Supplier;
  * <p>开关 {@code mugsun.cloud.sync.enabled}，默认开。多久读一次版本：{@code mugsun.cloud.sync.check-interval-ms}，默认 1 秒。
  * 兜底间隔：{@code mugsun.cloud.sync.interval-ms}，默认 30 秒。把这个包的日志级别调到 DEBUG，能看到每次通知和每次重新加载。
  *
- * <p>不归这里管的：系统参数（JetCache 会经 Redis 通知各进程清缓存）、租户和套餐（各实例缓存 60 秒）、登录态（在 Redis 里）。
+ * <p>不归这里管的：系统参数（JetCache 会经 Redis 通知各进程清缓存）、登录态（在 Redis 里）。
  * 字典只缓存在各实例自己的内存里，靠过期跟上，system 在自己的 application.yml 里把过期时间设成了 30 秒。
  */
 @Component
@@ -67,6 +68,9 @@ public class SharedStateSyncTask implements DisposableBean {
 	private final ApiScopeRuleLoader apiScopeRuleLoader;
 
 	private final TenantDataSourceSync tenantDataSourceSync;
+
+	/** 把本实例缓存的租户和套餐清掉 */
+	private final Runnable tenantCaches;
 
 	/** 读 Redis 里的版本，读不到时抛异常 */
 	private final Supplier<String> version;
@@ -98,12 +102,14 @@ public class SharedStateSyncTask implements DisposableBean {
 
 	private boolean dataSourcesFailing;
 
+	private boolean tenantCachesFailing;
+
 	private boolean tickFailing;
 
 	@Autowired
 	public SharedStateSyncTask(DataScopeRuleLoader dataScopeRuleLoader, ApiScopeRuleLoader apiScopeRuleLoader,
 							   TenantDataSourceRegistry registry, SysTenantDatasourceMapper datasourceMapper,
-							   SharedStateVersion version,
+							   TenantCacheSync tenantCacheSync, SharedStateVersion version,
 							   @Value("${mugsun.cloud.sync.interval-ms:30000}") long intervalMs,
 							   @Value("${mugsun.cloud.sync.check-interval-ms:1000}") long checkIntervalMs) {
 		this(dataScopeRuleLoader, apiScopeRuleLoader,
@@ -113,15 +119,24 @@ public class SharedStateSyncTask implements DisposableBean {
 				tenant -> !TenantDataSourceRegistry.DEFAULT_KEY.equals(registry.resolveDsKey(tenant)),
 				registry::register,
 				registry::unregister),
-			version::current, intervalMs, checkIntervalMs, System::nanoTime);
+			tenantCacheSync::evictAll, version::current, intervalMs, checkIntervalMs, System::nanoTime);
+	}
+
+	/** 单测用：不关心租户缓存的 */
+	SharedStateSyncTask(DataScopeRuleLoader dataScopeRuleLoader, ApiScopeRuleLoader apiScopeRuleLoader,
+						TenantDataSourceSync tenantDataSourceSync, Supplier<String> version,
+						long intervalMs, long checkIntervalMs, LongSupplier nanoClock) {
+		this(dataScopeRuleLoader, apiScopeRuleLoader, tenantDataSourceSync, () -> {
+		}, version, intervalMs, checkIntervalMs, nanoClock);
 	}
 
 	SharedStateSyncTask(DataScopeRuleLoader dataScopeRuleLoader, ApiScopeRuleLoader apiScopeRuleLoader,
-						TenantDataSourceSync tenantDataSourceSync, Supplier<String> version,
+						TenantDataSourceSync tenantDataSourceSync, Runnable tenantCaches, Supplier<String> version,
 						long intervalMs, long checkIntervalMs, LongSupplier nanoClock) {
 		this.dataScopeRuleLoader = dataScopeRuleLoader;
 		this.apiScopeRuleLoader = apiScopeRuleLoader;
 		this.tenantDataSourceSync = tenantDataSourceSync;
+		this.tenantCaches = tenantCaches;
 		this.version = version;
 		this.intervalNanos = TimeUnit.MILLISECONDS.toNanos(intervalMs);
 		this.checkIntervalMs = Math.max(MIN_CHECK_INTERVAL_MS, checkIntervalMs);
@@ -212,7 +227,8 @@ public class SharedStateSyncTask implements DisposableBean {
 		boolean loaded = whileSyncing(() -> {
 			boolean rules = reloadScopeRules();
 			boolean dataSources = syncTenantDataSources();
-			return rules && dataSources;
+			boolean tenants = evictTenantCaches();
+			return rules && dataSources && tenants;
 		});
 		lastSyncAt = nanoClock.getAsLong();
 		// 记下的是加载之前读到的版本：加载期间又有人改了的话，下一次还会发现不一样。没加载成功就不记，下一次接着试
@@ -292,6 +308,23 @@ public class SharedStateSyncTask implements DisposableBean {
 			if (!stopped && !dataSourcesFailing) {
 				dataSourcesFailing = true;
 				log.error("同步租户独立数据源失败，暂时沿用现有的数据源，下一轮会再试：{}", e.getMessage());
+			}
+			return false;
+		}
+	}
+
+	private boolean evictTenantCaches() {
+		try {
+			tenantCaches.run();
+			if (tenantCachesFailing) {
+				tenantCachesFailing = false;
+				log.info("缓存的租户和套餐已恢复清理");
+			}
+			return true;
+		} catch (RuntimeException e) {
+			if (!stopped && !tenantCachesFailing) {
+				tenantCachesFailing = true;
+				log.error("清缓存的租户和套餐失败，没清掉的最长 60 秒后自己过期，下一轮会再试：{}", e.getMessage());
 			}
 			return false;
 		}

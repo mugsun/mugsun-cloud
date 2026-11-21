@@ -10,12 +10,13 @@ import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 
 /**
- * 本实例上有人改了数据权限规则、接口权限规则和角色授权、租户独立数据源时，通知其它实例重新加载。
+ * 本实例上有人改了数据权限规则、接口权限规则和角色授权、租户独立数据源、租户或套餐时，通知其它实例重新加载。
  *
  * <p>怎么知道有人改了：mugsun-boot 的控制器保存以后会刷新本进程内存里的那一份，也就是调用两个规则加载器的 reload、
- * 数据源注册表的 register 和 unregister。这里盯着这几个方法：单体版会刷新自己的时候，就是该告诉别的实例的时候，
- * boot 以后新增的调用点也自动算在内。这几个类是同步来的，不能改，所以用切面。加载器和注册表在启动时自己调用自己，
- * 不经过这里；本实例跟着别人重新加载（{@link SharedStateSyncTask}）不算改动，不再通知。
+ * 数据源注册表的 register 和 unregister、租户校验器的 evict 和 evictPackage（清掉缓存的一个租户、一个套餐）。
+ * 这里盯着这几个方法：单体版会刷新自己的时候，就是该告诉别的实例的时候，boot 以后新增的调用点也自动算在内。
+ * 这几个类是同步来的，不能改，所以用切面。加载器和注册表在启动时自己调用自己，不经过这里；本实例跟着别人重新加载
+ * （{@link SharedStateSyncTask}）不算改动，不再通知。
  *
  * <p>什么时候通知：别的实例收到通知就去读库，所以要等这次改动全部写进库里。
  * <ul>
@@ -47,7 +48,9 @@ public class SharedStateChangeAspect {
 	@After("execution(* com.mugsun.boot.config.DataScopeRuleLoader.reload())"
 		+ " || execution(* com.mugsun.boot.config.ApiScopeRuleLoader.reload())"
 		+ " || execution(* com.mugsun.boot.datasource.TenantDataSourceRegistry.register(..))"
-		+ " || execution(* com.mugsun.boot.datasource.TenantDataSourceRegistry.unregister(..))")
+		+ " || execution(* com.mugsun.boot.datasource.TenantDataSourceRegistry.unregister(..))"
+		+ " || execution(* com.mugsun.boot.tenant.TenantValidator.evict(..))"
+		+ " || execution(* com.mugsun.boot.tenant.TenantValidator.evictPackage(..))")
 	public void changed() {
 		if (SharedStateSyncTask.isSyncing()) {
 			return;
