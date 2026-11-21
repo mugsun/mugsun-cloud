@@ -52,12 +52,20 @@
 		     这里写的是单体版实际打进包里的版本。不放进下面的 dependencyManagement：那样会把 system 的版本也锁在这个号上，
 		     以后 mugsun-bom 升级 sms4j 时 system 就跟单体版不一致了 -->
 		<hutool-http.version>5.8.28</hutool-http.version>
-		<!-- 单体版的 AI 模块把 tika-core 定在这个版本（见 mugsun-boot-ai/pom.xml），打进单体版包里的就是它；文件存储组件
-		     x-file-storage 自己带的是 2.4.1。微服务版的 system 和 track 没有 AI 模块，在这里定成和单体版一样 -->
+		<!-- 单体版的 AI 模块把 tika-core 和 tika-parsers-standard-package 定在这个版本（见 mugsun-boot-ai/pom.xml），
+		     打进单体版包里的就是它；文件存储组件 x-file-storage 自己带的 tika-core 是 2.4.1。ai 服务用这个版本；
+		     system 和 track 没有 AI 模块，也在这里定成和单体版一样 -->
 		<tika.version>3.2.2</tika.version>
 		<!-- 这两个库在单体版包里的版本也是 AI 模块的 tika 带来的，这里写的是单体版包里实际的版本。改 tika.version 时对照单体版的包一起改 -->
 		<commons-io.version>2.20.0</commons-io.version>
 		<commons-collections4.version>4.5.0</commons-collections4.version>
+		<!-- 这四个库在 ai 服务里只有 tika 带着，按 tika 自己的依赖会是更新的版本；单体版里别的组件（比如文件存储用的 minio、
+		     阿里云 OSS 的 SDK）先带了下面这些版本，打进包里的是它们，tika 在单体版里就是和这些版本一起跑的。
+		     只在 ai 服务的 pom 里用，不放进下面的 dependencyManagement，理由和上面的 hutool-http 相同 -->
+		<asm.version>9.7.1</asm.version>
+		<commons-compress.version>1.27.1</commons-compress.version>
+		<commons-csv.version>1.11.0</commons-csv.version>
+		<commons-logging.version>1.2</commons-logging.version>
 	</properties>
 
 	<dependencyManagement>
@@ -123,10 +131,15 @@
 				<artifactId>GeographicLib-Java</artifactId>
 				<version>${geographiclib.version}</version>
 			</dependency>
-			<!-- 以下三个库定成单体版包里的版本，原因见上面属性的注释；检查办法见 docs/sync-from-boot.md 的「第三方库的版本」 -->
+			<!-- 以下几个库定成单体版包里的版本，原因见上面属性的注释；检查办法见 docs/sync-from-boot.md 的「第三方库的版本」 -->
 			<dependency>
 				<groupId>org.apache.tika</groupId>
 				<artifactId>tika-core</artifactId>
+				<version>${tika.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.tika</groupId>
+				<artifactId>tika-parsers-standard-package</artifactId>
 				<version>${tika.version}</version>
 			</dependency>
 			<dependency>

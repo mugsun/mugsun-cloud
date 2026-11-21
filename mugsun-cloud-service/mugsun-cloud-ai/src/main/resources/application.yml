@@ -1,0 +1,15 @@
+# ai 服务的配置。分两段，写法和理由见 system 服务的 application.yml：
+# 第一段只负责导入 mugsun-boot 的默认配置和微服务版共用的改动，第二段是这个服务自己的配置。
+# AI 模块自己的配置（mugsun.ai.*）在 mugsun-module-ai.yml 里，由 boot 的默认配置导入，变量名和单体版相同。
+# AI 的表都在主库里，由 system 迁移，这个服务不迁移。
+spring:
+  config:
+    import:
+      - classpath:mugsun-boot-defaults.yml
+      - classpath:mugsun-cloud-defaults.yml
+---
+server:
+  port: 8104
+spring:
+  application:
+    name: mugsun-ai

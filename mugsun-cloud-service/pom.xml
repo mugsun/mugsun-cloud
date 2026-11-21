@@ -17,5 +17,6 @@
 		<module>mugsun-cloud-system</module>
 		<module>mugsun-cloud-gis</module>
 		<module>mugsun-cloud-track</module>
+		<module>mugsun-cloud-ai</module>
 	</modules>
 </project>
