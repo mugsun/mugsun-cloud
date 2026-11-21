@@ -192,6 +192,10 @@ services:
       <<: *build
       target: system
     image: mugsun-cloud-system:local
+    # 实例数，默认一个。要两个就设 MUGSUN_SYSTEM_REPLICAS=2 再执行 up。以后每次执行 up 都要带着它，不带就缩回一个，
+    # 所以写进同目录的 .env 文件最稳妥。各实例之间怎么保持一致见 docs/deployment.md 第 7 节
+    deploy:
+      replicas: ${MUGSUN_SYSTEM_REPLICAS:-1}
     environment: *service-env
     volumes:
       - secrets-service:/secrets:ro
