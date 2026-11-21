@@ -1,0 +1,66 @@
+package com.mugsun.cloud.gateway;
+
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.web.reactive.server.WebTestClient;
+import reactor.core.publisher.Mono;
+import reactor.netty.DisposableServer;
+import reactor.netty.http.server.HttpServer;
+
+import java.net.URI;
+
+/**
+ * 配置文件里的路由表：哪些路径转给哪个服务。用的是 application.yml 里真实的路由，
+ * 注册中心换成写死的实例列表，每个服务由一个假后端扮演，假后端把自己的服务名和收到的路径原样返回。
+ */
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
+	"spring.cloud.nacos.discovery.enabled=false",
+	"spring.cloud.service-registry.auto-registration.enabled=false"})
+class GatewayRoutesTest {
+
+	private static final DisposableServer SYSTEM = backend("mugsun-system");
+
+	private static final DisposableServer GIS = backend("mugsun-gis");
+
+	@LocalServerPort
+	int gatewayPort;
+
+	@DynamicPropertySource
+	static void instances(DynamicPropertyRegistry registry) {
+		String prefix = "spring.cloud.discovery.client.simple.instances.";
+		registry.add(prefix + "mugsun-system[0].uri", () -> "http://127.0.0.1:" + SYSTEM.port());
+		registry.add(prefix + "mugsun-gis[0].uri", () -> "http://127.0.0.1:" + GIS.port());
+	}
+
+	@ParameterizedTest
+	@CsvSource({
+		"/system/gis, mugsun-gis",
+		"/system/gis/, mugsun-gis",
+		"/system/gis/status, mugsun-gis",
+		"/system/gis/layer/page?pageNum=1&pageSize=10, mugsun-gis",
+		"/system/gis/tile/xyz/3/1/2.png, mugsun-gis",
+		"/system/gisx/layer, mugsun-system",
+		"/system/user/page, mugsun-system",
+		"/gis/layer, mugsun-system",
+		"/auth/login, mugsun-system",
+		"/actuator/health, mugsun-system",
+		"/, mugsun-system"
+	})
+	void pathGoesToService(String path, String service) {
+		WebTestClient.bindToServer().build()
+			.get().uri(URI.create("http://127.0.0.1:" + gatewayPort + path))
+			.exchange()
+			.expectStatus().isOk()
+			.expectBody(String.class).isEqualTo(service + " " + path);
+	}
+
+	private static DisposableServer backend(String service) {
+		return HttpServer.create().host("127.0.0.1").port(0)
+			.handle((request, response) -> response.sendString(Mono.just(service + " " + request.uri())))
+			.bindNow();
+	}
+}

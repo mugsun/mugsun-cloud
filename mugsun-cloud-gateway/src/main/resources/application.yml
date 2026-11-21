@@ -53,8 +53,13 @@ spring:
                 allowed-methods: "*"
                 allow-credentials: false
                 max-age: 3600
-          # 路由按顺序匹配，范围小的写在前面，最后一条兜底。拆出新服务时在 mugsun-system 前面加一条
+          # 路由按顺序匹配，范围小的写在前面，最后一条兜底。拆出新服务时在 mugsun-system 前面加一条。
+          # 路径和各模块控制器的前缀一致（mugsun-boot 的 ModuleGateConfig 里有同一份清单），GatewayRoutesTest 验证这张表
           routes:
+            - id: mugsun-gis
+              uri: lb://mugsun-gis
+              predicates:
+                - Path=/system/gis/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:
