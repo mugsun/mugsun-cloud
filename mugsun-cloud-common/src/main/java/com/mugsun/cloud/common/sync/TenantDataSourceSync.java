@@ -24,8 +24,13 @@ import java.util.function.Supplier;
  * 让本进程里的租户独立数据源和库里的配置保持一致。
  *
  * <p>单体版里，管理员保存或删除租户数据源时，控制器直接改本进程的连接池。拆成多个服务后，这个操作只发生在
- * system 服务里，其它服务不知道：租户已经改用独立库了，它们还在往主库写。这里每轮读一遍启用中的配置，
- * 和上一轮比较：新增或改过的重新注册，不再启用的注销，注册失败的下一轮接着试。
+ * 处理那次请求的 system 实例里，别的服务和别的 system 实例不知道：租户已经改用独立库了，它们还在往主库写。
+ * 这里每轮读一遍启用中的配置，和本进程的连接池是按哪份配置建的比较：新增或改过的重新注册，不再启用的注销，
+ * 注册失败的下一轮接着试。
+ *
+ * <p>system 的控制器注册、注销数据源时也经过这里（见 {@link TenantDataSourceRegistryAspect}）：和定时比较互斥，
+ * 并记下连接池是按哪份配置建的。这样控制器刚建好的连接池不会在下一轮被再建一次；两个实例先后保存了同一个
+ * 租户的数据源时，先保存的那个实例也看得出自己的连接池用的不是最新的配置。
  *
  * <p>这里只做比较，注册、探活、注销仍由 mugsun-boot 的 {@code TenantDataSourceRegistry} 完成。
  */
@@ -41,8 +46,11 @@ public class TenantDataSourceSync {
 
 	private final Consumer<String> unregister;
 
-	/** 租户编号 → 已经生效的那份配置的指纹 */
+	/** 租户编号 → 本进程里这个租户的连接池是按哪份配置建的（配置的指纹） */
 	private final Map<String, String> applied = new HashMap<>();
+
+	/** 还没有完整比较过一轮。这时已经生效的数据源是启动时按库里的配置注册的，记下指纹就行 */
+	private boolean firstRun = true;
 
 	/** 租户编号 → 上次注册失败的那份配置的指纹。同一份配置反复失败时只记一次日志 */
 	private final Map<String, String> failed = new HashMap<>();
@@ -74,8 +82,9 @@ public class TenantDataSourceSync {
 			String tenant = entry.getKey();
 			String print = fingerprint(entry.getValue());
 			boolean live = registered.test(tenant);
-			if (live && !applied.containsKey(tenant)) {
-				// 启动时已经注册过（或者本进程的控制器刚注册过）：记下这份配置，不重复注册
+			if (live && firstRun && !applied.containsKey(tenant)) {
+				// 启动时已经按库里的配置注册过：记下这份配置，不重复注册。
+				// 只在第一轮这样做：之后再遇到「在用、但不知道按哪份配置建的」的连接池，不能当它就是库里现在这份，要重建
 				applied.put(tenant, print);
 				failed.remove(tenant);
 				continue;
@@ -109,7 +118,35 @@ public class TenantDataSourceSync {
 			}
 		}
 		failed.keySet().retainAll(wanted.keySet());
+		firstRun = false;
 		return changed;
+	}
+
+	/** 一次要执行的注册或注销。 */
+	@FunctionalInterface
+	public interface Call {
+
+		Object proceed() throws Throwable;
+	}
+
+	/**
+	 * 本进程里别处（system 的控制器）注册或重建某个租户的数据源时，经这里执行：和定时比较互斥，
+	 * 成功后记下连接池是按这份配置建的。注册失败时异常原样抛出，记录不变。
+	 */
+	public synchronized Object registerExclusively(SysTenantDatasource config, Call call) throws Throwable {
+		Object result = call.proceed();
+		if (config != null && config.getTenantCode() != null) {
+			applied.put(config.getTenantCode(), fingerprint(config));
+			failed.remove(config.getTenantCode());
+		}
+		return result;
+	}
+
+	/** 本进程里别处注销某个租户的数据源时，经这里执行：和定时比较互斥，并去掉这个租户的记录。 */
+	public synchronized Object unregisterExclusively(String tenant, Call call) throws Throwable {
+		Object result = call.proceed();
+		applied.remove(tenant);
+		return result;
 	}
 
 	/**

@@ -45,11 +45,15 @@ mugsun:
       max-request-size: 1MB
       max-response-size: 8MB
     sync:
-      # 数据权限规则、接口权限规则和角色授权、租户独立数据源，这三样每个服务进程都在内存里留了一份，
-      # 而修改它们的管理接口只在 system 服务里。其它服务定时从库里重新加载：
-      # 在 system 里改完，最长过一个间隔在其它服务里生效。system 在自己的 application.yml 里关掉。
+      # 数据权限规则、接口权限规则和角色授权、租户独立数据源，这三样以库里的为准，每个服务进程又在内存里留了一份。
+      # 修改它们的管理接口只在 system 服务里，保存时只刷新得了处理那次请求的那一个 system 实例，
+      # 所以每个服务的每个实例（包括 system）都跑一个同步任务：
+      # - 保存以后，那个实例给 Redis 里的版本换一个新值；每个实例隔 check-interval-ms 读一次，变了就从库里重新加载
+      # - 版本没变，离上次加载满 interval-ms 也重新加载一次。Redis 不可用时靠这一条
       enabled: true
-      # 间隔（毫秒）
+      # 多久读一次 Redis 里的版本（毫秒）。改完以后，最长过这么久在所有实例上开始生效
+      check-interval-ms: 1000
+      # 兜底的重新加载间隔（毫秒）
       interval-ms: 30000
   websocket:
     # 推送固定走 Redis。WebSocket 连接都在 system 上，其它服务要推送时（比如 track 发告警站内信）把消息发到 Redis，
