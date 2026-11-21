@@ -9,6 +9,7 @@
 - 登录日志里记下的是自检容器自己的地址：客户端地址经管理后台、网关一路传到了服务；
 - 内部接口经网关访问不到；绕过网关直接访问服务，没有签名会被拒绝；
 - Nacos 不接受没带账号的请求；
+- 接口文档默认不提供：经管理后台取不到，直连每个服务也取不到；
 - system 有两个实例时：登录态在两个实例上都有效；在一个实例上保存、删除的数据权限规则，另一个实例几秒内跟上。
 
 上面的登录经网关轮流转给两个 system 实例：取验证码、校验验证码、登录这几步落在不同的实例上也要能过。
@@ -126,7 +127,21 @@ if status != 403:
     fail("没带账号查 Nacos 的服务实例：应该返回 403，实际是 %s" % status)
 print("OK Nacos 不接受没带账号的请求")
 
-# 7. 两个 system 实例。smoke.sh 把各实例的地址放在 SYSTEM_ADDRS 里，只有一个实例时跳过。
+# 7. 接口文档默认不提供：带着管理员的登录态，经管理后台取不到，直连每个服务也取不到。
+#    smoke.sh 的最后一步要从文档里取接口清单，到那时才临时打开
+for title, url in (
+        ("经管理后台取接口文档", BASE + "/api/v3/api-docs"),
+        ("经管理后台打开接口文档的页面", BASE + "/api/swagger-ui/index.html"),
+        ("直连 system 服务取接口文档", "http://system:8101/v3/api-docs"),
+        ("直连地图服务取接口文档", "http://gis:8102/v3/api-docs"),
+        ("直连埋点服务取接口文档", "http://track:8103/v3/api-docs"),
+        ("直连 AI 服务取接口文档", "http://ai:8104/v3/api-docs")):
+    status, _ = fetch("GET", url, None, TOKEN)
+    if status != 404:
+        fail("%s：默认不提供，应该返回 404，实际是 %s" % (title, status))
+print("OK 接口文档默认不提供")
+
+# 8. 两个 system 实例。smoke.sh 把各实例的地址放在 SYSTEM_ADDRS 里，只有一个实例时跳过。
 #    这里绕过网关直接访问指定的实例：经网关的话请求落在哪个实例上说不准
 SYSTEM_ADDRS = os.environ.get("SYSTEM_ADDRS", "").split()
 

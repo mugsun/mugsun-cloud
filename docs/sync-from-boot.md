@@ -230,6 +230,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
     - `docker-compose.yml` 加一个服务，照 `gis` 的写，并写进 `ready` 的 `depends_on`。
     - `nacos-init.py` 的 `SERVICES` 补上服务名。
     - `smoke.sh` 的 `APP_SERVICES` 补上名字，`serving` 里加一条它的接口。
+    - `smoke-sweep.py` 的 `SERVICES` 补上名字和端口。忘了补，自检的最后一步会报两边的服务不一致。
 
 ## 为什么包名不改
 

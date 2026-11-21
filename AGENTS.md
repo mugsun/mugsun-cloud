@@ -109,6 +109,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 网关和各服务的镜像默认按 `prod` 配置运行。不要为了让编排好起而换成 `dev`。
 - 网关的开关（网关的 `application.yml` 里 `MUGSUN_GATEWAY_` 开头的变量）要在 `docker-compose.yml` 的 gateway 服务里逐个传进去，写成 `${名字:-}`：默认值只写在网关一处，没配的传进去是空值，网关把空值当成没配。编排只传写在 `environment` 里的变量，漏传的开关写进 `.env` 也不生效，而且没有任何提示。网关加了开关，还要在 `smoke.sh` 开头给它定一个值：自检会查网关认的每个开关都照这个值传进了容器。有意不传的写进 `smoke.sh` 的 `not_passed`，并在 `docs/deployment.md` 的「这份编排没有做的」里写明原因。
 - 改了 `deploy/docker` 下的文件，跑一遍 `deploy/docker/smoke.sh`。它从零起一套独立的环境，逐项检查上面这些约定和两个 system 实例之间的一致，再重启 Nacos、把全部容器停掉打乱顺序重新启动，看能不能自己恢复。新加的约定要在里面补上检查。
+- 自检的最后一步（`smoke-sweep.py`）把四个服务接口文档里的每个接口都经管理后台和网关请求一遍：要登录的不带登录令牌，必须返回 401；每个请求转给了谁看网关的访问日志，必须是文档里有这个接口的服务。同步进了新接口、改了路径前缀或网关的路由表以后跑一遍。报「不登录就进得去」是接口没有被登录校验拦住；报「没有转给有这个接口的服务」是这个路径不在它所在服务的路由范围里，改路径前缀或路由表。哪些接口不用登录，它读的是 `LoginPublicPaths`，不要在脚本里另抄一份名单。
+- 接口文档默认不提供，自检会查：经管理后台取不到，直连每个服务也取不到。自检最后一步要从文档里取接口清单，用的是一份不进仓库的临时编排片段，打开以后重新创建四个业务服务；要在默认配置上做的检查写在这一步前面。
 
 ## 构建和测试
 
@@ -117,7 +119,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 ./mvnw -B verify                                     # 编译全部模块，跑本仓自己的测试
 python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 python3 scripts/compare_libs.py                      # 第三方库的版本和单体版的包一致，改了 pom 或同步之后跑
-deploy/docker/smoke.sh                               # 从零起整套容器逐项检查，改了 deploy/docker 之后跑
+deploy/docker/smoke.sh                               # 从零起整套容器逐项检查，改了 deploy/docker、网关的路由或同步进新接口之后跑
 ```
 
 - 这里没有业务测试，业务改动在 mugsun-boot 里测。

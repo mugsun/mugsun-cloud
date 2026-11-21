@@ -2,12 +2,13 @@
 # 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定、网关的开关传进了容器并且在起作用、
 # 各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
 # 服务之间互相调用 → 两个 system 实例之间保持一致，从空库一起启动都没有重启过，正常停掉一个的过程中经网关的访问不能有失败
-# → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复 → 清理。
+# → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复
+# → 把每个接口都请求一遍：不登录进不去，网关转给了有这个接口的服务 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
 # 镜像和正式那一套是同一组标签（mugsun-cloud-*:local），这里会按当前的源码重新构建它们，
 # 正式那一套下次执行 up 时会换成新构建的镜像。正式那一套在运行时执行这个脚本，没有实测过。
 #   deploy/docker/smoke.sh            本地或 CI
-#   KEEP=1 deploy/docker/smoke.sh     检查完不清理，留着现场
+#   KEEP=1 deploy/docker/smoke.sh     检查完不清理，留着现场（走到了最后一步的话，现场里四个业务服务的接口文档是开着的）
 #   MUGSUN_SYSTEM_REPLICAS=1 deploy/docker/smoke.sh    system 只起一个实例，跳过两个实例之间的检查
 # 需要 Docker（Compose v2.17 以上）和 curl。内存要求见 docs/deployment.md。
 set -euo pipefail
@@ -31,6 +32,8 @@ APP_SERVICES="system gis track ai"
 JAVA_SERVICES="gateway ${APP_SERVICES}"
 PYTHON_IMAGE="python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4"
 URL="http://127.0.0.1:${MUGSUN_HTTP_PORT}"
+# 最后一步放临时编排片段的目录，退出时删掉
+sweep_dir=""
 
 fail() {
 	echo "FAIL ${*}" >&2
@@ -47,6 +50,7 @@ finish() {
 	if [ "${KEEP:-0}" != 1 ]; then
 		"${DC[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
 	fi
+	[ -z "${sweep_dir}" ] || rm -rf "${sweep_dir}"
 	exit "${code}"
 }
 trap finish EXIT
@@ -392,6 +396,42 @@ wait_serving 180 "全部容器重新启动以后"
 # 经网关的接口有一个 system 实例就能恢复。两个实例各自由 Docker 拉起，先后可能差几十秒，这里等到两个都登记上
 wait_registered 120
 echo ">> 全部容器停掉、打乱顺序重新启动以后 $(($(date +%s) - rebooted)) 秒，五个服务重新登记上，经网关的接口恢复"
+
+# ---- 把每个接口都请求一遍：不登录进不去，网关转给了有这个接口的服务 ----
+# 接口清单从各服务自己的接口文档里取。文档默认不提供（前面检查过），这里用一份临时的编排片段把它打开、
+# 重新创建四个业务服务；片段不放进仓库，免得被当成正式环境的开关用。前面的检查都要跑在默认配置上，所以这一步放在最后。
+# 分两步（smoke-sweep.py）：先在编排网络里把每个接口请求一遍，要登录的不带登录令牌，必须返回 401；
+# 再拿网关的访问日志核对，每个请求都转给了文档里有这个接口的服务
+swept=$(date +%s)
+public_paths="$(cd ../.. && pwd)/mugsun-cloud-common/src/boot/java/com/mugsun/boot/security/LoginPublicPaths.java"
+[ -f "${public_paths}" ] || fail "找不到免登录名单：${public_paths}"
+sweep_dir=$(mktemp -d)
+{
+	echo "services:"
+	for svc in ${APP_SERVICES}; do
+		printf '  %s:\n    environment:\n      SPRINGDOC_API_DOCS_ENABLED: "true"\n' "${svc}"
+	done
+} >"${sweep_dir}/docs-on.yml"
+# shellcheck disable=SC2086
+"${DC[@]}" -f "${sweep_dir}/docs-on.yml" up -d --wait --wait-timeout 300 ${APP_SERVICES} >/dev/null 2>&1 \
+	|| fail "打开接口文档、重新创建四个业务服务没有成功"
+wait_registered 120
+wait_serving 60 "打开接口文档、重新创建四个业务服务以后"
+asked=$(docker run --rm --network "${COMPOSE_PROJECT_NAME}_default" -e APP_SERVICES="${APP_SERVICES}" \
+	-v "${PWD}/smoke-sweep.py:/smoke-sweep.py:ro" -v "${public_paths}:/LoginPublicPaths.java:ro" \
+	"${PYTHON_IMAGE}" python /smoke-sweep.py ask)
+grep '^OK ' <<<"${asked}" || true
+# 网关处理完一个请求才记访问日志，容器的日志又晚一点才读得到：等结尾的标记请求出现在日志里再核对
+end_mark=$(sed -n 's/^END //p' <<<"${asked}")
+access=""
+for _ in 1 2 3 4 5; do
+	access=$("${DC[@]}" logs --no-color gateway 2>&1 | grep ' ACCESS ' || true)
+	[[ "${access}" != *" uri=${end_mark} "* ]] || break
+	sleep 1
+done
+printf '%s\n%s\n' "${asked}" "${access}" | docker run --rm -i -v "${PWD}/smoke-sweep.py:/smoke-sweep.py:ro" \
+	"${PYTHON_IMAGE}" python /smoke-sweep.py routed
+echo ">> 打开接口文档、重新创建四个业务服务，把每个接口请求了一遍，用了 $(($(date +%s) - swept)) 秒"
 
 end=$(date +%s)
 echo ">> PASS 全部检查通过，共 $((end - start)) 秒。其中构建 $((built - start)) 秒；从零到登录、看到第一条埋点、服务之间互相调用 $((checked - start)) 秒"
