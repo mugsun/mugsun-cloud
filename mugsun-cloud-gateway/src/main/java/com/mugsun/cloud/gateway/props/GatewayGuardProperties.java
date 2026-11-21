@@ -44,6 +44,8 @@ public class GatewayGuardProperties {
 
 	private final DynamicRoutes dynamicRoutes = new DynamicRoutes();
 
+	private final RateLimit rateLimit = new RateLimit();
+
 	public String getTrustedProxies() {
 		return trustedProxies;
 	}
@@ -98,6 +100,57 @@ public class GatewayGuardProperties {
 
 	public DynamicRoutes getDynamicRoutes() {
 		return dynamicRoutes;
+	}
+
+	public RateLimit getRateLimit() {
+		return rateLimit;
+	}
+
+	/**
+	 * 限流（前缀 {@code mugsun.gateway.rate-limit}）：按客户端地址数请求，超过限额的不转发，返回 429。三项都留空就不限流。
+	 */
+	public static class RateLimit {
+
+		/**
+		 * 默认限额，写成 {@code 次数/时长}，时长是数字加 s、m、h，例如 {@code 600/60s}。
+		 * 没有单独定限额的路径都用它；留空表示这些路径不限流。
+		 */
+		private String limit = "";
+
+		/**
+		 * 给个别路径单独定的限额，逗号分隔，每条写成 {@code 路径前缀=次数/时长}，例如 {@code /auth/login=30/60s}；
+		 * 右边写 {@code unlimited} 表示这个前缀下不限流。一个请求只算一条：前缀最长的那条。
+		 */
+		private String pathLimits = "";
+
+		/**
+		 * 不限流的客户端地址段，逗号分隔的 CIDR。
+		 */
+		private String exemptIps = "";
+
+		public String getLimit() {
+			return limit;
+		}
+
+		public void setLimit(String limit) {
+			this.limit = limit == null ? "" : limit;
+		}
+
+		public String getPathLimits() {
+			return pathLimits;
+		}
+
+		public void setPathLimits(String pathLimits) {
+			this.pathLimits = pathLimits == null ? "" : pathLimits;
+		}
+
+		public String getExemptIps() {
+			return exemptIps;
+		}
+
+		public void setExemptIps(String exemptIps) {
+			this.exemptIps = exemptIps == null ? "" : exemptIps;
+		}
 	}
 
 	/**

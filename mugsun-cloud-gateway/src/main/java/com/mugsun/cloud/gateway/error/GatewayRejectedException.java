@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway.error;
 
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -11,7 +12,22 @@ import org.springframework.web.server.ResponseStatusException;
  */
 public class GatewayRejectedException extends ResponseStatusException {
 
+	private final HttpHeaders headers;
+
 	public GatewayRejectedException(HttpStatusCode status, String message) {
+		this(status, message, HttpHeaders.EMPTY);
+	}
+
+	/**
+	 * @param headers 要随这次拒绝一起返回的响应头，例如限流时告诉客户端过多久再试的 Retry-After
+	 */
+	public GatewayRejectedException(HttpStatusCode status, String message, HttpHeaders headers) {
 		super(status, message);
+		this.headers = HttpHeaders.readOnlyHttpHeaders(headers);
+	}
+
+	@Override
+	public HttpHeaders getHeaders() {
+		return headers;
 	}
 }

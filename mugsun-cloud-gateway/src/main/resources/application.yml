@@ -101,6 +101,17 @@ mugsun:
     # 后者留空就是谁都不能经网关访问
     restricted-paths: ${MUGSUN_GATEWAY_RESTRICTED_PATHS:}
     restricted-allow-ips: ${MUGSUN_GATEWAY_RESTRICTED_ALLOW_IPS:}
+    # 限流：按客户端地址数请求，超过限额的不转发，返回 429。下面三项都留空（默认）就不限流，写错了网关拒绝启动。
+    # 计数在每个网关实例自己的内存里：起了 N 个网关时，一个地址实际能过的请求最多是限额的 N 倍。
+    # 网关前面有反向代理时要先配好上面的 trusted-proxies，否则所有请求都算在代理的地址上。详见 docs/deployment.md「限流」
+    rate-limit:
+      # 默认限额，写成 次数/时长，时长是数字加 s、m、h，如 600/60s。没有单独定限额的路径都用它；留空表示这些路径不限流
+      limit: ${MUGSUN_GATEWAY_RATE_LIMIT:}
+      # 给个别路径单独定限额，逗号分隔，每条写成 路径前缀=次数/时长，右边写 unlimited 表示这个前缀下不限流，
+      # 如 /auth/login=30/60s,/track=unlimited。一个请求只算一条：前缀最长的那条，都不沾的用默认限额
+      path-limits: ${MUGSUN_GATEWAY_RATE_LIMIT_PATHS:}
+      # 不限流的客户端地址段，逗号分隔的 CIDR，如办公网的出口、监控系统
+      exempt-ips: ${MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS:}
     # 访问日志：每个请求结束时记一行（日志名 ACCESS），写明客户端地址、路径（不带查询串）、状态码、耗时、
     # 转给了哪个服务的哪个实例、请求编号。各字段的含义见 docs/deployment.md「网关的访问日志」
     access-log:

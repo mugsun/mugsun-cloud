@@ -36,6 +36,11 @@ public class ClientViewResolver {
 			"mugsun.gateway.trusted-proxies（环境变量 MUGSUN_OPENAPI_TRUSTED_PROXIES）");
 	}
 
+	/** 配了可信代理没有。没配时，客户端地址就是直接连上网关的地址 */
+	public boolean hasTrustedProxies() {
+		return !trustedProxies.isEmpty();
+	}
+
 	public ClientView resolve(ServerHttpRequest request) {
 		return ClientView.resolve(remoteAddr(request), request.getURI(), request.getHeaders(), trustedProxies);
 	}

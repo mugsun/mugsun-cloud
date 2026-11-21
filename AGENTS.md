@@ -39,7 +39,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 代码在 `mugsun-cloud-gateway/src/main/java/com/mugsun/cloud/gateway`。
 
 - `application.yml` 里的路由不改写路径，对外的接口路径和单体版一致。路由按顺序匹配，范围小的写在前面，`mugsun-system` 兜底。
-- 过滤器要拒绝请求时，返回 `Mono.error(new GatewayRejectedException(状态码, 说明))`，由 `GatewayErrorHandler` 写响应。不要在过滤器里自己写响应：排在前面的过滤器还要改响应头，响应已经写出去的话它们会抛异常。
+- 过滤器要拒绝请求时，返回 `Mono.error(new GatewayRejectedException(状态码, 说明))`，由 `GatewayErrorHandler` 写响应；要带响应头（比如 `Retry-After`）时用带 `HttpHeaders` 的那个构造方法。不要在过滤器里自己写响应：排在前面的过滤器还要改响应头，响应已经写出去的话它们会抛异常。
 - 不要用 `DedupeResponseHeader` 这类在响应写出之后才改响应头的过滤器，它会把 WebSocket 连接弄断。要处理后端返回的响应头，写 `HttpHeadersFilter`，参考 `DownstreamCorsHeadersFilter`。
 - `X-Forwarded-*` 只由 `ClientAddressFilter` 写。网关自带的处理会在转发前删掉这类请求头，所以它必须是排在最后的 `HttpHeadersFilter`，写成普通的全局过滤器不生效。
 - `server.forward-headers-strategy` 必须是 `none`，启动时有检查。客户端地址一律用 `ClientViewResolver` 算，算法和 mugsun-boot 的 `ClientIpResolver` 一致。有一处有意不一样：可信代理有一条写错，网关拒绝启动，mugsun-boot 是记一条警告后忽略那一条。忽略以后代理不被采信，所有请求的客户端地址都成了代理的地址，网关上按客户端地址做的限制全按这一个地址算。
@@ -49,6 +49,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 每个请求一行的访问日志由 `AccessLogFilter` 记，别的过滤器不要再给每个请求各记一行。字段有增减时同步改 `docs/deployment.md` 第 10 节的字段表。
 - 按客户端地址限制转发（黑名单、白名单、不对外开放的路径）由 `ClientAccessFilter` 管。名单这类配置写错时要拒绝启动，不要忽略写错的条目：地址名单用 `IpRanges.parse` 读，`IpCidr.parseList` 会忽略写错的条目，这里不用它。
 - 把一段文字认成地址或地址段，一律经 `IpRanges`（`bytes`、`range`、`parse`），不要直接调 `IpCidr.parse`、`parseList`、`toBytes`，也不要调 `InetAddress.getByName`。`10.0.0.300` 这种像地址又不是地址的写法，JDK 会当成主机名去查 DNS；在什么名字都解析得出地址的网络里（比如出网经过 fake-ip 代理），它会变成一个不相干的地址。`IpCidr.contains`、`anyContains` 只传 `ClientView` 算出来的地址。测试里的 `FakeIpDns` 让这类名字都解析得出地址，查没查 DNS 测得出来。
+- 限流由 `RateLimitFilter` 管，规则和计数在 `ratelimit` 包。计数放在网关实例自己的内存里（Bucket4j 的令牌桶，放在有上限的 Caffeine 缓存里），是有意不用 Redis 的：拒绝一个请求不该再产生一次网络读写，网关也因此不用拿 Redis 的口令。不要换成 Sentinel 或网关自带的 `RequestRateLimiter`；按用户、按租户一个不差的限额在服务里做。
+- 限流按什么给客户端分桶只在 `RateLimitFilter.clientKey` 一处定（IPv4 单个地址，IPv6 按 /64）。被拒绝的请求不要逐条记警告：访问日志里已经有一行，警告由 `RejectionReport` 限着条数记。限额的写法、默认值有变化时同步改 `docs/deployment.md` 第 10 节「限流」。
 - 按路径拦请求时，用 `RequestPaths.of(exchange)` 把客户端发来的路径和路由改写以后的路径都查一遍，比较用 `PathGuard` 或 `PathPrefixes`。不要自己拿 `startsWith` 比：把路径编码、改大小写、加分号参数就绕过去了。这类过滤器的顺序要排在 `RouteToRequestUrlFilter` 后面。
 - 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
 - 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。
@@ -56,7 +58,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 网关不解析登录令牌，登录校验和权限判断在服务里做。
 - 需要 mugsun-boot 里的类时，在 `sync-rules.json` 的 `extras` 里单独拷贝，不要让网关依赖公共层。
 
-网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发，`GatewayDynamicRoutesTest` 测动态路由。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
+网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发，`GatewayRateLimitTest` 测限流，`GatewayDynamicRoutesTest` 测动态路由。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
 
 ## 服务的约定
 
