@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
-# 一键全套自检：从零构建并启动 → 逐项检查部署上的安全约定 → 登录、上报并查到第一条埋点、服务之间互相调用
+# 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定 → 登录、上报并查到第一条埋点、
+# 服务之间互相调用 → 两个 system 实例之间保持一致，停掉一个另一个接着应答
 # → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
 # 镜像和正式那一套是同一组标签（mugsun-cloud-*:local），这里会按当前的源码重新构建它们，
 # 正式那一套下次执行 up 时会换成新构建的镜像。正式那一套在运行时执行这个脚本，没有实测过。
 #   deploy/docker/smoke.sh            本地或 CI
 #   KEEP=1 deploy/docker/smoke.sh     检查完不清理，留着现场
+#   MUGSUN_SYSTEM_REPLICAS=1 deploy/docker/smoke.sh    system 只起一个实例，跳过两个实例之间的检查
 # 需要 Docker（Compose v2.17 以上）和 curl。内存要求见 docs/deployment.md。
 set -euo pipefail
 cd "$(dirname "${0}")"
 export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-mugsun-cloud-smoke}"
 export MUGSUN_HTTP_PORT="${MUGSUN_HTTP_PORT:-18188}"
 export MUGSUN_NET_PREFIX="${MUGSUN_NET_PREFIX:-172.30.90}"
+# system 默认起两个实例：从空库一起启动，下面每一步都带着两个实例
+export MUGSUN_SYSTEM_REPLICAS="${MUGSUN_SYSTEM_REPLICAS:-2}"
 DC=(docker compose -f docker-compose.yml)
 # 拆出新服务时：在 APP_SERVICES 里补上名字，并在下面的 serving 里加一条它的接口
 APP_SERVICES="system gis track ai"
@@ -38,13 +42,16 @@ finish() {
 }
 trap finish EXIT
 
+# 一个服务的各个容器，每行一个。system 可能有两个，别的服务都是一个
 cid() {
 	"${DC[@]}" ps -aq "${1}"
 }
+# 一个服务的各个容器的地址，每行一个
 ip_of() {
-	docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(cid "${1}")"
+	# shellcheck disable=SC2046
+	docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $(cid "${1}")
 }
-# 五个服务是不是都在 Nacos 里登记了（用接入账号查）
+# 五个服务是不是都在 Nacos 里登记了（用接入账号查），system 登记的实例数对不对
 registered() {
 	listed=$("${DC[@]}" run --rm -T nacos-init status 2>/dev/null) || return 1
 	for svc in ${JAVA_SERVICES}; do
@@ -53,11 +60,16 @@ registered() {
 			*) return 1 ;;
 		esac
 	done
+	# 输出里每个服务一行：服务名和冒号后面是各个实例，用空格隔开
+	system_line=$(grep '^mugsun-system: ' <<<"${listed}") || return 1
+	# shellcheck disable=SC2206
+	system_found=(${system_line#*: })
+	[ "${#system_found[@]}" -eq "${MUGSUN_SYSTEM_REPLICAS}" ]
 }
 wait_registered() {
 	waited=0
 	until registered; do
-		[ "${waited}" -lt "${1}" ] || fail "等了 ${1} 秒，Nacos 里还没有登记齐五个服务"
+		[ "${waited}" -lt "${1}" ] || fail "等了 ${1} 秒，Nacos 里还没有登记齐五个服务（system 要有 ${MUGSUN_SYSTEM_REPLICAS} 个实例）"
 		sleep 3
 		waited=$((waited + 3))
 	done
@@ -121,8 +133,10 @@ home=$(curl -fsS "${URL}/")
 bind=$("${DC[@]}" port pc 8080)
 [[ "${bind}" == 127.0.0.1:* ]] || fail "管理后台的端口没有只绑 127.0.0.1：${bind}"
 for svc in postgres redis nacos ${JAVA_SERVICES}; do
-	published=$(docker port "$(cid "${svc}")")
-	[ -z "${published}" ] || fail "${svc} 的端口被映射到了宿主机：${published}"
+	for id in $(cid "${svc}"); do
+		published=$(docker port "${id}")
+		[ -z "${published}" ] || fail "${svc} 的端口被映射到了宿主机：${published}"
+	done
 done
 
 # ---- 管理后台：非 root、带 CSP、用对端地址覆盖 X-Forwarded-For（网关采信的就是它传来的这个头） ----
@@ -144,8 +158,9 @@ done
 iprange=$(docker network inspect -f '{{range .IPAM.Config}}{{.IPRange}}{{end}}' "${COMPOSE_PROJECT_NAME}_default")
 [ "${iprange}" = "${net}.128/25" ] || fail "网络的 ip_range 不是 ${net}.128/25：${iprange}"
 for svc in ${APP_SERVICES}; do
-	addr=$(ip_of "${svc}")
-	[ "${addr##*.}" -ge 128 ] || fail "${svc} 的地址不在动态段里：${addr}"
+	for addr in $(ip_of "${svc}"); do
+		[ "${addr##*.}" -ge 128 ] || fail "${svc} 的地址不在动态段里：${addr}"
+	done
 done
 # 网关只采信管理后台这一个地址传来的客户端地址
 trusted=$("${DC[@]}" exec -T gateway printenv MUGSUN_OPENAPI_TRUSTED_PROXIES)
@@ -155,7 +170,9 @@ trusted=$("${DC[@]}" exec -T gateway printenv MUGSUN_OPENAPI_TRUSTED_PROXIES)
 
 # ---- 进程和密钥 ----
 for svc in ${JAVA_SERVICES}; do
-	[ "$("${DC[@]}" exec -T "${svc}" id -u)" = 10001 ] || fail "${svc} 不是以 uid 10001 运行"
+	for id in $(cid "${svc}"); do
+		[ "$(docker exec "${id}" id -u)" = 10001 ] || fail "${svc} 不是以 uid 10001 运行"
+	done
 done
 [ "$("${DC[@]}" exec -T redis id -u redis)" = 999 ] || fail "redis 用户的 uid 不是 999"
 [ "$("${DC[@]}" exec -T postgres id -u postgres)" = 999 ] || fail "postgres 用户的 uid 不是 999"
@@ -163,8 +180,10 @@ cmdline=$("${DC[@]}" exec -T redis sh -c 'tr "\0" " " < /proc/1/cmdline')
 [[ "${cmdline}" != *requirepass* ]] || fail "Redis 口令出现在进程参数里"
 # 密钥按使用方分卷：每个容器只看得到自己的那一个文件，0600，属主是读它的用户
 secret_of() {
-	out=$("${DC[@]}" exec -T "${1}" sh -c 'ls -A /secrets; stat -c "%a %u" /secrets/'"${2}")
-	[ "${out}" = "$(printf '%s\n600 %s' "${2}" "${3}")" ] || fail "${1} 的 /secrets 不符合预期：${out}"
+	for id in $(cid "${1}"); do
+		out=$(docker exec "${id}" sh -c 'ls -A /secrets; stat -c "%a %u" /secrets/'"${2}")
+		[ "${out}" = "$(printf '%s\n600 %s' "${2}" "${3}")" ] || fail "${1} 的 /secrets 不符合预期：${out}"
+	done
 }
 for svc in ${APP_SERVICES}; do
 	secret_of "${svc}" service.env 10001
@@ -178,7 +197,8 @@ names=$("${DC[@]}" exec -T gateway sed -n 's/^export \([A-Z0-9_]*\)=.*/\1/p' /se
 [ "${names}" = "$(printf 'MUGSUN_NACOS_USERNAME\nMUGSUN_NACOS_PASSWORD')" ] || fail "网关的密钥文件里不只是 Nacos 账号：${names}"
 # Nacos 管理员口令所在的卷只给一次性的初始化容器用，常驻容器都不挂
 for svc in postgres redis nacos pc ${JAVA_SERVICES}; do
-	mounts=$(docker inspect -f '{{range .Mounts}}{{println .Name}}{{end}}' "$(cid "${svc}")")
+	# shellcheck disable=SC2046
+	mounts=$(docker inspect -f '{{range .Mounts}}{{println .Name}}{{end}}' $(cid "${svc}"))
 	[[ "${mounts}" != *secrets-nacos-admin* ]] || fail "${svc} 挂了 Nacos 管理员口令所在的卷"
 done
 
@@ -186,8 +206,13 @@ done
 wait_registered 60
 
 # ---- 登录、上报埋点、服务之间互相调用：在编排网络里的一次性容器里执行 ----
-# Python 依赖的版本和 sha256 都写死在清单里（--require-hashes）
+# Python 依赖的版本和 sha256 都写死在清单里（--require-hashes）。
+# system 各实例的地址交给它：有两个实例时，它直接访问每个实例，检查两个实例之间是不是一致
+# shellcheck disable=SC2207
+system_addrs=($(ip_of system))
+[ "${#system_addrs[@]}" -eq "${MUGSUN_SYSTEM_REPLICAS}" ] || fail "system 的容器不是 ${MUGSUN_SYSTEM_REPLICAS} 个：${system_addrs[*]}"
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_default" \
+	-e SYSTEM_ADDRS="${system_addrs[*]}" \
 	-v "${COMPOSE_PROJECT_NAME}_secrets-service:/secrets/service:ro" \
 	-v "${PWD}/boot/smoke.py:/smoke.py:ro" -v "${PWD}/boot/smoke-requirements.txt:/req.txt:ro" \
 	-v "${PWD}/smoke-check.py:/smoke-check.py:ro" \
@@ -220,6 +245,23 @@ for v in "${lag_login}" "${lag_create}"; do
 		|| fail "最新一条登录日志的时间不是 ${tz} 的当前时间（login_time、create_time 落后的秒数：${lag:-查不到记录}）"
 done
 
+# ---- 停掉一个 system 实例，另一个接着应答；再起回来，重新登记上 ----
+# 网关把实例列表缓存 5 秒，这段时间里转给已停实例的请求会失败（docs/deployment.md 第 10 节），过了就不该再有。
+# /api/ping 由 system 应答
+if [ "${MUGSUN_SYSTEM_REPLICAS}" -gt 1 ]; then
+	# shellcheck disable=SC2207
+	system_ids=($(cid system))
+	stopped=$(date +%s)
+	docker stop "${system_ids[0]}" >/dev/null
+	sleep 8
+	for _ in $(seq 20); do
+		[ "$(http_code /api/ping)" = 200 ] || fail "停掉一个 system 实例 8 秒以后，经网关访问 system 还有失败"
+	done
+	docker start "${system_ids[0]}" >/dev/null
+	wait_registered 120
+	echo ">> 停掉一个 system 实例，另一个接着应答；起回来以后，从停掉算起 $(($(date +%s) - stopped)) 秒重新登记上"
+fi
+
 # ---- Nacos 重启以后能自己恢复 ----
 # 重启后马上再执行一次 up：初始化脚本会在 Nacos 刚起来的时候重跑，要能通过；
 # 各服务登记的实例在 Nacos 里只存在内存中，重启就没了，要能自己重新登记，网关要能重新找到它们
@@ -249,7 +291,9 @@ rebooted=$(date +%s)
 docker stop ${front} ${back} >/dev/null
 # 停止时每个进程都要来得及自己收尾退出。退出码 137 表示等到了时间、被强杀的
 for svc in postgres redis nacos pc ${JAVA_SERVICES}; do
-	[ "$(docker inspect -f '{{.State.ExitCode}}' "$(cid "${svc}")")" != 137 ] || fail "${svc} 停止时没有来得及自己退出，被强杀了"
+	for id in $(cid "${svc}"); do
+		[ "$(docker inspect -f '{{.State.ExitCode}}' "${id}")" != 137 ] || fail "${svc} 停止时没有来得及自己退出，被强杀了"
+	done
 done
 # shellcheck disable=SC2086
 docker start ${front} >/dev/null
@@ -257,7 +301,8 @@ sleep 15
 # shellcheck disable=SC2086
 docker start ${back} >/dev/null
 wait_serving 180 "全部容器重新启动以后"
-wait_registered 30
+# 经网关的接口有一个 system 实例就能恢复。两个实例各自由 Docker 拉起，先后可能差几十秒，这里等到两个都登记上
+wait_registered 120
 echo ">> 全部容器停掉、打乱顺序重新启动以后 $(($(date +%s) - rebooted)) 秒，五个服务重新登记上，经网关的接口恢复"
 
 end=$(date +%s)

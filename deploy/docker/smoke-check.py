@@ -8,7 +8,10 @@
 - AI 服务取得到地图和埋点两个服务的数据概况：服务之间的调用是通的，共享密钥对得上；
 - 登录日志里记下的是自检容器自己的地址：客户端地址经管理后台、网关一路传到了服务；
 - 内部接口经网关访问不到；绕过网关直接访问服务，没有签名会被拒绝；
-- Nacos 不接受没带账号的请求。
+- Nacos 不接受没带账号的请求；
+- system 有两个实例时：登录态在两个实例上都有效；在一个实例上保存、删除的数据权限规则，另一个实例几秒内跟上。
+
+上面的登录经网关轮流转给两个 system 实例：取验证码、校验验证码、登录这几步落在不同的实例上也要能过。
 """
 import importlib.util
 import json
@@ -122,3 +125,59 @@ status, _ = fetch("GET", "http://nacos:8848/nacos/v3/client/ns/instance/list?ser
 if status != 403:
     fail("没带账号查 Nacos 的服务实例：应该返回 403，实际是 %s" % status)
 print("OK Nacos 不接受没带账号的请求")
+
+# 7. 两个 system 实例。smoke.sh 把各实例的地址放在 SYSTEM_ADDRS 里，只有一个实例时跳过。
+#    这里绕过网关直接访问指定的实例：经网关的话请求落在哪个实例上说不准
+SYSTEM_ADDRS = os.environ.get("SYSTEM_ADDRS", "").split()
+
+
+def direct(addr, method, path, body=None):
+    """带登录态访问指定的 system 实例，要求业务上也成功，返回 data。"""
+    status, res = fetch(method, "http://%s:8101%s" % (addr, path), body, TOKEN)
+    if status != 200 or not isinstance(res, dict) or res.get("code") != 200:
+        fail("实例 %s 上 %s %s 没有成功：HTTP %s，%s" % (addr, method, path, status, (res or {}).get("msg")))
+    return res.get("data")
+
+
+def in_effect(addr, table):
+    """这个实例的内存里，有没有这张表的数据权限规则。"""
+    return any(row.get("table") == table for row in direct(addr, "GET", "/system/data-scope/effective") or [])
+
+
+def seconds_until(limit, done):
+    """每 0.2 秒看一次，返回等了几秒；到时间还没等到返回 None。"""
+    began = time.monotonic()
+    while time.monotonic() - began < limit:
+        if done():
+            return time.monotonic() - began
+        time.sleep(0.2)
+    return None
+
+
+if len(SYSTEM_ADDRS) > 1:
+    # 7.1 登录态存在 Redis 里，在哪个实例上都有效
+    for addr in SYSTEM_ADDRS:
+        direct(addr, "GET", "/auth/info")
+    print("OK 同一个登录态在 %d 个 system 实例上都有效" % len(SYSTEM_ADDRS))
+
+    # 7.2 数据权限规则每个实例在内存里各有一份。在一个实例上保存，再删除，另一个实例都要在 5 秒内跟上，两个方向各做一遍。
+    #     各实例另有每 30 秒一次的定时加载兜底，它最多碰巧让其中一步过关：连着两步都在 5 秒内跟上，靠的只能是保存后的通知
+    for saver, other in ((SYSTEM_ADDRS[0], SYSTEM_ADDRS[1]), (SYSTEM_ADDRS[1], SYSTEM_ADDRS[0])):
+        table = "smoke_" + os.urandom(4).hex()
+        direct(saver, "POST", "/system/data-scope/submit", {
+            "scopeName": table, "resourceCode": table, "tableName": table,
+            "deptColumn": "dept_id", "userColumn": "create_user", "scopeType": 2, "status": 1})
+        if not in_effect(saver, table):
+            fail("在实例 %s 上保存的数据权限规则，它自己没有马上生效" % saver)
+        saved = seconds_until(5, lambda: in_effect(other, table))
+        if saved is None:
+            fail("在实例 %s 上保存的数据权限规则，5 秒后实例 %s 上还没有生效" % (saver, other))
+        page = direct(saver, "GET", "/system/data-scope/page?pageNum=1&pageSize=10&name=" + table) or {}
+        ids = [row.get("id") for row in page.get("records") or [] if row.get("tableName") == table]
+        if len(ids) != 1:
+            fail("刚保存的数据权限规则在列表里查到 %d 条，应该是 1 条" % len(ids))
+        direct(saver, "POST", "/system/data-scope/remove", ids)
+        removed = seconds_until(5, lambda: not in_effect(other, table))
+        if removed is None:
+            fail("在实例 %s 上删除的数据权限规则，5 秒后实例 %s 上还在生效" % (saver, other))
+        print("OK 实例 %s 上保存、删除数据权限规则，实例 %s 分别在 %.1f 秒、%.1f 秒后跟上" % (saver, other, saved, removed))
