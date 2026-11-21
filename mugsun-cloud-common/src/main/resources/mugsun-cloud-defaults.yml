@@ -24,6 +24,9 @@ spring:
         group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
         # 注册到注册中心的本机地址；留空自动取第一块非回环网卡，多网卡或开着 VPN 时建议写明
         ip: ${MUGSUN_SERVICE_IP:}
+        # 保持 0。停止时「注销后等一会儿再停」由下面的 mugsun.cloud.shutdown.deregister-wait 负责，
+        # 框架自带的这一项不是 0 的话会再等一遍
+        graceful-shutdown-wait-time: 0
 
 mugsun:
   cloud:
@@ -55,6 +58,12 @@ mugsun:
       check-interval-ms: 1000
       # 兜底的重新加载间隔（毫秒）
       interval-ms: 30000
+    shutdown:
+      # 停止时先从注册中心注销，再照常处理请求这么久，然后才开始停。网关把实例列表缓存 5 秒，
+      # 注销后马上停的话，这几秒里转过来的请求会失败。
+      # 要比网关的缓存时间（网关的 spring.cloud.loadbalancer.cache.ttl）长两三秒；配成 0 就是注销后马上停。
+      # 每次停止会多花这么久，容器的停止宽限时间要留够：这段等待，加上等手上的请求做完（最长 20 秒）
+      deregister-wait: 8s
   websocket:
     # 推送固定走 Redis。WebSocket 连接都在 system 上，其它服务要推送时（比如 track 发告警站内信）把消息发到 Redis，
     # 由 system 投递给在线用户。boot 的默认值就是 redis，这里再写一遍是防止 config/application-local.yml 把它改成 local：
@@ -66,3 +75,15 @@ logging:
     # 日志文件按服务名分开（./logs/mugsun-system.log 等）。boot 的默认文件名是固定的 mugsun-boot，
     # 几个服务在同一个目录下启动会写进同一个文件
     name: ${spring.application.name}
+
+---
+# 本地开发（--spring.profiles.active=dev）时不一样的地方
+spring:
+  config:
+    activate:
+      on-profile: dev
+mugsun:
+  cloud:
+    shutdown:
+      # 本地开发不等：停服务、重启服务不用每次多等这几秒
+      deregister-wait: 0s
