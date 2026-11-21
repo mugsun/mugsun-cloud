@@ -65,6 +65,11 @@ spring:
               uri: lb://mugsun-track
               predicates:
                 - Path=/track/**,/system/track/**
+            # /system/ai/** 是管理后台的接口，/v1/** 是 OpenAI 兼容的开放接口（调用方用 AI 密钥，不用登录）
+            - id: mugsun-ai
+              uri: lb://mugsun-ai
+              predicates:
+                - Path=/system/ai/**,/v1/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

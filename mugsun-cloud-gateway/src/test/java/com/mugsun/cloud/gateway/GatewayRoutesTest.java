@@ -28,6 +28,8 @@ class GatewayRoutesTest {
 
 	private static final DisposableServer TRACK = backend("mugsun-track");
 
+	private static final DisposableServer AI = backend("mugsun-ai");
+
 	@LocalServerPort
 	int gatewayPort;
 
@@ -37,6 +39,7 @@ class GatewayRoutesTest {
 		registry.add(prefix + "mugsun-system[0].uri", () -> "http://127.0.0.1:" + SYSTEM.port());
 		registry.add(prefix + "mugsun-gis[0].uri", () -> "http://127.0.0.1:" + GIS.port());
 		registry.add(prefix + "mugsun-track[0].uri", () -> "http://127.0.0.1:" + TRACK.port());
+		registry.add(prefix + "mugsun-ai[0].uri", () -> "http://127.0.0.1:" + AI.port());
 	}
 
 	@ParameterizedTest
@@ -55,6 +58,17 @@ class GatewayRoutesTest {
 		"/system/track/error-issues/page?pageNum=1&pageSize=10, mugsun-track",
 		"/system/trackx/apps, mugsun-system",
 		"/tracking/collect, mugsun-system",
+		"/system/ai, mugsun-ai",
+		"/system/ai/, mugsun-ai",
+		"/system/ai/model/page?pageNum=1&pageSize=10, mugsun-ai",
+		"/system/ai/weave/gisAsk, mugsun-ai",
+		"/system/aix/model, mugsun-system",
+		"/v1, mugsun-ai",
+		"/v1/models, mugsun-ai",
+		"/v1/chat/completions, mugsun-ai",
+		"/v10/models, mugsun-system",
+		"/api/v1/models, mugsun-system",
+		"/ai/model, mugsun-system",
 		"/system/user/page, mugsun-system",
 		"/gis/layer, mugsun-system",
 		"/auth/login, mugsun-system",
