@@ -80,10 +80,11 @@ python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 约定和 mugsun-boot 相同，细则见那边的 `AGENTS.md` 和 `.github/COMMIT_CONVENTION.md`。要点：
 
 - Conventional Commits，主题中文，不超过 50 字，不用 emoji。一个提交只做一件事。
+- 直接在 `main` 上提交和推送，不另建分支。推之前 `./mvnw -B verify` 和 `sync_from_boot.py --locked --check` 都要通过。
 - scope 用模块名：`gateway`、`common`、`system`、`gis`、`sync`、`deploy`、`build`。
 - 同步 mugsun-boot 代码单独做一个提交，类型用 `chore(sync)`，正文写 mugsun-boot 的提交号。
 - `CHANGELOG.md` 写在 `## [Unreleased]` 下，每行不超过 80 字。
 - 提交身份和 mugsun-boot 用同一个，只在仓库级配置里设，不改全局配置。
-- 推送写全 refspec：`git push origin <完整 SHA>:refs/heads/<分支>`。不 force push，不用 `git stash`。
-- 鉴权、租户、密钥、新依赖、公开接口、CI 配置属于敏感改动，需要安全审查后再合。网关的转发头、内部接口拦截和跨域规则也算在内。
+- 推送写全 refspec：`git push origin <完整 SHA>:refs/heads/main`。不 force push，不用 `git stash`。
+- 鉴权、租户、密钥、新依赖、公开接口、CI 配置属于敏感改动，需要安全审查后再进 main。网关的转发头、内部接口拦截和跨域规则也算在内。
 - 改动 `.github/` 下任何文件的提交，必须先有安全官签字，才能进 main。
