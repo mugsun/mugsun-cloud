@@ -32,3 +32,7 @@ mugsun:
         # GIS 服务在注册中心里的名字。没部署这个服务时，菜单里不显示 GIS，登录信息里 gisEnabled 为 false。
         # 和单体版一样，MUGSUN_GIS_ENABLED=false 或系统参数 gis.module.enabled=false 也会把 GIS 关掉
         service-id: mugsun-gis
+      track:
+        # 埋点服务在注册中心里的名字。没部署这个服务时，菜单里不显示埋点分析，登录信息里 trackEnabled 为 false。
+        # 和单体版一样，MUGSUN_TRACK_ENABLED=false 也会把埋点关掉；埋点没有系统参数开关
+        service-id: mugsun-track

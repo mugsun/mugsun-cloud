@@ -9,7 +9,9 @@ import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
 
 import java.time.Duration;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -18,11 +20,13 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * system 服务怎么判断 GIS 模块在不在、开没开：注册中心用一个假的代替，时间用手动拨的钟。
+ * system 服务怎么判断 GIS、埋点这些可选模块在不在、开没开：注册中心用一个假的代替，时间用手动拨的钟。
  */
 class ModuleStatusTest {
 
 	private static final String GIS = "mugsun-gis";
+
+	private static final String TRACK = "mugsun-track";
 
 	private final FakeDiscovery discovery = new FakeDiscovery();
 
@@ -215,24 +219,75 @@ class ModuleStatusTest {
 		}
 	}
 
+	@Test
+	void trackIsOffWhenOnlyOtherServicesAreDeployed() {
+		CloudTrackModuleStatus track = new CloudTrackModuleStatus(presence, TRACK, null);
+		discovery.up(GIS);
+
+		assertThat(track.present()).isFalse();
+		assertThat(track.enabled()).isFalse();
+	}
+
+	@Test
+	void trackIsOnWhenItsServiceIsDeployed() {
+		CloudTrackModuleStatus track = new CloudTrackModuleStatus(presence, TRACK, null);
+		discovery.up(TRACK);
+
+		assertThat(track.present()).isTrue();
+		assertThat(track.enabled()).isTrue();
+		assertThat(gis.present()).isFalse();
+	}
+
+	@Test
+	void configSwitchTurnsTrackOffWithoutAskingTheRegistry() {
+		discovery.up(TRACK);
+		CloudTrackModuleStatus off = new CloudTrackModuleStatus(presence, TRACK, "false");
+
+		assertThat(off.present()).isFalse();
+		assertThat(off.enabled()).isFalse();
+		assertThat(discovery.calls).isZero();
+	}
+
+	@Test
+	void illegalTrackConfigSwitchFailsAtStartup() {
+		for (String raw : new String[] {"", "1", " true"}) {
+			assertThatThrownBy(() -> new CloudTrackModuleStatus(presence, TRACK, raw))
+				.isInstanceOf(InvalidModuleSwitchException.class)
+				.hasMessageContaining("mugsun.track.enabled")
+				.hasMessageContaining("MUGSUN_TRACK_ENABLED");
+		}
+	}
+
+	@Test
+	void refreshChecksEveryWatchedService() {
+		new CloudTrackModuleStatus(presence, TRACK, null);
+
+		presence.refresh();
+		assertThat(discovery.calls).isEqualTo(2);
+	}
+
 	private void advance(Duration duration) {
 		nanos.addAndGet(duration.toNanos());
 	}
 
 	private static final class FakeDiscovery implements DiscoveryClient {
 
-		private List<ServiceInstance> instances = List.of();
+		private final Set<String> registered = new HashSet<>();
 
 		private RuntimeException error;
 
 		private int calls;
 
 		void up() {
-			instances = List.of(new DefaultServiceInstance("gis-1", GIS, "127.0.0.1", 8102, false));
+			up(GIS);
+		}
+
+		void up(String serviceId) {
+			registered.add(serviceId);
 		}
 
 		void down() {
-			instances = List.of();
+			registered.clear();
 		}
 
 		@Override
@@ -246,12 +301,15 @@ class ModuleStatusTest {
 			if (error != null) {
 				throw error;
 			}
-			return GIS.equals(serviceId) ? instances : List.of();
+			if (!registered.contains(serviceId)) {
+				return List.of();
+			}
+			return List.of(new DefaultServiceInstance(serviceId + "-1", serviceId, "127.0.0.1", 8100, false));
 		}
 
 		@Override
 		public List<String> getServices() {
-			return List.of(GIS);
+			return List.copyOf(registered);
 		}
 	}
 }
