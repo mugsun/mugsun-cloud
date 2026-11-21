@@ -82,6 +82,19 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 给用户看的提示里不带地址、服务名和状态码，具体原因只记日志。日志里不记密钥和签名。
 - 内部接口要有测试：验签的规则在 `InnerRequestFilterTest`，两头接起来的情况在 `InnerLoopbackTest`，都不需要 Nacos 和 Redis。
 
+## 部署文件的约定
+
+`deploy/docker` 是镜像和一条命令起全套的编排，说明见 [docs/deployment.md](./docs/deployment.md) 的第 16 节。`deploy/dev` 只给本机开发用。
+
+- 口令和密钥不写进编排文件、镜像、容器的环境变量和启动参数，也不打进日志。它们由 `gen-secrets.sh` 在首次启动时生成，按使用方分卷，每个容器只挂自己要读的那一个。新增一个密钥时先想清楚谁要读它，写进对应的文件。
+- 映射到宿主机的只有管理后台一个端口，默认只绑 `127.0.0.1`。不要给网关、各服务、Nacos、数据库和 Redis 加端口映射。
+- 要被别的容器找到的容器用固定地址，连接配置里写地址，不写容器名。容器没在运行时，Docker 会把它的名字交给宿主机的 DNS 去查，请求和口令会发到查到的地址；Nginx 还只在启动时查一次。四个业务服务不用固定地址，它们经 Nacos 被找到。
+- 常驻的服务都写 `restart: unless-stopped` 和 `stop_grace_period`。不写停止时等多久的话，有的环境里 Docker 只等 1 秒就强杀。
+- 镜像和源码都要钉死：基础镜像和第三方镜像写摘要，从 GitHub 取的源码写 40 位提交号。和 mugsun-boot 共用的那几个，同步时跟着改，见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。PostgreSQL 的镜像是例外，和单体版一样按标签取。
+- `deploy/docker/boot/` 是从 mugsun-boot 同步来的，不要手改。
+- 网关和各服务的镜像默认按 `prod` 配置运行。不要为了让编排好起而换成 `dev`。
+- 改了 `deploy/docker` 下的文件，跑一遍 `deploy/docker/smoke.sh`。它从零起一套独立的环境，逐项检查上面这些约定，再重启 Nacos、把全部容器停掉打乱顺序重新启动，看能不能自己恢复。新加的约定要在里面补上检查。
+
 ## 构建和测试
 
 ```bash
@@ -89,6 +102,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 ./mvnw -B verify                                     # 编译全部模块，跑本仓自己的测试
 python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 python3 scripts/compare_libs.py                      # 第三方库的版本和单体版的包一致，改了 pom 或同步之后跑
+deploy/docker/smoke.sh                               # 从零起整套容器逐项检查，改了 deploy/docker 之后跑
 ```
 
 - 这里没有业务测试，业务改动在 mugsun-boot 里测。
@@ -112,5 +126,5 @@ python3 scripts/compare_libs.py                      # 第三方库的版本和�
 - `CHANGELOG.md` 写在 `## [Unreleased]` 下，每行不超过 80 字。
 - 提交身份和 mugsun-boot 用同一个，只在仓库级配置里设，不改全局配置。
 - 推送写全 refspec：`git push origin <完整 SHA>:refs/heads/main`。不 force push，不用 `git stash`。
-- 鉴权、租户、密钥、新依赖、公开接口、CI 配置属于敏感改动，需要安全审查后再进 main。网关的转发头、内部接口拦截和跨域规则，服务之间调用的签名校验，也算在内。
+- 鉴权、租户、密钥、新依赖、公开接口、CI 配置属于敏感改动，需要安全审查后再进 main。网关的转发头、内部接口拦截和跨域规则，服务之间调用的签名校验，也算在内。部署文件里的基础镜像、密钥的生成和存放、Nacos 的鉴权、对外的端口，同样算。
 - 改动 `.github/` 下任何文件的提交，必须先有安全官签字，才能进 main。

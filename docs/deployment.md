@@ -1,6 +1,6 @@
 # 部署注意事项
 
-微服务版和单体版的业务代码相同，但进程从一个变成了多个。下面是因此和单体版不一样的地方。前五节配错会出安全问题，第七节关系到收回权限后多久生效，最后一节是从单体版迁过来之前要先处理的。
+微服务版和单体版的业务代码相同，但进程从一个变成了多个。下面是因此和单体版不一样的地方。前五节配错会出安全问题，第七节关系到收回权限后多久生效，第 15 节是从单体版迁过来之前要先处理的，第 16 节是用 Docker Compose 起全套的说明。
 
 单体版已有的要求仍然适用，见 mugsun-boot 的[配置](https://docs.mugsun.com/boot/configuration)和[上线安全清单](https://docs.mugsun.com/boot/security-checklist)。
 
@@ -112,7 +112,7 @@ openssl rand -hex 32
 - Nacos 的端口只对网关和各服务开放。
 - 机器有多块网卡时，用 `MUGSUN_SERVICE_IP` 写明服务注册的地址。
 
-`deploy/dev` 下的 compose 文件只给本机开发用：它没有开客户端鉴权，端口只绑定 127.0.0.1。不要拿去生产环境用。
+`deploy/dev` 下的 compose 文件只给本机开发用：它没有开客户端鉴权，端口只绑定 127.0.0.1。不要拿去生产环境用。`deploy/docker` 下的那一份开了客户端鉴权，做法见第 16 节。
 
 ## 6. 先启动 system：数据库迁移只由它执行
 
@@ -191,6 +191,8 @@ system 按 Nacos 里有没有对应服务的实例判断模块在不在：
 | `/actuator/**` | system | 和单体版一样，管理后台的监控页在用，由服务自己鉴权 |
 
 gis、track 和 ai 服务的 `/actuator` 不经网关，要探活就在内网直接访问它们自己的端口。
+
+四个服务在自己的端口上都应答 `/ping`，不用登录。镜像自带的健康检查用的就是它，网关的镜像用 `/_gateway/health`。
 
 ## 10. 转发相关的行为
 
@@ -298,3 +300,191 @@ order by t.instance_id;
 - 被拦下的操作在 system 的日志里有一条 WARN：`拦下一次要走到 AI 预审节点的操作`，或者 `拦下一次在 AI 预审节点上的办理`。
 - 日志里出现 ERROR `AI 预审节点的任务被建出来了，写库之前的拦截没有生效` 时，说明有操作绕过了上面的拦截，对应的单子要人工核对。
 - system 启动时会检查拦截有没有装到流程引擎上，没装上就拒绝启动。
+
+## 16. 用 Docker Compose 起全套
+
+`deploy/docker/docker-compose.yml` 一条命令起全套：PostgreSQL（带 PostGIS 和 pgvector）、Redis、Nacos、网关、四个服务和管理后台。只需要 Docker 和 Compose v2.17 以上，镜像都在 Docker 里从源码构建，不用装 JDK 和 Node。
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml up -d --build
+docker compose -f deploy/docker/docker-compose.yml run --rm init show    # 看 admin 的口令
+```
+
+起来以后浏览器打开 <http://localhost:8188>，账号 `admin`。口令首次启动时随机生成，不写进日志，只能用上面第二条命令看。admin 改过口令以后，这条命令不再显示初始口令。
+
+这一套是单机的：每个服务一个实例，Nacos 是单机模式，数据库和 Redis 没有主备。多机部署时镜像可以照用，编排要自己写，见本节的「只用镜像」。
+
+下面的数字都是在一台 Apple 芯片的 Mac 上实测的（Docker 分到 10 核、5.8 GB 内存），机器不同会有出入。x86 的机器上没有实测过。
+
+### 前面各节的要求在这里怎么落实
+
+| 要求 | 做法 |
+| --- | --- |
+| 只有网关对外（第 1 节） | 映射到宿主机的只有管理后台一个端口，默认只绑 `127.0.0.1`。网关、四个服务、Nacos、数据库和 Redis 都不映射 |
+| 可信代理（第 2 节） | 管理后台的 Nginx 是网关前面唯一的代理，网关的 `MUGSUN_OPENAPI_TRUSTED_PROXIES` 只写它一个地址 |
+| 同一套密钥（第 3 节）、服务之间调用的密钥（第 4 节） | 首次启动时随机生成一套，四个服务读同一个密钥文件。网关的密钥文件里只有接入 Nacos 的账号 |
+| Nacos 开鉴权（第 5 节） | 打开客户端鉴权。网关和四个服务共用一个只能注册和查询服务的账号，管理员口令只有一次性的初始化容器读得到 |
+| 先启动 system（第 6 节） | gis、track、ai 等 system 健康以后才启动 |
+| 文件存储要挂卷（第 12 节） | system 和 track 共用一个卷，目录布局和单体版一样 |
+
+各服务按 `prod` 配置运行：密钥缺失拒绝启动，验证码打开，接口文档关闭。
+
+### 能改的变量
+
+写在执行 `docker compose` 的环境里，或者写进 `deploy/docker/.env`。这个文件要和编排文件放在同一个目录，放在仓库根目录不生效。
+
+| 变量 | 作用 | 默认值 |
+| --- | --- | --- |
+| `MUGSUN_HTTP_PORT` | 管理后台在宿主机上的端口 | `8188` |
+| `MUGSUN_HTTP_BIND` | 这个端口绑在宿主机的哪个地址上 | `127.0.0.1` |
+| `MUGSUN_PUBLIC_URL` | 浏览器访问管理后台用的地址，末尾不带斜杠。系统给出的文件地址和 OAuth 同意页的跳转以它开头 | `http://localhost:<端口>` |
+| `MUGSUN_NET_PREFIX` | 容器网段的前三段，网段是 `<前三段>.0/24` | `172.30.89` |
+| `MUGSUN_TZ` | 常驻容器的时区，写 IANA 名称 | `Asia/Shanghai` |
+| `MUGSUN_JAVA_OPTS` | 网关和四个服务的 JVM 参数 | `-Xmx512m` |
+| `MUGSUN_GIS_XYZ_ALLOW_BENCHMARK_NET` | gis 取底图瓦片时，放行解析到 `198.18.0.0/15` 的域名。什么时候开见下面「几种改法」 | `false` |
+| `MUGSUN_PG_IMAGE` | PostgreSQL 的镜像 | `ghcr.io/mugsun/postgis-pgvector:16-3.4` |
+| `MUGSUN_NACOS_IMAGE` | Nacos 的镜像 | `nacos/nacos-server:v3.0.3`，固定摘要 |
+| `MUGSUN_PC_SRC` | 管理后台的源码，可以写本机的目录 | GitHub 上 mugsun-pc 的一个固定提交 |
+| `MUGSUN_GATEWAY_CIDRS` | 管理后台前面还有 TLS 终端或负载均衡时，它所在的网段 | 空 |
+| `MUGSUN_CSP_TILE_HOSTS`、`MUGSUN_CSP_TRACK_HOSTS` | 管理后台的 CSP 里额外放行的地图瓦片域名、埋点上报域名，空格分隔 | 空 |
+
+最后三个是 mugsun-pc 镜像的变量。`MUGSUN_GATEWAY_CIDRS` 名字里的「网关」指管理后台前面的那层代理，不是 mugsun-cloud 的网关。
+
+`MUGSUN_PUBLIC_URL` 决定的是库里登记的文件地址。生产配置默认不开本地存储直出（`enable-access: false`），实测这个地址直接打开是 404，文件要登录以后在管理后台里下载。
+
+编排只把写在各服务 `environment` 里的变量传进容器。后端别的配置项要改，先把对应的变量加进编排文件，只写进 `.env` 不生效。
+
+几种改法：
+
+- 给别的机器访问：设 `MUGSUN_HTTP_BIND=0.0.0.0`，同时把 `MUGSUN_PUBLIC_URL` 设成它们访问用的地址，比如 `http://192.168.1.20:8188`。只设前一个的话，系统给出的文件地址还指向 `localhost`。这样就是用明文 HTTP 对外提供服务，只适合可信的内网。
+- 前面再放一层 TLS 终端或负载均衡：`MUGSUN_PUBLIC_URL` 写 `https://` 开头的对外地址，`MUGSUN_GATEWAY_CIDRS` 写那一层的网段。这种部署没有在这份编排上实测过。
+- 网段和宿主机上别的网段冲突：改 `MUGSUN_NET_PREFIX`，比如 `10.89.0`。还没起过的环境直接改。已经起过的环境按下面的步骤换。
+- 地图的底图不显示，瓦片请求返回 403，gis 的日志里是 `reason=blocked-address`：宿主机出网经过 Clash、Surge 这类代理并且开着 fake-ip 时，公网域名都被解析到 `198.18.0.0/15`，gis 为防 SSRF 拒绝去取这个网段的地址。这时设 `MUGSUN_GIS_XYZ_ALLOW_BENCHMARK_NET=true` 再执行 `up -d`，只有 gis 会被重建。实测打开以后瓦片请求全部返回 200。这个开关放宽了一项防 SSRF 的检查，别的机器不要开。
+
+已经起过的环境换网段：
+
+1. 停掉并删除容器，不带 `-v`：`docker compose -f deploy/docker/docker-compose.yml down`
+2. 删掉 Nacos 的数据卷：`docker volume rm mugsun-cloud_nacos-data`
+3. 把新的 `MUGSUN_NET_PREFIX` 写进 `deploy/docker/.env`，再执行 `up -d`
+
+第 2 步不能省。Nacos 把自己的地址记在数据卷里，实测地址变了以后它照样能启动，健康检查通过，各服务也注册得上，但它的日志里会一直报 `Failed to join the cluster, retry...`，重启也不会好。这个卷里只有注册中心自己的数据，删掉以后：Nacos 的账号在执行 `up` 时按密钥卷里的口令重建，各服务的实例由它们自己重新登记。数据库、Redis、文件和密钥在别的卷里，不受影响。
+
+### 口令和密钥
+
+首次启动时，一次性的 `init` 容器生成全部口令和密钥，按使用方写进六个卷。每个容器只挂自己的那一个，只读，文件权限 0600。
+
+| 卷 | 谁读 | 里面有什么 |
+| --- | --- | --- |
+| `secrets-service` | 四个服务 | 数据库和 Redis 的口令、第 3 节的那套密钥、admin 的初始口令、`MUGSUN_INNER_SECRET`、接入 Nacos 的账号 |
+| `secrets-gateway` | 网关 | 只有接入 Nacos 的账号 |
+| `secrets-postgres` | PostgreSQL | 数据库口令 |
+| `secrets-redis` | Redis | 带口令的配置文件 |
+| `secrets-nacos` | Nacos | 签发令牌用的密钥、服务端身份标识 |
+| `secrets-nacos-admin` | 只有一次性的初始化容器 | Nacos 管理员口令、接入账号的口令 |
+
+- 口令和密钥不出现在容器的环境变量、启动参数和日志里，`docker inspect` 看不到。
+- 重启、重建容器，口令和密钥都不变。
+- 能读 Docker 卷的人拿得到全部密钥，比如宿主机的 root 和 docker 组的成员。宿主机的权限要管好。
+- 不要单独删密钥卷：数据库口令只在首次初始化时写进库里，新生成的口令和库里的对不上。
+- 备份数据库时连 `secrets-service` 卷一起备份：库里加密保存的数据要用里面的密钥才解得开。
+
+查看口令：
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml run --rm init show          # 管理后台的 admin
+docker compose -f deploy/docker/docker-compose.yml run --rm init show nacos    # Nacos 控制台的管理员
+```
+
+### 网络和地址
+
+- 容器在一个独立的网段里，默认 `172.30.89.0/24`。
+- 五个容器用固定地址：管理后台 `.10`、Nacos `.11`、网关 `.12`、PostgreSQL `.13`、Redis `.14`。四个服务的地址不固定，从 `.128` 往后分配，网关和别的服务经 Nacos 找到它们。
+- 容器之间按地址连，不按容器名连。一个容器没在运行时，Docker 会把它的名字交给宿主机的 DNS 去查，查到什么地址，请求和口令就发到哪里。管理后台的 Nginx 还只在启动时查一次名字：那一刻网关没在运行的话，之后的请求一直发往查到的那个地址，重启管理后台才改得过来。
+- Nacos 把自己的地址记在 `nacos-data` 卷里，所以换网段时要删这个卷，步骤见上面「能改的变量」。
+- Nacos 的控制台没有映射到宿主机。看各服务登记了哪些实例不用控制台：
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml run --rm nacos-init status
+```
+
+### 启动、停止和重启时的表现
+
+| 场景 | 实测 |
+| --- | --- |
+| 镜像已经构建好，从零启动整套 | 约 40 秒全部健康 |
+| 只重启 Nacos | 10 到 16 秒后五个服务重新登记上，不用重启它们。这期间经网关的请求会收到 503 |
+| 全部容器停掉再起，数据库、Redis 和 Nacos 比别的容器晚起 15 秒 | 从开始停到整套恢复共 51 到 56 秒，没有人工重启任何容器 |
+
+- 机器或者 Docker 重启以后，各容器靠 `restart` 策略自己起来，先后顺序不定。连不上数据库、Redis 或 Nacos 的服务会退出，由 Docker 重新拉起，直到依赖就绪。上表第三行模拟的就是这种情况。
+- 每个常驻容器都写明了停止时等多久，到时间还没退出才强杀：数据库 60 秒，Redis 和 Nacos 30 秒，网关和四个服务 40 秒，管理后台 10 秒。不写的话按 Docker 的默认值，有的环境里只有 1 秒，Java 进程和 Nacos 来不及收尾就被杀掉。
+- 网关和四个服务收到停止信号后，先把手上的请求处理完再退出：四个服务最多等 20 秒，网关最多等 30 秒。空闲时实测 3 秒以内退出。
+
+### 内存
+
+- 整套跑起来实测约占 3.5 GB：网关和四个服务每个约 400 到 600 MB，Nacos 约 700 MB，PostgreSQL 约 300 MB。
+- 网关和四个服务的堆上限默认各 512 MB，用 `MUGSUN_JAVA_OPTS` 改。容器没有设内存上限。
+- 构建管理后台的前端实测要约 5 GB。在内存 5.8 GB 的 Docker 上，单独构建能过，同时有别的容器占着 1 GB 时构建被杀掉。内存不宽裕时先单独构建它，构建期间不要有别的容器和构建占内存，再执行 `up`：
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml build pc
+```
+
+管理后台和后端的镜像在没有缓存时同时构建要多少内存，没有测过。
+
+### 镜像
+
+| 镜像 | 来源 |
+| --- | --- |
+| 网关和四个服务 | `deploy/docker/Dockerfile`，一个文件五个构建目标。基础镜像固定摘要，以 uid 10001 运行，带人大金仓和达梦的驱动 |
+| 管理后台 | mugsun-pc 仓库自己的 Dockerfile，源码取一个固定的提交 |
+| PostgreSQL | `ghcr.io/mugsun/postgis-pgvector:16-3.4`，和单体版用的是同一个。按标签拉取，没有固定摘要；要固定就设 `MUGSUN_PG_IMAGE=<镜像>@sha256:<摘要>` |
+| Redis、Nacos、初始化容器用的 Alpine | 固定摘要 |
+
+- mugsun-core 在构建镜像时从 GitHub 取一个固定的提交来编译，不用事先在本机安装。
+- 构建时要能访问 GitHub、Docker Hub、ghcr.io，以及 Maven 和 npm 的仓库。
+- 镜像大小：system 724 MB，track 687 MB，ai 642 MB，gis 603 MB，网关 501 MB，管理后台 121 MB。
+
+### 只用镜像
+
+五个镜像可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`：
+
+```bash
+docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
+```
+
+- 配置都用环境变量给，变量见 [README](../README.md) 的「配置」和 mugsun-boot 的配置文档。镜像默认 `SPRING_PROFILES_ACTIVE=prod`。
+- 口令和密钥可以直接用环境变量给。也可以写在一个文件里，每行 `export 名字=值`，用 `MUGSUN_ENV_FILE` 写明它的绝对路径，文件里的值会盖掉同名的环境变量。这个文件会被当作 shell 脚本执行，只能指向自己生成、别人改不了的文件。
+- 镜像以 uid 10001 运行。密钥文件要让这个用户读得到，文件存储目录 `/var/lib/mugsun/files` 要让它写得进。
+- 堆大小默认取容器内存上限的 75%。容器没设内存上限时会按整台机器的内存来算，这时用 `JAVA_OPTS` 写明 `-Xmx`。
+- 镜像自带健康检查，端口和路径按服务写在镜像里。改了 `server.port` 时，`MUGSUN_HEALTH_PORT` 要跟着改。
+- 各服务的时区要一致，用 `TZ` 设，默认 `Asia/Shanghai`：库里的时间列不带时区，按 JVM 的时区写入。
+- 前面各节的要求照旧：服务端口不对外，Nacos 开鉴权，先启动 system，各服务用同一套密钥。
+
+### 停止和清空
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml down       # 停掉并删除容器，数据和密钥留着
+docker compose -f deploy/docker/docker-compose.yml down -v    # 连数据和密钥一起删，清空重来
+```
+
+### 自检
+
+`deploy/docker/smoke.sh` 从零构建并启动一套独立的环境，项目名、端口和网段都和正式那一套错开，不动正式那一套的容器和卷。镜像和正式那一套是同一组标签，脚本会按当前的源码重新构建它们，正式那一套下次执行 `up` 时会换成新构建的镜像。正式那一套在运行时执行这个脚本，没有实测过。它做这几件事：
+
+1. 逐项检查上面的约定：口令不在日志和容器配置里，只映射一个端口，固定地址，密钥分卷，时区一致。
+2. 登录、改口令、上报并查到第一条埋点，再让 ai 服务去取 gis 和 track 的数据，确认服务之间的调用是通的。
+3. 重启 Nacos，再把全部容器停掉、打乱顺序重新启动，看整套能不能自己恢复。
+4. 清理。
+
+```bash
+deploy/docker/smoke.sh
+```
+
+镜像有缓存时实测全程两分钟多。改了 `deploy/docker` 下的文件以后跑一遍。
+
+### 这份编排没有做的
+
+- 没有 TLS，管理后台是明文 HTTP。
+- 没有备份。数据在 `pg-data`、`redis-data` 和 `files` 三个卷里。
+- 没有包含 PowerJob 的调度中心。邮件和短信是占位的配置，发不出去。
+- 容器没有设内存和 CPU 的上限。

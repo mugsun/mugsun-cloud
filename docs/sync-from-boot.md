@@ -90,6 +90,28 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 
 列在 `extras` 里的类不能引用没有一起拷贝的类，否则脚本报错。
 
+## 单独同步的文件
+
+代码以外的文件也能从 mugsun-boot 同步，比如部署时用的脚本。写在 `files` 里：
+
+```json
+{ "to": "deploy/docker/boot", "paths": ["scripts/gen-keys.sh", "scripts/init-db.sql"] }
+```
+
+- `paths` 是 mugsun-boot 仓库里的文件路径。只能写单个文件，不能写目录。
+- 文件原样复制到 `to` 写的目录下，文件名不变，可执行位和来源一致。
+- `to` 写的目录整个归脚本管，每次同步都会重写，微服务版自己的文件不要放进去。目录里已经有文件、又没有同步标记 `README.md` 时，脚本报错，不动这个目录。
+- 这些文件和 `src/boot` 一样记进 `boot-sync.lock.json`，`--check` 时一起比较。可执行位变了也算差异。
+
+现在同步的是 `deploy/docker` 那套编排要用的六个文件：
+
+| mugsun-boot 里的文件 | 用在哪 |
+| --- | --- |
+| `scripts/gen-keys.sh` | 首次启动时生成国密密钥、接口密钥、文件签名密钥和 admin 的初始口令 |
+| `scripts/init-db.sql`、`docker/postgres/00-init-db.sh` | PostgreSQL 首次初始化时建应用账号、主库和埋点库，装 PostGIS 和 pgvector 扩展 |
+| `docker/full/init-pw-check.py` | `init show` 判断 admin 改没改过口令 |
+| `docker/full/smoke.py`、`docker/full/smoke-requirements.txt` | 自检时登录、过验证码、改口令、上报并查到第一条埋点 |
+
 ## mugsun-boot 有新提交时
 
 ```bash
@@ -100,7 +122,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 ```
 
 - 脚本读的是提交，不是工作区。mugsun-boot 里没提交的改动不会被同步。
-- 每次同步会整个重写 `src/boot/`，并更新 `boot-sync.lock.json`。这个文件记着来源提交、内容摘要和各模块的文件数。
+- 每次同步会整个重写 `src/boot/` 和 `files` 里写的目录，并更新 `boot-sync.lock.json`。这个文件记着来源提交、内容摘要和各目录的文件数。
 - 一次同步单独做一个提交，提交说明里写 mugsun-boot 的提交号。
 - mugsun-boot 不在 `../mugsun-boot` 时，用 `--boot <路径>` 指定。
 
@@ -133,6 +155,11 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | 模块之间互相调用的接口 `ModuleInsightPort`、`TrackAskLlmGateway`、`GenAiDraftEnhancer`，和它们在单体版里的实现 | 调用方的 `RemoteInsightPort`、`RemoteTrackAskLlmGateway`、`RemoteGenAiDraftEnhancer`，和被调用方的 `LocalInsightEndpoint`、`TrackAskIntentEndpoint`、`GenDraftEndpoint` |
 | 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | system 的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
+| `docker/full/boot.Dockerfile` 里钉的 mugsun-core 提交号 `MUGSUN_CORE_REF` 和基础镜像的摘要 | `deploy/docker/Dockerfile` 里同名的参数和基础镜像 |
+| `docker-compose.full.yml` 里钉的 mugsun-pc 提交号，PostgreSQL 和 Redis 的镜像 | `deploy/docker/docker-compose.yml` 里 `pc` 的构建来源和对应的镜像 |
+| `docker/full/init.Dockerfile` 的基础镜像和软件包版本 | `deploy/docker/init.Dockerfile` |
+| `docker/full/gen-secrets.sh` 生成哪些口令和密钥、`init show` 怎么判断 | `deploy/docker/gen-secrets.sh` |
+| `scripts/compose-full-smoke.sh` 检查的部署约定 | `deploy/docker/smoke.sh` |
 
 ## 第三方库的版本
 
@@ -167,7 +194,7 @@ python3 scripts/compare_libs.py --boot-jar <路径>   # 单体版的包在别处
 python3 scripts/sync_from_boot.py --locked --check
 ```
 
-`--locked` 表示和 `boot-sync.lock.json` 里记的那个提交比较。输出「一致」说明没人动过，有差异时列出文件，退出码为 1。
+`--locked` 表示和 `boot-sync.lock.json` 里记的那个提交比较。输出「一致」说明没人动过，有差异时列出文件，退出码为 1。单独同步的文件也一起比较。
 
 不带 `--locked` 时比较的是 mugsun-boot 的 HEAD，用来看这边是不是落后了。
 
@@ -198,6 +225,11 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 8. 找出模块之间靠接口互相调用的地方：单体版里一个模块提供实现，另一个模块或 core 注入使用。拆开后使用方的进程里没有那个实现，要在使用方写一个走内部接口的实现，在提供方写对应的 `InnerEndpoint`。AI 问图层和埋点「问数据」就是这样接上的。对方没部署、调不通时的表现，要和单体版没装那个模块时一样。
 9. 找出模块替 system 做的事：模块里实现了 core 的扩展接口、由 system 的代码来调用的类，拆出去以后 system 里就没有了，而且不会报错。删租户时清 AI 密钥的 `TenantCredentialPurger` 是一例，要在 system 里补一个。
 10. 找出按类名存在库里、运行时再按类名去找的类。审批流节点上记的监听器类名是一例：AI 预审节点的监听器随模块去了 ai 服务，system 里找不到它，流程引擎不报错，直接跳过。这类功能拆开后要么接上，要么明确拦下，不能让它悄悄失效。
+11. 在 `deploy/docker` 里补上新服务，然后跑一遍 `deploy/docker/smoke.sh`：
+    - `Dockerfile` 加一个构建目标。
+    - `docker-compose.yml` 加一个服务，照 `gis` 的写，并写进 `ready` 的 `depends_on`。
+    - `nacos-init.py` 的 `SERVICES` 补上服务名。
+    - `smoke.sh` 的 `APP_SERVICES` 补上名字，`serving` 里加一条它的接口。
 
 ## 为什么包名不改
 

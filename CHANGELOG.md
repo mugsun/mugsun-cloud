@@ -50,6 +50,19 @@
 - 本地开发用的 Nacos：`deploy/dev/nacos.sh`，密钥首次启动时随机生成
 - 文档：`docs/sync-from-boot.md`、`docs/deployment.md`
 - 比对脚本 `scripts/compare_libs.py`：比较各服务的包和单体版的包里第三方库的版本
+- Docker 镜像 `deploy/docker/Dockerfile`：一个文件构建网关和四个服务的镜像
+  - 基础镜像固定摘要，非 root 运行，默认 prod 配置，自带健康检查
+  - 口令和密钥用环境变量给，或者写在 `MUGSUN_ENV_FILE` 指的文件里
+- 一条命令起全套 `deploy/docker/docker-compose.yml`，只需要 Docker
+  - 含 PostgreSQL、Redis、Nacos、网关、四个服务和管理后台
+  - 口令和密钥首次启动时随机生成，按使用方分卷，不进环境变量和日志
+  - 对外只有管理后台一个端口，默认只绑 127.0.0.1
+  - Nacos 打开鉴权，网关和各服务用只能注册和查询服务的账号接入
+  - 容器之间按固定地址连接；停止时等进程自己收尾，不被强杀
+  - 机器重启后各容器先后顺序不定，整套也能自己恢复
+  - 出网经过 fake-ip 代理的机器，可以打开开关让 gis 取到底图瓦片（默认关）
+- 一键自检 `deploy/docker/smoke.sh`：从零起整套，检查部署约定和主要功能
+- 同步脚本支持单独同步文件：建库、生成密钥等部署脚本从 mugsun-boot 同步
 
 ### 修复
 

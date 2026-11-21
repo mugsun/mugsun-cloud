@@ -41,9 +41,32 @@ python3 scripts/sync_from_boot.py --check    # 只比较，有差异时退出码
 
 哪些类进公共层、哪些留在 system、哪个模块对应哪个服务，规则写在 `scripts/sync-rules.json`，说明见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。
 
+## 用 Docker 起全套
+
+只需要 Docker（Compose v2.17 以上），不用装 JDK 和 Node。一条命令起 PostgreSQL、Redis、Nacos、网关、四个服务和管理后台：
+
+```bash
+git clone https://github.com/mugsun/mugsun-cloud.git && cd mugsun-cloud
+docker compose -f deploy/docker/docker-compose.yml up -d --build
+```
+
+起来以后浏览器打开 <http://localhost:8188>，账号 `admin`。口令是首次启动时随机生成的，不写进日志，用下面的命令看：
+
+```bash
+docker compose -f deploy/docker/docker-compose.yml run --rm init show
+```
+
+- 镜像都在 Docker 里从源码构建，第一次要下载 Maven 和前端的依赖。镜像构建好以后，启动整套实测约 40 秒。
+- 整套跑起来实测约占 3.5 GB 内存，构建管理后台的前端约要 5 GB。Docker 的内存不宽裕时，先单独执行 `docker compose -f deploy/docker/docker-compose.yml build pc`，再执行上面的 `up`。
+- 全部口令和密钥首次启动时随机生成，各服务按生产配置运行。对外只有管理后台一个端口，默认只绑 `127.0.0.1:8188`。
+- 端口、网段和项目名都和单体版那套 Docker 编排错开。两套同时运行没有实测过。
+- 清空重来用 `docker compose -f deploy/docker/docker-compose.yml down -v`，数据和密钥一起删。
+
+能改的变量、密钥放在哪、重启时的表现、怎么只用镜像不用这份编排，见[部署注意事项](./docs/deployment.md)的第 16 节。
+
 ## 本地启动
 
-需要 JDK 21 和 Docker。mugsun-core、mugsun-boot 和本仓库放在同一个目录下。
+开发时直接用 JDK 启动各服务。需要 JDK 21 和 Docker。mugsun-core、mugsun-boot 和本仓库放在同一个目录下。
 
 ```bash
 # 1. mugsun-core 的 0.2.0-SNAPSHOT 不在 Maven Central，先装到本地
@@ -186,7 +209,8 @@ system 按注册中心里有没有对应服务的实例来判断。服务启动�
 - system 服务目前按单实例部署：上面这几样在一个 system 实例上改了，其它 system 实例不会跟着生效。
 - mugsun-boot 的测试没有同步过来，这里只有微服务版自己那部分代码的测试。业务逻辑的测试在 mugsun-boot 里跑。
 - 配置在各服务的包里和环境变量里，没有接 Nacos 配置中心。
-- 没有 Docker 镜像和 CI。
+- Docker 编排是单机的：每个服务一个实例，Nacos 是单机模式，数据库和 Redis 没有主备。
+- 镜像没有发布到镜像仓库，要用就从源码构建。没有 CI。
 
 ## 相关仓库
 
