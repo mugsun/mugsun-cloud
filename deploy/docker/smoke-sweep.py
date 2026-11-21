@@ -7,6 +7,8 @@
 - 不用登录的接口，只发一个普通的 OPTIONS：不执行业务代码，只为了让网关转发一次、记下一行访问日志。
 
 哪些接口不用登录，读的是服务自己用的那份名单（LoginPublicPaths.java），不在这里另抄一份。
+那份名单有一部分是按前缀算的，前缀下面新加一个接口就自动不用登录。所以算出来的「不用登录的接口」还要和
+仓库里的清单 public-endpoints.txt 一模一样：多出一个、少了一个都不通过，要有人确认过、改了清单才行。
 标准输出里除了给人看的 OK 行，还有给第二步的：每个请求一行「ASKED 方法 路径 可以转给的端口」，
 以及开头、结尾两个标记请求的路径（BEGIN、END）。
 
@@ -30,6 +32,7 @@ import urllib.request
 SERVICES = {"system": 8101, "gis": 8102, "track": 8103, "ai": 8104}
 ENTRY_HOST, ENTRY_PORT, ENTRY_PREFIX = "pc", 8080, "/api"
 PUBLIC_PATHS_FILE = "/LoginPublicPaths.java"
+PINNED_FILE = "/public-endpoints.txt"
 METHODS = ("get", "head", "post", "put", "patch", "delete")
 # 这几种返回等两秒再问一次：服务刚重新创建完，网关的实例列表可能还没跟上
 RETRY = (0, 502, 503, 504)
@@ -43,11 +46,18 @@ def fail(msg):
     sys.exit(1)
 
 
-def listed(title, rows):
-    lines = ["%s %d 个：" % (title, len(rows))] + ["  " + row for row in rows[:SHOWN]]
-    if len(rows) > SHOWN:
-        lines.append("  ……还有 %d 个" % (len(rows) - SHOWN))
+def listed(title, rows, shown=SHOWN):
+    """标题加上一行一个的清单。shown 是最多列几个，None 表示全部列出。"""
+    lines = ["%s %d 个：" % (title, len(rows))] + ["  " + row for row in rows[:shown]]
+    if shown is not None and len(rows) > shown:
+        lines.append("  ……还有 %d 个" % (len(rows) - shown))
     return "\n".join(lines)
+
+
+def by_path(line):
+    """「方法 路径」按路径排，路径相同的再按方法排。"""
+    method, path = line.split()
+    return path, method
 
 
 def public_paths(source):
@@ -70,6 +80,21 @@ def is_public(path, exact, prefixes):
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
     return path in exact or any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
+
+
+def pinned_public():
+    """读仓库里那份「不用登录的接口」清单：一行一个「方法 路径」，# 开头的是注释。"""
+    pinned = set()
+    with open(PINNED_FILE, encoding="utf-8") as f:
+        for number, raw in enumerate(f, 1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) != 2 or parts[0].lower() not in METHODS or parts[0] != parts[0].upper() or not parts[1].startswith("/"):
+                fail("public-endpoints.txt 第 %d 行看不懂：%s（要写成「方法 路径」，比如 GET /ping）" % (number, line))
+            pinned.add(" ".join(parts))
+    return pinned
 
 
 def document(name, port):
@@ -144,9 +169,11 @@ def do_ask():
         fail("smoke.sh 里的服务是 %s，smoke-sweep.py 里的是 %s，两边要一致" % (sorted(expected), sorted(SERVICES)))
     with open(PUBLIC_PATHS_FILE, encoding="utf-8") as f:
         exact, prefixes = public_paths(f.read())
+    pinned = pinned_public()
     documents = {name: document(name, port) for name, port in SERVICES.items()}
 
     counts, asked, entered, wrong = {}, {}, [], []
+    open_now = set()
     need_login = 0
     begin = marker("begin")
     for name, doc in documents.items():
@@ -163,6 +190,7 @@ def do_ask():
                 sent = "OPTIONS" if public else method.upper()
                 asked.setdefault((sent, path), set()).add(SERVICES[name])
                 if public:
+                    open_now.add("%s %s" % (method.upper(), template))
                     ask(sent, path)
                     continue
                 guarded += 1
@@ -182,12 +210,21 @@ def do_ask():
         problems.append(listed("不登录就进得去的接口", entered))
     if wrong:
         problems.append(listed("要登录的接口不登录请求，返回的不是 401，这样的", wrong))
+    # 这两种全部列出，写法和清单里的一样，可以整行拷进清单或者照着删
+    extra, gone = sorted(open_now - pinned, key=by_path), sorted(pinned - open_now, key=by_path)
+    if extra:
+        problems.append(listed("不用登录的接口比清单（deploy/docker/public-endpoints.txt）多出", extra, None)
+                        + "\n  先确认它们确实该对没登录的人开放，再把上面这几行加进清单")
+    if gone:
+        problems.append(listed("清单（deploy/docker/public-endpoints.txt）里现在不是「不用登录」的接口有", gone, None)
+                        + "\n  它们被删掉了，或者现在要登录了：从清单里删掉上面这几行")
     if problems:
         fail("\n".join(problems))
 
     total = sum(counts.values())
     print("OK %d 个服务的接口文档里共 %d 个接口（%s）" % (len(counts), total, "、".join("%s %d" % pair for pair in counts.items())))
-    print("OK 要登录的 %d 个接口不带登录令牌请求，全部返回 401；另外 %d 个不用登录" % (need_login, total - need_login))
+    print("OK 要登录的 %d 个接口不带登录令牌请求，全部返回 401" % need_login)
+    print("OK 不用登录的 %d 个接口去掉重复是 %d 个，和清单 public-endpoints.txt 一模一样" % (total - need_login, len(open_now)))
     print("BEGIN " + begin)
     for (sent, path), ports in sorted(asked.items()):
         print("ASKED %s %s %s" % (sent, path, ",".join(str(port) for port in sorted(ports))))

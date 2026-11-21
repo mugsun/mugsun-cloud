@@ -160,6 +160,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | `docker/full/init.Dockerfile` 的基础镜像和软件包版本 | `deploy/docker/init.Dockerfile` |
 | `docker/full/gen-secrets.sh` 生成哪些口令和密钥、`init show` 怎么判断 | `deploy/docker/gen-secrets.sh` |
 | `scripts/compose-full-smoke.sh` 检查的部署约定 | `deploy/docker/smoke.sh` |
+| 加了、删了不用登录的接口，或者改了免登录名单 `LoginPublicPaths` | `deploy/docker/public-endpoints.txt`。自检的最后一步会列出多了、少了哪几个；多出来的先确认该对没登录的人开放，再加进去 |
 
 ## 第三方库的版本
 

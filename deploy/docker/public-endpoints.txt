@@ -1,0 +1,67 @@
+# 不用登录就能访问的接口，一行一个：方法 路径。自检的最后一步（smoke-sweep.py）拿它核对：
+# 四个服务的接口文档里，路径落在免登录名单（LoginPublicPaths）里的接口，必须和这里一模一样。
+#
+# 自检报「多出」：先确认这个接口确实该对没登录的人开放，再把那一行加进来。公开接口属于敏感改动。
+#   名单里有几段是按前缀算的（/open、/v1、/file、/track 等），它们下面新加一个接口，就自动不用登录。
+# 自检报「现在不是不用登录的」：这个接口被删掉了，或者现在要登录了，把那一行删掉。
+#
+# 这里只有接口文档里的接口。健康检查、静态文件这类不在文档里的路径不在这里。
+# 「不用登录」只是说不查登录令牌。下面按「为什么开放」分了组，有的组另有自己的一道校验，
+# 自检不查那道校验，分组和顺序也不影响核对。
+
+# 登录、验证码、找回密码、取加密密码用的公钥：本来就是给没登录的人用的
+POST /app/auth/login
+GET /app/auth/sm2-public-key
+POST /app/auth/two-factor
+POST /app/captcha/check
+GET /app/captcha/generate
+POST /auth/captcha/challenge
+GET /auth/captcha/config
+POST /auth/captcha/verify
+POST /auth/forget-code
+POST /auth/forget-reset
+POST /auth/login
+POST /auth/logout
+GET /auth/sm2-public-key
+POST /auth/sms-code
+POST /auth/sms-login
+POST /auth/social/login
+GET /auth/social/render/{source}
+GET /auth/social/sources
+POST /auth/two-factor
+
+# 注册：注册方式默认是关闭，关闭时返回 404
+POST /auth/register
+
+# 模拟第三方登录的联调入口：打开了模拟来源才能用，默认没有打开
+GET /auth/social/mock-authorize
+
+# 探活
+GET /ping
+
+# 头像和正文里的图片：要直接放进网页的图片标签，带不了登录令牌；只输出公开目录下的图片
+GET /auth/avatar/raw/{id}
+GET /system/richtext/image/raw/{id}/{filename}
+
+# 第三方授权（OAuth2）：认的是客户端的身份；发授权码的那一步在别的接口上，要登录
+GET /oauth2/authorize
+POST /oauth2/introspect
+POST /oauth2/revoke
+POST /oauth2/token
+
+# 开放接口：认的是开放接口自己的令牌，没带返回 401
+POST /open/echo
+GET /open/ping
+GET /open/user/count
+GET /open/user/list
+
+# 埋点上报：认的是应用标识（圈选草稿认圈选令牌）
+POST /track/api-body
+POST /track/collect
+GET /track/config
+POST /track/replay
+POST /track/visual/draft
+
+# 兼容 OpenAI 的接口：认的是 AI 密钥
+POST /v1/chat/completions
+GET /v1/models
