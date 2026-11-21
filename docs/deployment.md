@@ -426,7 +426,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show    # 看 a
 
 这一套是单机的：每个服务一个实例，Nacos 是单机模式，数据库和 Redis 没有主备。多机部署时镜像可以照用，编排要自己写，见本节的「只用镜像」。
 
-下面的数字都是在一台 Apple 芯片的 Mac 上实测的（Docker 分到 10 核、5.8 GB 内存），机器不同会有出入。x86 的机器上没有实测过。
+下面的数字都是在一台 Apple 芯片的 Mac 上实测的（Docker 分到 10 核、5.8 GB 内存；从头构建前端那一项是分到 7.75 GB 时测的，见后面的「内存」），机器不同会有出入。x86 的机器上没有实测过。
 
 ### 前面各节的要求在这里怎么落实
 
@@ -540,7 +540,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm nacos-init status
 - 整套跑起来实测约占 3.5 GB：网关和四个服务每个约 400 到 600 MB，Nacos 约 700 MB，PostgreSQL 约 300 MB。
 - 网关和四个服务的堆上限默认各 512 MB，用 `MUGSUN_JAVA_OPTS` 改。容器没有设内存上限。
 - system 多起一个实例，实测多占约 600 到 700 MB。
-- 构建管理后台的前端实测要约 5 GB。在内存 5.8 GB 的 Docker 上，单独构建能过，同时有别的容器占着 1 GB 时构建被杀掉。内存不宽裕时先单独构建它，构建期间不要有别的容器和构建占内存，再执行 `up`：
+- 构建管理后台的前端最占内存，要从头构建它，Docker 至少分 8 GB。没有缓存、单独从头构建时，实测 Docker 里的内存用量从构建前的 0.9 GB 涨到 7.3 GB，构建多占了 6.4 GB 左右（前端的 Dockerfile 给 Node 的堆上限是 6144 MB）。分 8 GB（Docker 里看到的是 7.75 GB）能过，余量不到 0.5 GB，交换区基本没用上；分 6 GB（看到的是 5.8 GB）不够，实测连着两次构建到一半被杀掉，当时别的容器只占 0.2 GB。构建缓存还在的时候不会重新打包，内存不够也看不出来；缓存被清掉或者换了前端版本以后才从头构建。内存不宽裕时先单独构建它，构建期间不要有别的容器和构建占内存，再执行 `up`：
 
 ```bash
 docker compose -f deploy/docker/docker-compose.yml build pc

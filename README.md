@@ -57,7 +57,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show
 ```
 
 - 镜像都在 Docker 里从源码构建，第一次要下载 Maven 和前端的依赖。镜像构建好以后，启动整套实测约 40 秒。
-- 整套跑起来实测约占 3.5 GB 内存，构建管理后台的前端约要 5 GB。Docker 的内存不宽裕时，先单独执行 `docker compose -f deploy/docker/docker-compose.yml build pc`，再执行上面的 `up`。
+- 整套跑起来实测约占 3.5 GB 内存。从头构建管理后台的前端更占内存，Docker 至少分 8 GB：实测用到 7.3 GB，分 6 GB 时构建到一半被杀掉。Docker 的内存不宽裕时，先单独执行 `docker compose -f deploy/docker/docker-compose.yml build pc`，再执行上面的 `up`。
 - 全部口令和密钥首次启动时随机生成，各服务按生产配置运行。对外只有管理后台一个端口，默认只绑 `127.0.0.1:8188`。
 - 端口、网段和项目名都和单体版那套 Docker 编排错开。两套同时运行没有实测过。
 - 清空重来用 `docker compose -f deploy/docker/docker-compose.yml down -v`，数据和密钥一起删。

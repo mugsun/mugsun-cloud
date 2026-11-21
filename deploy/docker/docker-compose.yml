@@ -24,7 +24,8 @@
 # 时区：常驻容器默认都是 Asia/Shanghai，换时区设 MUGSUN_TZ=<IANA 名称>。库里的时间列不带时区，按后端 JVM 的时区写入，
 # 所以四个服务的时区必须一致；给已经在跑的环境改时区不会改写旧数据。
 # 内存：整套跑起来实测约占 3.5 GB（每个 Java 进程的堆上限默认 512 MB，用 MUGSUN_JAVA_OPTS 改）。
-# 构建管理后台的前端实测要约 5 GB：在内存 5.8 GB 的 Docker 上，单独构建能过，同时有别的容器占着 1 GB 时被杀掉。
+# 从头构建管理后台的前端更占内存，Docker 至少分 8 GB：单独从头构建实测用到 7.3 GB，分 8 GB（Docker 里看到的是 7.75 GB）能过，
+# 分 6 GB（看到的是 5.8 GB）时连着两次构建到一半被杀掉。构建缓存还在的时候不会重新打包，内存不够也看不出来。
 # 内存不宽裕时先单独构建它，构建期间不要有别的容器和构建占内存，然后再执行上面的 up：
 #   docker compose -f deploy/docker/docker-compose.yml build pc
 # 清空重来只能用（会删数据和密钥）：docker compose -f deploy/docker/docker-compose.yml down -v
