@@ -37,6 +37,7 @@
 - 同步脚本支持可选模块：整个模块对应一个服务，并检查它只引用公共层的类
 - 本地开发用的 Nacos：`deploy/dev/nacos.sh`，密钥首次启动时随机生成
 - 文档：`docs/sync-from-boot.md`、`docs/deployment.md`
+- 比对脚本 `scripts/compare_libs.py`：比较各服务的包和单体版的包里第三方库的版本
 
 ### 修复
 

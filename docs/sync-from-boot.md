@@ -78,6 +78,7 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 python3 scripts/sync_from_boot.py                # 同步 ../mugsun-boot 的 HEAD
 python3 scripts/sync_from_boot.py --ref <提交>   # 或者指定提交、分支、标签
 ./mvnw -B verify
+python3 scripts/compare_libs.py                  # 第三方库的版本和单体版是否一致，见下面「第三方库的版本」
 ```
 
 - 脚本读的是提交，不是工作区。mugsun-boot 里没提交的改动不会被同步。
@@ -104,9 +105,38 @@ python3 scripts/sync_from_boot.py --ref <提交>   # 或者指定提交、分支
 | `mugsun-boot-gis/pom.xml` 的依赖 | `mugsun-cloud-gis` 的 pom |
 | `mugsun-boot-track/pom.xml` 的依赖 | `mugsun-cloud-track` 的 pom |
 | sms4j 间接带入的 `hutool-http` 的版本，mugsun-bom 升级 sms4j 时会变 | 父 pom 的 `hutool-http.version` |
+| `mugsun-boot-ai/pom.xml` 里 tika 的版本 | 父 pom 的 `tika.version` |
+| 单体版包里 `commons-io`、`commons-collections4` 的版本，tika 的版本变了它们会跟着变 | 父 pom 的 `commons-io.version`、`commons-collections4.version` |
 | `OptionalModuleConfiguration` 里 GIS 模块状态的判断规则 | system 的 `CloudGisModuleStatus` |
 | 埋点模块里 `TrackModuleStatus` 的实现和 `mugsun.track.enabled` 的规则 | system 的 `CloudTrackModuleStatus` |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
+
+## 第三方库的版本
+
+业务代码和单体版是同一份，它用到的第三方库也要和单体版一样：两边的包里都有的库，版本要相同。业务测试是在单体版那套版本上跑的，版本一样，测试结果在这边才作数。
+
+版本在三种情况下会和单体版不一样：
+
+| 情况 | 例子 | 处理 |
+| --- | --- | --- |
+| 单体版里的版本是另一个模块带来的，拆开后这个服务里没有那个模块 | AI 模块把 `tika-core` 定在 3.2.2，文件存储组件自己带的是 2.4.1 | 在父 pom 的 `dependencyManagement` 里定成单体版包里的版本 |
+| 引入的版本清单（BOM）改了业务代码也在用的库 | `spring-cloud-alibaba-dependencies` 会改 `guava` 和 `mybatis-spring-boot-starter` | 不引入这份清单，用到它的哪个组件就在父 pom 里单独写那个组件的版本 |
+| 库是另一个库间接带进来的，拆开后带它的那个库不在这个服务里 | track 用到的 `hutool-http` 在单体版里由短信组件带入 | 在服务的 pom 里显式引入，版本取单体版包里的 |
+
+用 `scripts/compare_libs.py` 检查。它比较网关、各服务的包和单体版的包，列出版本不同的库：
+
+```bash
+./mvnw -B package
+python3 scripts/compare_libs.py                    # 单体版的包取 ../mugsun-boot/mugsun-boot-server/target/mugsun-boot.jar
+python3 scripts/compare_libs.py --boot-jar <路径>   # 单体版的包在别处时
+```
+
+- 单体版的包要用 `boot-sync.lock.json` 里记的那个提交打。
+- 输出「一致」说明版本都相同。有不同时逐个列出，退出码为 1。
+- 「只在这个包里」列的是单体版没有的库，应当只有 Nacos、Spring Cloud 这些微服务组件和它们带进来的库。gis 和 track 的包里还有 `mybatis-flex-processor`，它是编译期的注解处理器，运行时不起作用。
+- `annotations`、`error_prone_annotations` 这两个库里只有注解，版本不同不影响运行，脚本只提示，不算差异。
+
+这几种时候要跑一遍：同步 mugsun-boot 之后，升级 Spring Boot、Spring Cloud 或 mugsun-bom 之后，改了任何一个 pom 之后，拆出新服务之后。
 
 ## 检查 `src/boot` 有没有被手改
 
@@ -139,7 +169,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 4. 在 system 里写一个模块状态类，照 `CloudGisModuleStatus` 的写。system 靠它知道这个服务有没有部署，决定菜单显不显示。
 5. 逐个检查留在 system 的过滤器和拦截器。新服务带了它们保护的功能，就把它们加进 `commonClasses`。track 带文件存储，所以 `system.file.LocalFileAccessFilter` 进了公共层：不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。
 6. 新服务带了 PowerJob 依赖的话，在启动类上排除 `PowerJobAutoConfiguration`，照 `TrackApplication` 的写。执行器只在 system 上启动。
-7. 对照单体版打出的包，检查新服务包里第三方库的版本。单体版里由别的模块间接带进来的库，新服务要自己显式引入，版本取单体版包里的那个。
+7. 打包后跑 `python3 scripts/compare_libs.py`，新服务包里第三方库的版本要和单体版一致。不一致时的处理见上面的「第三方库的版本」。
 
 ## 为什么包名不改
 
