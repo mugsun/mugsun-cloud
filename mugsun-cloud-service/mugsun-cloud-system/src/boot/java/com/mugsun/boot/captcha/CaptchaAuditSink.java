@@ -1,0 +1,21 @@
+package com.mugsun.boot.captcha;
+
+/** 审计出口：只记 IP/模式/租户，不记轨迹与 token */
+public interface CaptchaAuditSink {
+
+	void locked(String ip, String inputMode, String tenantId, long lockSeconds);
+
+	/** 短信下发失败（计数已扣、不回退） */
+	default void smsSendFailed(String ip, String phoneHash, String reason) {
+	}
+
+	/** keyboard 取题被拒（租户未启用 SLIDER/ROTATE，40015） */
+	default void keyboardUnavailable(String ip, String tenantId) {
+	}
+
+	/** 40016：租户启用的题型全部不可用（运维配置问题，按 (租户, IP) 10 分钟去重） */
+	default void typesUnavailable(String ip, String tenantId, String enabled) {
+	}
+
+	CaptchaAuditSink NOOP = (ip, mode, tenant, sec) -> { };
+}

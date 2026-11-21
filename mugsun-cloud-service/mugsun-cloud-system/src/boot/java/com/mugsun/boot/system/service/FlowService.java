@@ -1,0 +1,1023 @@
+package com.mugsun.boot.system.service;
+
+import cn.dev33.satoken.stp.StpUtil;
+import cn.hutool.core.util.IdUtil;
+import com.mugsun.boot.common.constant.FlowConstants;
+import com.mugsun.boot.common.constant.TenantConstants;
+import com.mugsun.boot.gen.DbDialects;
+import com.mugsun.boot.gen.RuntimeSql;
+import com.mugsun.boot.system.mapper.SysUserMapper;
+import com.mugsun.core.tool.exception.ServiceException;
+import com.mybatisflex.core.row.Db;
+import com.mybatisflex.core.row.Row;
+import org.dromara.warm.flow.core.FlowEngine;
+import org.dromara.warm.flow.core.dto.FlowParams;
+import org.dromara.warm.flow.core.entity.Instance;
+import org.dromara.warm.flow.core.entity.Task;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+/**
+ * 工作流办理服务：审批动作**一律走 warm-flow 引擎 API**（非裸 SQL），承载权限/状态守卫。
+ * <p>动作集：通过 skip(PASS) / 退回上一步 rejectLast / 退回指定节点 skip(REJECT)+nodeCode /
+ * 撤回 revoke(发起人) / 作废 termination / 转办·委派·加签·减签 单入口 taskOperation / 抄送（应用层，flow_user type='C'）。
+ * <p>驳回语义修正：退回走 rejectLast（实例存活、回退上一步），**不再误用 termination（终止作废）**。
+ */
+@Service
+public class FlowService {
+
+	private static final Logger log = LoggerFactory.getLogger(FlowService.class);
+
+	/** 抄送用户类型（warm-flow 引擎不识别，仅应用层读写；引擎办理人为 1/2/3） */
+	private static final String USER_TYPE_COPY = "C";
+
+	private static final String START_LOCK_PREFIX = "mugsun:flow:start:";
+	/** 发起请求要同步跑完后面的自动节点，AI 预审一个节点最长等 5 分钟；锁留得比它长，请求结束时会主动释放 */
+	private static final Duration START_LOCK_TTL = Duration.ofMinutes(10);
+	private static final String RELEASE_LOCK =
+		"if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+
+	private final HandlerSelectService selectService;
+	private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+	private final SysUserMapper userMapper;
+	private final StringRedisTemplate redis;
+
+	/**
+	 * 金仓：裸名 {@code sys_*} 会命中 SYS_CATALOG，裸 SQL 须 schema 限定业务表。
+	 */
+	@Value("${mugsun.db.default-schema:}")
+	private String defaultDbSchema;
+
+	public FlowService(HandlerSelectService selectService, com.fasterxml.jackson.databind.ObjectMapper objectMapper,
+			SysUserMapper userMapper, StringRedisTemplate redis) {
+		this.selectService = selectService;
+		this.objectMapper = objectMapper;
+		this.userMapper = userMapper;
+		this.redis = redis;
+	}
+
+	/** 业务表名（可带 default-schema；金仓裸 sys_* 会进 SYS_CATALOG） */
+	private String bizTable(String table) {
+		return StringUtils.hasText(defaultDbSchema) ? defaultDbSchema + "." + table : table;
+	}
+
+	/** 业务 sys_user 表名（可带 schema） */
+	private String sysUserTable() {
+		return bizTable("sys_user");
+	}
+
+	// ==================== 列表读取 ====================
+
+	/** 流程定义列表 */
+	public List<Row> definitions() {
+		return Db.selectListBySql(
+			"select id as \"id\", flow_code as \"flowCode\", flow_name as \"flowName\", version as \"version\", "
+				+ "category as \"category\", is_publish as \"isPublish\", activity_status as \"activityStatus\", "
+				+ "create_time as \"createTime\" "
+				+ "from flow_definition where coalesce(del_flag, '0') <> '1' order by id desc");
+	}
+
+	/** 按编号取出仍在列表里的流程，供删除前核对。 */
+	public List<Row> definitionsByIds(List<Long> ids) {
+		if (ids == null || ids.isEmpty()) {
+			return List.of();
+		}
+		String in = ids.stream().map(id -> "?").collect(Collectors.joining(","));
+		return Db.selectListBySql(
+			"select id as \"id\", flow_name as \"flowName\" from flow_definition "
+				+ "where coalesce(del_flag, '0') <> '1' and id in (" + in + ")",
+			ids.toArray());
+	}
+
+	/** 这些流程里，已经有人发起过的名称。 */
+	public List<String> startedDefinitionNames(List<Long> ids) {
+		if (ids == null || ids.isEmpty()) {
+			return List.of();
+		}
+		String in = ids.stream().map(id -> "?").collect(Collectors.joining(","));
+		List<Row> rows = Db.selectListBySql(
+			"select distinct d.flow_name as \"flowName\" from flow_instance i "
+				+ "join flow_definition d on d.id = i.definition_id "
+				+ "where coalesce(i.del_flag, '0') <> '1' and i.definition_id in (" + in + ")",
+			ids.toArray());
+		List<String> names = new ArrayList<>();
+		for (Row row : rows) {
+			String name = row.getString("flowName");
+			if (name != null && !name.isBlank()) {
+				names.add(name);
+			}
+		}
+		return names;
+	}
+
+	/** 我的待办：按当前用户的角色码/用户标识匹配任务办理人（实例按发起人租户隔离，角色码跨租户同名不可穿透） */
+	public List<Row> myTodo() {
+		List<String> flags = userFlags();
+		String in = flags.stream().map(f -> "?").collect(Collectors.joining(","));
+		String tenantSql = tenantPredicate();
+		List<Object> args = new ArrayList<>(flags);
+		if (tenantSql != null) {
+			args.add(com.mugsun.boot.tenant.TenantContext.current());
+		}
+		return Db.selectListBySql(
+			"select t.id as \"taskId\", t.instance_id as \"instanceId\", t.node_code as \"nodeCode\", "
+				+ "t.node_name as \"nodeName\", i.business_id as \"businessId\", i.flow_status as \"flowStatus\", "
+				+ "d.flow_name as \"flowName\", t.create_time as \"createTime\" "
+				+ "from flow_task t "
+				+ "join flow_user u on u.associated = t.id and u.type in ('1','2','3') and coalesce(u.del_flag, '0') <> '1' "
+				+ "join flow_instance i on i.id = t.instance_id "
+				+ "join flow_definition d on d.id = t.definition_id "
+				+ "where coalesce(t.del_flag, '0') <> '1' and u.processed_by in (" + in + ") "
+				+ (tenantSql == null ? "" : "and " + tenantSql + " ")
+				+ "order by t.id desc",
+			args.toArray());
+	}
+
+	/** 我的抄送：应用层 flow_user type='C'（associated = 实例 id）；实例按发起人租户隔离 */
+	public List<Row> myCopy() {
+		String tenantSql = tenantPredicate();
+		List<Object> args = new ArrayList<>();
+		args.add(StpUtil.getLoginIdAsString());
+		if (tenantSql != null) {
+			args.add(com.mugsun.boot.tenant.TenantContext.current());
+		}
+		return Db.selectListBySql(
+			"select i.id as \"instanceId\", i.business_id as \"businessId\", i.flow_status as \"flowStatus\", "
+				+ "d.flow_name as \"flowName\", u.create_time as \"createTime\" "
+				+ "from flow_user u "
+				+ "join flow_instance i on i.id = u.associated "
+				+ "join flow_definition d on d.id = i.definition_id "
+				+ "where u.type = '" + USER_TYPE_COPY + "' and coalesce(u.del_flag,'0') <> '1' and u.processed_by = ? "
+				+ (tenantSql == null ? "" : "and " + tenantSql + " ")
+				+ "order by u.id desc", args.toArray());
+	}
+
+	/** 实例历史流转（进度时间线）；AI 节点可选附带 aiTrace（优先 his.ext） */
+	public List<Row> history(Long instanceId) {
+		assertInstanceAccess(instanceId);
+		List<Row> rows = Db.selectListBySql(
+			"select node_code as \"nodeCode\", node_name as \"nodeName\", approver as \"approver\", "
+				+ "skip_type as \"skipType\", flow_status as \"flowStatus\", message as \"message\", "
+				+ "create_time as \"createTime\", ext as \"ext\" "
+				+ "from flow_his_task where instance_id = ? and coalesce(del_flag, '0') <> '1' order by id asc", instanceId);
+		for (Row row : rows) {
+			String approver = row.getString("approver");
+			if (StringUtils.hasText(approver)) {
+				List<Map<String, Object>> names = selectService.usernames(List.of(approver));
+				if (!names.isEmpty()) {
+					row.set("approver", names.get(0).get("name"));
+				}
+			}
+			Object trace = parseAiTrace(row.getString("ext"));
+			if (trace != null) {
+				row.set("aiTrace", trace);
+			}
+			row.remove("ext");
+		}
+		return rows;
+	}
+
+	/** his.ext 为 AI 摘要 JSON 时挂到 history.aiTrace；否则忽略 */
+	@SuppressWarnings("unchecked")
+	private Object parseAiTrace(String ext) {
+		if (ext == null || ext.isBlank()) {
+			return null;
+		}
+		try {
+			Map<String, Object> m = objectMapper.readValue(ext,
+				new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() { });
+			if (m.containsKey("aiFlowId") || m.containsKey("runId") || m.containsKey("aiTrace")) {
+				Object nested = m.get("aiTrace");
+				return nested instanceof Map ? nested : m;
+			}
+			return null;
+		} catch (Exception e) {
+			return null;
+		}
+	}
+
+	/** 实例可退回的节点（供“退回指定节点”选择）：本实例走过、且在当前待办节点上游的审批节点；开始、结束、网关不在其中 */
+	public List<Row> backNodes(Long instanceId) {
+		assertInstanceAccess(instanceId);
+		Instance ins = FlowEngine.insService().getById(instanceId);
+		List<String> current = Db.selectListBySql(
+			"select distinct node_code as \"nodeCode\" from flow_task "
+				+ "where instance_id = ? and coalesce(del_flag,'0') <> '1'", instanceId)
+			.stream().map(r -> r.getString("nodeCode")).toList();
+		return backNodeRows(instanceId, ins.getDefinitionId(), current);
+	}
+
+	/** 走过的审批节点里位于 fromNodes 上游的那些，按第一次走到的先后排；上游沿定义里的通过连线逆向找，引擎已去掉网关 */
+	private List<Row> backNodeRows(Long instanceId, Long definitionId, List<String> fromNodes) {
+		Set<String> upstream = new HashSet<>();
+		for (String code : fromNodes) {
+			FlowEngine.nodeService().previousNodeList(definitionId, code)
+				.forEach(n -> upstream.add(n.getNodeCode()));
+		}
+		return Db.selectListBySql(
+			"select node_code as \"nodeCode\", max(node_name) as \"nodeName\" "
+				+ "from flow_his_task where instance_id = ? and node_type = 1 and coalesce(del_flag,'0') <> '1' "
+				+ "group by node_code order by min(create_time), node_code", instanceId)
+			.stream().filter(r -> upstream.contains(r.getString("nodeCode"))).toList();
+	}
+
+	/** 查询实例（含流程状态，含参与人访问校验） */
+	public Instance instance(Long instanceId) {
+		assertInstanceAccess(instanceId);
+		return FlowEngine.insService().getById(instanceId);
+	}
+
+	// ==================== 审批中心 ====================
+
+	/** 我发起：当前用户发起的流程实例 */
+	public List<Row> myStarted() {
+		return Db.selectListBySql(
+			"select i.id as \"instanceId\", i.business_id as \"businessId\", i.flow_status as \"flowStatus\", "
+				+ "i.node_name as \"nodeName\", d.flow_name as \"flowName\", i.create_time as \"createTime\" "
+				+ "from flow_instance i join flow_definition d on d.id = i.definition_id "
+				+ "where i.create_by = ? order by i.id desc", StpUtil.getLoginIdAsString());
+	}
+
+	/** 已办：当前用户办理过的流程（按实例去重取最近一次办理；实例按发起人租户隔离） */
+	public List<Row> myDone() {
+		String tenantSql = tenantPredicate();
+		List<Object> args = new ArrayList<>();
+		args.add(StpUtil.getLoginIdAsString());
+		if (tenantSql != null) {
+			args.add(com.mugsun.boot.tenant.TenantContext.current());
+		}
+		return Db.selectListBySql(
+			"select h.instance_id as \"instanceId\", i.business_id as \"businessId\", "
+				+ "(array_agg(h.node_name order by h.create_time desc))[1] as \"nodeName\", "
+				+ "(array_agg(h.skip_type order by h.create_time desc))[1] as \"skipType\", "
+				+ "i.flow_status as \"flowStatus\", d.flow_name as \"flowName\", "
+				+ "max(h.create_time) as \"createTime\" "
+				+ "from flow_his_task h join flow_instance i on i.id = h.instance_id "
+				+ "join flow_definition d on d.id = i.definition_id "
+				+ "where h.approver = ? and h.node_type = 1 and coalesce(h.del_flag,'0') <> '1' "
+				+ (tenantSql == null ? "" : "and " + tenantSql + " ")
+				+ "group by h.instance_id, i.business_id, i.flow_status, d.flow_name "
+				+ "order by max(h.create_time) desc", args.toArray());
+	}
+
+	/** 正在办理的流程。可按实例编号或流程编码精确筛选，只看本租户发起的。 */
+	public List<Row> running(String instanceId, String flowCode) {
+		if (instanceId != null && !instanceId.isBlank() && !instanceId.trim().matches("\\d{1,20}")) {
+			throw new ServiceException("流程实例编号请填写数字，可以从列表里复制");
+		}
+		if (flowCode != null && flowCode.trim().length() > 40) {
+			throw new ServiceException("流程编码请控制在 40 字以内");
+		}
+		StringBuilder sql = new StringBuilder(
+			"select i.id as \"instanceId\", i.business_id as \"businessId\", i.node_name as \"nodeName\", "
+				+ "i.activity_status as \"activityStatus\", d.flow_name as \"flowName\", d.flow_code as \"flowCode\", "
+				+ "i.create_time as \"createTime\" "
+				+ "from flow_instance i join flow_definition d on d.id = i.definition_id "
+				+ "where coalesce(i.del_flag, '0') <> '1' and i.flow_status = '1' ");
+		List<Object> args = new ArrayList<>();
+		String tenantSql = tenantPredicate();
+		if (tenantSql != null) {
+			sql.append("and ").append(tenantSql).append(' ');
+			args.add(com.mugsun.boot.tenant.TenantContext.current());
+		}
+		if (instanceId != null && !instanceId.isBlank()) {
+			sql.append("and i.id = ? ");
+			args.add(Long.valueOf(instanceId.trim()));
+		}
+		if (flowCode != null && !flowCode.isBlank()) {
+			sql.append("and d.flow_code = ? ");
+			args.add(flowCode.trim());
+		}
+		sql.append("order by i.id desc");
+		return Db.selectListBySql(sql.toString(), args.toArray());
+	}
+
+	/** 填写原因后终止正在办理的流程。已结束的不能再终止。 */
+	public void terminateRunning(Long instanceId, String reason) {
+		if (reason == null || reason.isBlank()) {
+			throw new ServiceException("请填写终止原因，方便发起人知道流程为什么被停下");
+		}
+		if (reason.trim().length() > 200) {
+			throw new ServiceException("终止原因请控制在 200 字以内");
+		}
+		requireRunning(instanceId);
+		try {
+			FlowEngine.taskService().terminationByInsId(instanceId,
+				FlowParams.build().handler(uid()).message(reason.trim()).ignore(true));
+		} catch (ServiceException e) {
+			throw e;
+		} catch (RuntimeException e) {
+			log.warn("终止流程失败 {}", e.getClass().getSimpleName());
+			throw new ServiceException("这个流程暂时不能终止。请刷新列表确认它还在办理中，再填写原因后重试");
+		}
+	}
+
+	/** 挂起正在办理的流程，挂起后不能继续审批，直到恢复。 */
+	public void suspendRunning(Long instanceId) {
+		Instance ins = requireRunning(instanceId);
+		if (Integer.valueOf(0).equals(ins.getActivityStatus())) {
+			throw new ServiceException("这个流程已经挂起。可以先恢复，或填写原因后终止");
+		}
+		FlowEngine.insService().unActive(instanceId);
+	}
+
+	/** 恢复已挂起的流程。 */
+	public void resumeRunning(Long instanceId) {
+		Instance ins = requireRunning(instanceId);
+		if (!Integer.valueOf(0).equals(ins.getActivityStatus())) {
+			throw new ServiceException("这个流程正在办理，不用恢复。需要停下来请先挂起，或填写原因后终止");
+		}
+		FlowEngine.insService().active(instanceId);
+	}
+
+	/** 待签收：当前用户是办理人之一，且还不只有他一个人。 */
+	public List<Row> claimList() {
+		List<String> flags = userFlags();
+		String in = flags.stream().map(f -> "?").collect(Collectors.joining(","));
+		String tenantSql = tenantPredicate();
+		List<Object> args = new ArrayList<>(flags);
+		if (tenantSql != null) {
+			args.add(com.mugsun.boot.tenant.TenantContext.current());
+		}
+		return Db.selectListBySql(
+			"select distinct t.id as \"taskId\", t.instance_id as \"instanceId\", t.node_name as \"nodeName\", "
+				+ "i.business_id as \"businessId\", d.flow_name as \"flowName\", t.create_time as \"createTime\" "
+				+ "from flow_task t "
+				+ "join flow_user u on u.associated = t.id and u.type in ('1','2','3') and coalesce(u.del_flag, '0') <> '1' "
+				+ "join flow_instance i on i.id = t.instance_id "
+				+ "join flow_definition d on d.id = t.definition_id "
+				+ "where coalesce(t.del_flag, '0') <> '1' and i.flow_status = '1' and u.processed_by in (" + in + ") "
+				+ "and (select count(distinct u2.processed_by) from flow_user u2 "
+				+ "where u2.associated = t.id and u2.type in ('1','2','3') and coalesce(u2.del_flag, '0') <> '1') > 1 "
+				+ (tenantSql == null ? "" : "and " + tenantSql + " ")
+				+ "order by t.id desc",
+			args.toArray());
+	}
+
+	/** 签收后只保留当前用户，其他人不再看到这条待办。 */
+	public void claim(Long taskId) {
+		Task task = requireTaskInTenant(taskId);
+		List<String> handlers = Db.selectListBySql(
+			"select distinct u.processed_by as \"v\" from flow_user u "
+				+ "where u.associated = ? and u.type in ('1','2','3') and coalesce(u.del_flag, '0') <> '1'", task.getId())
+			.stream().map(r -> r.getString("v")).filter(v -> v != null && !v.isBlank()).toList();
+		if (handlers.stream().noneMatch(userFlags()::contains)) {
+			throw new ServiceException("这个任务不存在，或还没轮到你签收。请刷新待签列表");
+		}
+		if (handlers.size() == 1 && uid().equals(handlers.get(0))) {
+			throw new ServiceException("这个任务已经签收，请到待办里办理");
+		}
+		Db.updateBySql(
+			"update flow_user set del_flag = '1' where associated = ? and type in ('1','2','3') and coalesce(del_flag, '0') <> '1'",
+			task.getId());
+		Db.updateBySql(RuntimeSql.insertFlowUser(DbDialects.current()),
+			IdUtil.getSnowflakeNextId(), "1", uid(), task.getId());
+	}
+
+	private Instance requireRunning(Long instanceId) {
+		if (instanceId == null) {
+			throw new ServiceException("请从列表中选择一条正在办理的流程");
+		}
+		Instance ins = FlowEngine.insService().getById(instanceId);
+		if (ins == null) {
+			throw new ServiceException("这个流程不存在，或属于其他租户。请刷新列表后再试");
+		}
+		try {
+			assertInstanceTenant(ins);
+		} catch (ServiceException e) {
+			throw new ServiceException("这个流程不存在，或属于其他租户。请刷新列表后再试");
+		}
+		if (!"1".equals(ins.getFlowStatus())) {
+			throw new ServiceException("这个流程已经结束，不能再操作。请刷新列表");
+		}
+		return ins;
+	}
+
+	/** 流程图进度：实例定义的各节点 + 状态（已过 passed / 当前 current / 驳回 rejected / 待处理 pending） */
+	public List<Map<String, Object>> progress(Long instanceId) {
+		Instance ins = FlowEngine.insService().getById(instanceId);
+		if (ins == null) {
+			throw new ServiceException("流程实例不存在。请刷新列表，核对单号后再看");
+		}
+		assertInstanceAccess(instanceId);
+		Long defId = ins.getDefinitionId();
+		List<Row> nodes = Db.selectListBySql(
+			"select node_code as \"nodeCode\", node_name as \"nodeName\", node_type as \"nodeType\" "
+				+ "from flow_node where definition_id = ? and coalesce(del_flag,'0') <> '1' "
+				+ "order by node_type, length(node_code), node_code",
+			defId);
+		Set<String> current = codeSet("select node_code as \"v\" from flow_task "
+			+ "where instance_id = ? and coalesce(del_flag,'0') <> '1'", instanceId);
+		Set<String> passed = codeSet("select distinct node_code as \"v\" from flow_his_task "
+			+ "where instance_id = ? and skip_type = 'PASS' and coalesce(del_flag,'0') <> '1'", instanceId);
+		Set<String> rejected = codeSet("select distinct node_code as \"v\" from flow_his_task "
+			+ "where instance_id = ? and skip_type = 'REJECT' and coalesce(del_flag,'0') <> '1'", instanceId);
+		List<Map<String, Object>> result = new ArrayList<>();
+		for (Row n : nodes) {
+			String code = n.getString("nodeCode");
+			String status;
+			if (current.contains(code)) {
+				// 当前待办节点（含被退回到的节点）
+				status = "current";
+			} else if (passed.contains(code)) {
+				// 已通过优先于历史驳回：退回后又通过的节点呈现为已过
+				status = "passed";
+			} else if (rejected.contains(code)) {
+				status = "rejected";
+			} else {
+				status = "pending";
+			}
+			Map<String, Object> node = new LinkedHashMap<>();
+			node.put("nodeCode", code);
+			node.put("nodeName", n.getString("nodeName"));
+			node.put("nodeType", n.getString("nodeType"));
+			node.put("status", status);
+			result.add(node);
+		}
+		return result;
+	}
+
+	/** 下一节点审批人预测：当前任务通过后到达的下一节点及其解析出的候选审批人 */
+	public List<Map<String, Object>> nextApprovers(Long taskId) {
+		Task task = requireTask(taskId);
+		assertInstanceAccess(task.getInstanceId());
+		Instance ins = FlowEngine.insService().getById(task.getInstanceId());
+		String initiator = ins == null ? null : ins.getCreateBy();
+		List<Row> nexts = Db.selectListBySql(
+			"select next_node_code as \"code\" from flow_skip "
+				+ "where definition_id = ? and now_node_code = ? and (skip_type = 'PASS' or skip_type is null) "
+				+ "and coalesce(del_flag,'0') <> '1'", task.getDefinitionId(), task.getNodeCode());
+		List<Map<String, Object>> result = new ArrayList<>();
+		for (Row nx : nexts) {
+			String nextCode = nx.getString("code");
+			Row node = firstRow(
+				"select node_type as \"nt\", node_name as \"nn\", permission_flag as \"pf\" "
+					+ "from flow_node where definition_id = ? and node_code = ? and coalesce(del_flag,'0') <> '1'",
+				task.getDefinitionId(), nextCode);
+			if (node == null) {
+				continue;
+			}
+			Map<String, Object> item = new LinkedHashMap<>();
+			item.put("nodeCode", nextCode);
+			item.put("nodeName", node.getString("nn"));
+			if ("2".equals(node.getString("nt"))) {
+				item.put("end", true);
+				item.put("approvers", List.of());
+			} else {
+				String pf = node.getString("pf");
+				List<String> flags = pf == null ? List.of()
+					: List.of(pf.split(java.util.regex.Pattern.quote(FlowConstants.SEPARATOR)));
+				item.put("approvers", selectService.usernames(selectService.resolveHandlers(flags, initiator)));
+			}
+			result.add(item);
+		}
+		return result;
+	}
+
+	/** 通用审批弹窗按钮：当前用户对该任务可用的动作（buttonList 驱动前端按钮显隐） */
+	public List<String> taskButtons(Long taskId) {
+		Task task = FlowEngine.taskService().getById(taskId);
+		if (task == null) {
+			return List.of();
+		}
+		// 跨租户任务不发放动作（实例按发起人租户隔离）
+		Instance ins = FlowEngine.insService().getById(task.getInstanceId());
+		if (ins == null) {
+			return List.of();
+		}
+		try {
+			assertInstanceTenant(ins);
+		} catch (ServiceException e) {
+			return List.of();
+		}
+		List<String> flags = userFlags();
+		List<String> handlers = Db.selectListBySql(
+			"select u.processed_by as \"v\" from flow_user u "
+				+ "where u.associated = ? and u.type in ('1','2','3') and coalesce(u.del_flag,'0') <> '1'", taskId)
+			.stream().map(r -> r.getString("v")).collect(Collectors.toList());
+		boolean assignee = handlers.stream().anyMatch(flags::contains);
+		if (!assignee) {
+			return List.of();
+		}
+		return List.of("pass", "reject", "rejectNode", "transfer", "depute",
+			"addSignature", "reductionSignature", "copy", "terminate");
+	}
+
+	private Set<String> codeSet(String sql, Object arg) {
+		return Db.selectListBySql(sql, arg).stream()
+			.map(r -> r.getString("v")).collect(Collectors.toSet());
+	}
+
+	/** 同一业务单号不能重复发起请假。 */
+	public void assertLeaveBusinessFree(String businessId) {
+		Row row = firstRow("select i.id from flow_instance i "
+			+ "join flow_definition d on d.id = i.definition_id "
+			+ "where i.business_id = ? and d.flow_code = 'leave' and coalesce(i.del_flag,'0') <> '1'"
+			+ DbDialects.current().limitOne(),
+			businessId);
+		if (row != null) {
+			throw new ServiceException("这个业务单号已经用来请过假。请换一个单号，或到审批中心的我发起里查看原来那张");
+		}
+	}
+
+	/**
+	 * 按流程码发起。同一个流程码 + 业务单号已经有没办完的流程时不再发起：发起请求可能要等很久（后面跟着 AI 预审时），
+	 * 等不及的人会再点一次，不拦的话同一份申请会起出两条流程。
+	 */
+	public Instance startByCode(String flowCode, String businessId, Map<String, Object> variable) {
+		return startLocked(flowCode, businessId, () -> {
+			assertBusinessNotRunning(flowCode, businessId);
+			FlowParams flowParams = FlowParams.build().flowCode(flowCode).handler(uid());
+			if (variable != null && !variable.isEmpty()) {
+				// 发起携带业务数据 → 落 flow_instance.variable
+				flowParams.variable(variable);
+			}
+			return FlowEngine.insService().start(businessId, flowParams);
+		});
+	}
+
+	/**
+	 * 同一个流程码 + 业务单号的发起一次只放行一个，后到的直接拒绝：两个请求同时进来时，会都先查到「还没有」再各自发起，
+	 * 光靠查库拦不住。
+	 */
+	public <T> T startLocked(String flowCode, String businessId, Supplier<T> action) {
+		String tenant = starterTenant();
+		String key = START_LOCK_PREFIX + (tenant == null ? "-" : tenant) + ":" + flowCode + ":" + businessId;
+		String token = IdUtil.fastSimpleUUID();
+		Boolean acquired = redis.opsForValue().setIfAbsent(key, token, START_LOCK_TTL);
+		if (!Boolean.TRUE.equals(acquired)) {
+			throw new ServiceException("这张单子正在发起，还没有处理完。请不要重复提交，稍后到审批中心的我发起里查看");
+		}
+		try {
+			return action.get();
+		} finally {
+			redis.execute(new DefaultRedisScript<>(RELEASE_LOCK, Long.class), List.of(key), token);
+		}
+	}
+
+	/**
+	 * 同一个流程码 + 业务单号已经有还在办的流程时拒绝再发起。已终止 4、已作废 5、已撤销 6、已完成 8、已失效 10 不算：
+	 * 发起人撤回以后自己没有待办可以处理，得让他能用原来的单号重新提交。
+	 */
+	private void assertBusinessNotRunning(String flowCode, String businessId) {
+		String tenant = starterTenant();
+		List<Object> args = new ArrayList<>(List.of(businessId, flowCode));
+		if (tenant != null) {
+			args.add(tenant);
+		}
+		Row row = firstRow("select i.id from flow_instance i "
+			+ "join flow_definition d on d.id = i.definition_id "
+			+ "where i.business_id = ? and d.flow_code = ? and coalesce(i.del_flag,'0') <> '1' "
+			+ "and i.flow_status not in ('4','5','6','8','10')"
+			+ (tenant == null ? "" : " and " + creatorInTenantSql())
+			+ DbDialects.current().limitOne(),
+			args.toArray());
+		if (row != null) {
+			throw new ServiceException("这个业务单号已经发起过这个流程，还没有办完。请到审批中心的我发起里查看，不用重复提交");
+		}
+	}
+
+	/**
+	 * 发起人自己所在的租户。流程实例归发起人所在的租户，所以这里不看平台管理员切换的查看范围：
+	 * 切到别的租户或「查看全部」时发起的单子，仍然和他自己租户里的单子比。
+	 */
+	private String starterTenant() {
+		Object tenant = StpUtil.getSession().get(com.mugsun.boot.tenant.TenantContext.TENANT_SESSION_KEY);
+		return tenant == null || tenant.toString().isBlank() ? null : tenant.toString();
+	}
+
+	private Row firstRow(String sql, Object... args) {
+		List<Row> rows = Db.selectListBySql(sql, args);
+		return rows.isEmpty() ? null : rows.get(0);
+	}
+
+	// ==================== 表单绑流程 ====================
+
+	/** 发起表单：流程码最新已发布定义的发起节点绑定表单（全字段可写，无预填数据） */
+	public Map<String, Object> startForm(String flowCode) {
+		Row def = firstRow("select id as \"id\" from flow_definition "
+			+ "where flow_code = ? and is_publish = 1 and coalesce(del_flag,'0') <> '1' order by version desc, id desc",
+			flowCode);
+		if (def == null) {
+			return Map.of("hasForm", false);
+		}
+		Row start = firstRow("select form_path as \"fp\" from flow_node "
+			+ "where definition_id = ? and node_type = 0 and coalesce(del_flag,'0') <> '1'", def.getLong("id"));
+		return formPayload(start == null ? null : start.getString("fp"), null, null);
+	}
+
+	/** 办理表单：任务节点绑定表单 + 实例已填数据 + 该节点字段级权限 */
+	public Map<String, Object> taskForm(Long taskId) {
+		Task task = requireTask(taskId);
+		assertInstanceAccess(task.getInstanceId());
+		Row node = firstRow("select form_path as \"fp\", ext as \"ext\" from flow_node "
+			+ "where definition_id = ? and node_code = ? and coalesce(del_flag,'0') <> '1'",
+			task.getDefinitionId(), task.getNodeCode());
+		if (node == null) {
+			return Map.of("hasForm", false);
+		}
+		Instance ins = FlowEngine.insService().getById(task.getInstanceId());
+		return formPayload(node.getString("fp"), ins == null ? null : ins.getVariableMap(),
+			parseFieldPerms(node.getString("ext")));
+	}
+
+	/** 查看表单：实例业务数据只读回显（发起节点表单 + 全字段 READ） */
+	public Map<String, Object> instanceForm(Long instanceId) {
+		Instance ins = FlowEngine.insService().getById(instanceId);
+		if (ins == null) {
+			throw new ServiceException("这个流程不存在，或属于其他租户。请刷新列表后再看");
+		}
+		assertInstanceAccess(instanceId);
+		Row start = firstRow("select form_path as \"fp\" from flow_node "
+			+ "where definition_id = ? and node_type = 0 and coalesce(del_flag,'0') <> '1'", ins.getDefinitionId());
+		Map<String, Object> payload = formPayload(start == null ? null : start.getString("fp"),
+			ins.getVariableMap(), null);
+		if (ins.getVariableMap() != null && !ins.getVariableMap().isEmpty()) {
+			payload.put("data", ins.getVariableMap());
+		}
+		payload.put("readonly", true);
+		return payload;
+	}
+
+	/** 组装表单载荷：formKey → sys_form schema/option + 数据 + 字段权限 */
+	private Map<String, Object> formPayload(String formKey, Map<String, Object> data, Map<String, String> fieldPerms) {
+		Map<String, Object> r = new LinkedHashMap<>();
+		if (formKey == null || formKey.isBlank()) {
+			r.put("hasForm", false);
+			return r;
+		}
+		// 流程定义由平台维护，绑的一般是平台表单；本租户有同标识的表单时优先用本租户的，不取其他租户的
+		String tenant = com.mugsun.boot.tenant.TenantContext.current();
+		if (tenant == null) {
+			tenant = TenantConstants.DEFAULT_TENANT_ID;
+		}
+		Row form = firstRow("select name as \"n\", form_schema as \"s\", form_option as \"o\" "
+			+ "from " + bizTable("sys_form") + " where form_key = ? and is_deleted = 0 and status = 1"
+			+ " and tenant_id in (?, ?) order by case when tenant_id = ? then 0 else 1 end",
+			formKey, tenant, TenantConstants.DEFAULT_TENANT_ID, tenant);
+		if (form == null || form.getString("s") == null) {
+			r.put("hasForm", false);
+			return r;
+		}
+		r.put("hasForm", true);
+		r.put("formKey", formKey);
+		r.put("formName", form.getString("n"));
+		r.put("schema", form.getString("s"));
+		r.put("option", form.getString("o"));
+		r.put("data", data == null ? Map.of() : data);
+		r.put("fieldPerms", fieldPerms == null ? Map.of() : fieldPerms);
+		return r;
+	}
+
+	private Map<String, String> parseFieldPerms(String ext) {
+		if (ext == null || ext.isBlank()) {
+			return Map.of();
+		}
+		try {
+			return objectMapper.readValue(ext, new com.fasterxml.jackson.core.type.TypeReference<Map<String, String>>() {
+			});
+		} catch (Exception e) {
+			return Map.of();
+		}
+	}
+
+	// ==================== 审批动作（引擎 API） ====================
+
+	/** 通过：可携带办理阶段表单数据合并进流程变量（经 skip 内部 mergeVariable 持久化；写门控剔除只读/隐藏字段） */
+	public String pass(Long taskId, String message, Map<String, Object> variable) {
+		Task task = requireTaskInTenant(taskId);
+		FlowParams params = base().skipType("PASS").message(text(message, "同意"));
+		Map<String, Object> safe = sanitizeVariable(task, variable);
+		if (!safe.isEmpty()) {
+			params.variable(safe);
+		}
+		Instance ins = FlowEngine.taskService().skip(taskId, params);
+		return ins.getFlowStatus();
+	}
+
+	/** 写门控：按节点字段权限剔除 READ/NONE 字段；未配置权限时禁止覆盖实例已有变量键（防篡改发起数据/条件字段伪造路径） */
+	private Map<String, Object> sanitizeVariable(Task task, Map<String, Object> variable) {
+		if (variable == null || variable.isEmpty()) {
+			return Map.of();
+		}
+		Row node = firstRow("select ext as \"ext\" from flow_node "
+			+ "where definition_id = ? and node_code = ? and coalesce(del_flag,'0') <> '1'",
+			task.getDefinitionId(), task.getNodeCode());
+		Map<String, String> perms = node == null ? Map.of() : parseFieldPerms(node.getString("ext"));
+		Map<String, Object> out = new LinkedHashMap<>(variable);
+		if (perms.isEmpty()) {
+			// 默认 fail-closed：未声明字段权限的节点只允许新增键，不得覆盖已存在的流程变量
+			Instance ins = FlowEngine.insService().getById(task.getInstanceId());
+			if (ins != null && ins.getVariableMap() != null) {
+				out.keySet().removeAll(ins.getVariableMap().keySet());
+			}
+			return out;
+		}
+		perms.forEach((field, perm) -> {
+			if (FlowConstants.FIELD_PERM_READ.equals(perm) || FlowConstants.FIELD_PERM_NONE.equals(perm)) {
+				out.remove(field);
+			}
+		});
+		return out;
+	}
+
+	/** 退回上一步（实例存活、回退，非终止作废） */
+	public String rejectLast(Long taskId, String message) {
+		requireTaskInTenant(taskId);
+		Instance ins = FlowEngine.taskService().rejectLast(taskId,
+			base().message(text(message, "退回上一步")));
+		return ins.getFlowStatus();
+	}
+
+	/** 退回指定节点：引擎对 REJECT 加 nodeCode 不看方向，目标是结束节点时直接办结，所以只放行 backNodes 规则内的节点 */
+	public String rejectToNode(Long taskId, String nodeCode, String message) {
+		Task task = requireTaskInTenant(taskId);
+		if (nodeCode == null || nodeCode.isBlank()) {
+			throw new ServiceException("请选择退回节点");
+		}
+		boolean allowed = backNodeRows(task.getInstanceId(), task.getDefinitionId(), List.of(task.getNodeCode()))
+			.stream().anyMatch(r -> nodeCode.equals(r.getString("nodeCode")));
+		if (!allowed) {
+			throw new ServiceException("只能退回到前面已经办过的审批节点。请从可退回的节点里重新选择");
+		}
+		Instance ins = FlowEngine.taskService().skip(taskId,
+			base().skipType("REJECT").nodeCode(nodeCode).message(text(message, "退回")));
+		return ins.getFlowStatus();
+	}
+
+	/** 撤回（仅发起人，引擎校验 handler == 实例 createBy） */
+	public String revoke(Long instanceId, String message) {
+		Instance ins = FlowEngine.insService().getById(instanceId);
+		if (ins == null) {
+			throw new ServiceException("流程实例不存在。请刷新列表，核对单号后再看");
+		}
+		assertInstanceTenant(ins);
+		Instance r = FlowEngine.taskService().revoke(instanceId,
+			FlowParams.build().handler(uid()).message(text(message, "撤回")));
+		return r.getFlowStatus();
+	}
+
+	/** 作废（终止整个实例，语义独立于退回） */
+	public String terminate(Long taskId, String message) {
+		requireTaskInTenant(taskId);
+		Instance ins = FlowEngine.taskService().termination(taskId,
+			base().message(text(message, "作废")));
+		return ins.getFlowStatus();
+	}
+
+	/** 转办/委派/加签/减签 单入口：目标办理人 handlers（减签为要移除的人）；目标须为本租户用户 */
+	public String taskOperation(Long taskId, String op, List<String> handlers, String message) {
+		String action = opName(op);
+		if (action == null) {
+			throw new ServiceException("请选择转办、委派、加签或减签");
+		}
+		if (message != null && message.trim().length() > 200) {
+			throw new ServiceException("审批意见请控制在 200 个字以内");
+		}
+		List<String> people = handlers == null ? List.of() : handlers.stream()
+			.filter(h -> h != null && !h.isBlank()).distinct().toList();
+		if (people.isEmpty()) {
+			throw new ServiceException("请先选择办理人。可以按用户名或昵称搜索");
+		}
+		if (people.size() > 20) {
+			throw new ServiceException("一次最多选择 20 人。请减少后再提交");
+		}
+		requireTaskInTenant(taskId);
+		assertHandlersInTenant(people);
+		FlowParams p = base().message(text(message, action));
+		try {
+			switch (op) {
+				case "transfer" -> FlowEngine.taskService().transfer(taskId, p.addHandlers(people));
+				case "depute" -> FlowEngine.taskService().depute(taskId, p.addHandlers(people));
+				case "addSignature" -> FlowEngine.taskService().addSignature(taskId, p.addHandlers(people));
+				case "reductionSignature" -> FlowEngine.taskService().reductionSignature(taskId, p.reductionHandlers(people));
+				default -> throw new ServiceException("请选择转办、委派、加签或减签");
+			}
+		} catch (ServiceException e) {
+			throw e;
+		} catch (RuntimeException e) {
+			log.warn("流程人员调整失败 {}", e.getClass().getSimpleName());
+			throw new ServiceException("这次" + action + "没有完成。请刷新待办，确认任务还在，并重新选择本租户的办理人后再试");
+		}
+		return switch (op) {
+			case "transfer" -> "已转办给 " + people.size() + " 人。请让对方到待办里继续办理";
+			case "depute" -> "已委派给 " + people.size() + " 人。请让对方到待办里办理";
+			case "addSignature" -> "已加签 " + people.size() + " 人。他们可以在待办里看到";
+			default -> "已减签 " + people.size() + " 人。请刷新待办，确认当前办理人";
+		};
+	}
+
+	/** 抄送（应用层）：仅当前任务办理人可发起（与 taskButtons 同口径，防 IDOR 自我授权读实例）；
+	 *  被抄送人须为本租户用户。 */
+	public String copyTo(Long taskId, List<String> userIds) {
+		List<String> people = userIds == null ? List.of() : userIds.stream()
+			.filter(u -> u != null && !u.isBlank()).distinct().toList();
+		if (people.isEmpty()) {
+			throw new ServiceException("请先选择抄送人。可以按用户名或昵称搜索");
+		}
+		if (people.size() > 20) {
+			throw new ServiceException("一次最多抄送 20 人。请减少后再提交");
+		}
+		Task task = requireTaskInTenant(taskId);
+		if (!isHandlerOrPlatformAdmin(taskId)) {
+			throw new ServiceException("只有这条待办的办理人可以抄送。请刷新列表，确认它还在你的待办里");
+		}
+		assertHandlersInTenant(people);
+		Long instanceId = task.getInstanceId();
+		for (String u : people) {
+			Db.updateBySql(RuntimeSql.insertFlowUser(DbDialects.current()),
+				IdUtil.getSnowflakeNextId(), USER_TYPE_COPY, u, instanceId);
+		}
+		return "已抄送给 " + people.size() + " 人。他们可以在我的抄送里看到";
+	}
+
+	/**
+	 * 转办、委派、加签、减签、抄送的候选人：只有这条待办的当前办理人（或平台超管）能取，不看用户管理的权限码，也不套数据范围。
+	 * 范围是当前租户的启用用户，和办理时对目标人的校验（{@link #assertHandlersInTenant}）一致：
+	 * 办理人本来就能把待办交给本租户任何一个人，这里只是让他按名字选，不用手填用户 id。
+	 */
+	public List<Map<String, Object>> taskUserOptions(Long taskId, String keyword) {
+		requireTaskInTenant(taskId);
+		if (!isHandlerOrPlatformAdmin(taskId)) {
+			throw new ServiceException("只有这条待办的办理人可以选人。请刷新列表，确认它还在你的待办里");
+		}
+		return UserSelectOptions.of(userMapper.selectListByQuery(UserSelectOptions.query(keyword, null)));
+	}
+
+	/** 当前用户是这条待办的办理人（审批人、被转办人、被委派人，按角色码或用户 id 对上），或者是平台超管 */
+	private boolean isHandlerOrPlatformAdmin(Long taskId) {
+		List<String> flags = userFlags();
+		boolean handler = Db.selectListBySql(
+			"select u.processed_by as \"v\" from flow_user u "
+				+ "where u.associated = ? and u.type in ('1','2','3') and coalesce(u.del_flag,'0') <> '1'", taskId)
+			.stream().map(r -> r.getString("v")).anyMatch(flags::contains);
+		return handler || com.mugsun.boot.tenant.TenantContext.isPlatformSuperAdmin();
+	}
+
+	/** 目标办理人/被抄送人归属校验：数字 id 须为本租户用户（角色码等非 id 标识交引擎匹配，租户边界由实例归属保证） */
+	private void assertHandlersInTenant(List<String> handlers) {
+		String tenant = com.mugsun.boot.tenant.TenantContext.current();
+		if (tenant == null) {
+			return;
+		}
+		for (String h : handlers) {
+			if (h == null || !h.matches("^\\d+$")) {
+				continue;
+			}
+			boolean inTenant = !Db.selectListBySql(
+				"select 1 from " + sysUserTable() + " where " + DbDialects.current().castVarchar("id")
+					+ " = ? and tenant_id = ? and is_deleted = 0"
+					+ DbDialects.current().limitOne(),
+				h, tenant).isEmpty();
+			if (!inTenant) {
+				throw new ServiceException("有办理人不存在，或不属于当前租户。请重新选择后再提交");
+			}
+		}
+	}
+
+	// ==================== 守卫 / 工具 ====================
+
+	/** 校验任务存在且待办（已办任务已流转至历史，flow_task 查无即非法流转） */
+	private Task requireTask(Long taskId) {
+		Task t = FlowEngine.taskService().getById(taskId);
+		if (t == null) {
+			throw new ServiceException("这条待办不存在，或已经办完。请刷新列表后再操作");
+		}
+		return t;
+	}
+
+	/**
+	 * 参与人访问校验（防越权读 IDOR）：先按实例发起人租户隔离，再判 发起人/当前办理人/历史办理人/被抄送人/平台超管。
+	 * my-* 列表已按当前用户 scope，故仅按 instanceId/taskId 拉数据的读端点需此守卫。
+	 */
+	private void assertInstanceAccess(Long instanceId) {
+		if (instanceId == null) {
+			throw new ServiceException("流程实例不存在。请刷新列表，核对单号后再看");
+		}
+		Instance ins = FlowEngine.insService().getById(instanceId);
+		if (ins == null) {
+			throw new ServiceException("流程实例不存在。请刷新列表，核对单号后再看");
+		}
+		// 租户隔离：实例归属发起人所属租户，跨租户一律按不存在（角色码跨租户同名不可作为穿透凭据）
+		assertInstanceTenant(ins);
+		String me = uid();
+		if (me.equals(ins.getCreateBy())) {
+			return;
+		}
+		// 管理员旁路仅限平台超管（各租户内置管理员角色码同为 admin，不能跨租户兜底）
+		if (com.mugsun.boot.tenant.TenantContext.isPlatformSuperAdmin()) {
+			return;
+		}
+		List<String> flags = userFlags();
+		// 当前办理人（flow_user 关联本实例任务）或被抄送人（type='C' 关联实例）
+		String in = flags.stream().map(f -> "?").collect(Collectors.joining(","));
+		List<Object> args = new ArrayList<>(flags);
+		args.add(instanceId);
+		args.add(instanceId);
+		boolean participant = !Db.selectListBySql(
+			"select 1 from flow_user u where coalesce(u.del_flag,'0') <> '1' and u.processed_by in (" + in + ") "
+				+ "and (u.associated = ? or u.associated in (select id from flow_task where instance_id = ?))"
+				+ DbDialects.current().limitOne(),
+			args.toArray()).isEmpty();
+		// 历史办理人
+		boolean handledBefore = !Db.selectListBySql(
+			"select 1 from flow_his_task where instance_id = ? and approver = ?"
+				+ DbDialects.current().limitOne(), instanceId, me).isEmpty();
+		if (!participant && !handledBefore) {
+			throw new ServiceException("无权查看该流程。请换有权限的账号打开，或回到自己的待办列表");
+		}
+	}
+
+	/** 实例租户归属：发起人必须是当前租户成员（超管「查看全部」视图放行）；不满足即按不存在处理 */
+	private void assertInstanceTenant(Instance ins) {
+		String tenant = com.mugsun.boot.tenant.TenantContext.current();
+		if (tenant == null) {
+			return;
+		}
+		boolean inTenant = !Db.selectListBySql(
+			"select 1 from " + sysUserTable() + " where " + DbDialects.current().castVarchar("id")
+				+ " = ? and tenant_id = ? and is_deleted = 0"
+				+ DbDialects.current().limitOne(),
+			ins.getCreateBy(), tenant).isEmpty();
+		if (!inTenant) {
+			throw new ServiceException("流程实例不存在。请刷新列表，核对单号后再看");
+		}
+	}
+
+	/** 任务动作前置：任务存在 + 实例租户归属（审批动作统一先过此闸，再交引擎校验办理人） */
+	private Task requireTaskInTenant(Long taskId) {
+		Task task = requireTask(taskId);
+		Instance ins = FlowEngine.insService().getById(task.getInstanceId());
+		if (ins == null) {
+			throw new ServiceException("流程实例不存在。请刷新列表，核对单号后再看");
+		}
+		assertInstanceTenant(ins);
+		return task;
+	}
+
+	/** 实例租户过滤 SQL 片段（my-* 列表用）：发起人属当前租户；超管「查看全部」返回 null 不加条件 */
+	private String tenantPredicate() {
+		String tenant = com.mugsun.boot.tenant.TenantContext.current();
+		if (tenant == null) {
+			return null;
+		}
+		return creatorInTenantSql();
+	}
+
+	/** 「发起人属于某个租户」的 SQL 片段，租户号由调用方作为参数传入 */
+	private String creatorInTenantSql() {
+		// 子查询列必须表别名限定：金仓/PG 在多表 JOIN 下裸 id 会报「字段关联不明确」
+		return "i.create_by in (select " + DbDialects.current().castVarchar("su.id") + " from " + sysUserTable()
+			+ " su where su.tenant_id = ? and su.is_deleted = 0)";
+	}
+
+	/** 引擎办理参数基座：当前办理人 + 权限标识集（ignore 默认 false → 引擎校验办理权限） */
+	private FlowParams base() {
+		return FlowParams.build().handler(uid()).permissionFlag(userFlags());
+	}
+
+	private String uid() {
+		return StpUtil.getLoginIdAsString();
+	}
+
+	/** 当前用户的办理人标识集合：角色码 + 用户 id */
+	private List<String> userFlags() {
+		List<String> flags = new ArrayList<>();
+		Db.selectListBySql(
+			"select r.role_code as \"roleCode\" from " + bizTable("sys_user_role") + " ur "
+				+ "join " + bizTable("sys_role") + " r on r.id = ur.role_id "
+				+ "where ur.user_id = ? and ur.is_deleted = 0", StpUtil.getLoginIdAsLong())
+			.forEach(row -> flags.add(String.valueOf(row.getString("roleCode"))));
+		flags.add(uid());
+		return flags;
+	}
+
+	private String text(String message, String fallback) {
+		return message == null || message.isBlank() ? fallback : message;
+	}
+
+	private String opName(String op) {
+		return switch (op) {
+			case "transfer" -> "转办";
+			case "depute" -> "委派";
+			case "addSignature" -> "加签";
+			case "reductionSignature" -> "减签";
+			default -> null;
+		};
+	}
+}

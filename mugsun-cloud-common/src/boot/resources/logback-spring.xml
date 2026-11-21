@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  日志收口配置：控制台 + 落盘双通道，级别段注入 traceId（TraceIdFilter 写 MDC）。
+  - 落盘路径默认 ./logs，可用 logging.file.path / logging.file.name 覆盖；
+  - 全量日志按天 + 单文件 100MB 双滚动，保留 30 天、总量 5GB 封顶；
+  - error 单独成文件（排障第一现场），保留 90 天；
+  - 容器化采集 stdout 场景可直接忽略文件通道（文件同时写不影响 console 采集）；
+  - demo profile 额外有 ACCESS 访问日志（AccessLogFilter）：单独文件、按天滚动 gzip，默认保留 200 天，不设总量上限（totalSizeCap 会在不满 180 天时删归档），
+    磁盘余量由 AccessLogCapacityMonitor 告警，
+    只进这个文件不进主日志；目录与保留可用 mugsun.demo.access-log.* 覆盖。留存 ≥6 个月（《网络安全法》第二十一条），
+    务必把日志目录挂到持久卷并纳入备份。
+    #79 tradeoff：极端流量下可能丢少量访问日志，优先保证请求不被阻塞。
+-->
+<configuration>
+	<include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+	<!-- 级别段带 traceId：须在 defaults.xml 之后、appender 引用之前定义（Boot 的 ${X:-default} 占位由此覆盖生效） -->
+	<property name="LOG_LEVEL_PATTERN" value="%5p [%X{traceId}]"/>
+	<springProperty scope="context" name="LOG_PATH" source="logging.file.path" defaultValue="./logs"/>
+	<springProperty scope="context" name="LOG_FILE" source="logging.file.name" defaultValue="mugsun-boot"/>
+
+	<include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+	<appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+		<file>${LOG_PATH}/${LOG_FILE}.log</file>
+		<encoder>
+			<pattern>${FILE_LOG_PATTERN}</pattern>
+			<charset>UTF-8</charset>
+		</encoder>
+		<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+			<fileNamePattern>${LOG_PATH}/${LOG_FILE}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+			<maxFileSize>100MB</maxFileSize>
+			<maxHistory>30</maxHistory>
+			<totalSizeCap>5GB</totalSizeCap>
+			<cleanHistoryOnStart>true</cleanHistoryOnStart>
+		</rollingPolicy>
+	</appender>
+
+	<appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+		<file>${LOG_PATH}/${LOG_FILE}-error.log</file>
+		<filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+			<level>ERROR</level>
+		</filter>
+		<encoder>
+			<pattern>${FILE_LOG_PATTERN}</pattern>
+			<charset>UTF-8</charset>
+		</encoder>
+		<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+			<fileNamePattern>${LOG_PATH}/${LOG_FILE}-error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+			<maxFileSize>100MB</maxFileSize>
+			<maxHistory>90</maxHistory>
+			<totalSizeCap>2GB</totalSizeCap>
+			<cleanHistoryOnStart>true</cleanHistoryOnStart>
+		</rollingPolicy>
+	</appender>
+
+	<springProfile name="demo">
+		<springProperty scope="context" name="ACCESS_LOG_PATH" source="mugsun.demo.access-log.path" defaultValue="${LOG_PATH}"/>
+		<springProperty scope="context" name="ACCESS_MAX_HISTORY" source="mugsun.demo.access-log.max-history" defaultValue="200"/>
+		<appender name="ACCESS_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+			<file>${ACCESS_LOG_PATH}/${LOG_FILE}-access.log</file>
+			<encoder>
+				<pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %msg%n</pattern>
+				<charset>UTF-8</charset>
+			</encoder>
+			<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+				<fileNamePattern>${ACCESS_LOG_PATH}/${LOG_FILE}-access.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+				<maxFileSize>200MB</maxFileSize>
+				<maxHistory>${ACCESS_MAX_HISTORY}</maxHistory>
+				<!-- 留存 ≥180 天是硬要求：不设 totalSizeCap，只按天数删除 -->
+			</rollingPolicy>
+		</appender>
+		<!-- 访问日志异步写盘（#79 AccessLogAsyncAppender）：
+		     队列满时最多等待 offerTimeoutMs（默认 50ms），仍写不进则丢弃并计数+限频 WARN。
+		     极端流量优先不堵请求，可能丢少量访问日志；指标 mugsun.demo.access_log.dropped。
+		     discardingThreshold=0：不按级别提前丢；入队由自定义 append 做有时限 offer。 -->
+		<springProperty scope="context" name="ACCESS_OFFER_TIMEOUT_MS"
+			source="mugsun.demo.access-log.offer-timeout-ms" defaultValue="50"/>
+		<springProperty scope="context" name="ACCESS_DROP_WARN_INTERVAL_MS"
+			source="mugsun.demo.access-log.drop-warn-interval-ms" defaultValue="60000"/>
+		<appender name="ACCESS_ASYNC" class="com.mugsun.boot.monitor.AccessLogAsyncAppender">
+			<queueSize>8192</queueSize>
+			<discardingThreshold>0</discardingThreshold>
+			<offerTimeoutMs>${ACCESS_OFFER_TIMEOUT_MS}</offerTimeoutMs>
+			<dropWarnIntervalMs>${ACCESS_DROP_WARN_INTERVAL_MS}</dropWarnIntervalMs>
+			<includeCallerData>false</includeCallerData>
+			<appender-ref ref="ACCESS_FILE"/>
+		</appender>
+		<logger name="ACCESS" level="INFO" additivity="false">
+			<appender-ref ref="ACCESS_ASYNC"/>
+		</logger>
+
+		<!-- demo：CSP 违规报告单独文件（不冲刷主日志），按天 + 50MB 滚动 gzip，保留 30 天、总量 1GB -->
+		<appender name="CSP_REPORT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+			<file>${LOG_PATH}/${LOG_FILE}-csp-report.log</file>
+			<encoder>
+				<pattern>%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %msg%n</pattern>
+				<charset>UTF-8</charset>
+			</encoder>
+			<rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+				<fileNamePattern>${LOG_PATH}/${LOG_FILE}-csp-report.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+				<maxFileSize>50MB</maxFileSize>
+				<maxHistory>30</maxHistory>
+				<totalSizeCap>1GB</totalSizeCap>
+			</rollingPolicy>
+		</appender>
+		<logger name="mugsun.csp-report" level="INFO" additivity="false">
+			<appender-ref ref="CSP_REPORT_FILE"/>
+		</logger>
+	</springProfile>
+
+	<root level="INFO">
+		<appender-ref ref="CONSOLE"/>
+		<appender-ref ref="FILE"/>
+		<appender-ref ref="ERROR_FILE"/>
+	</root>
+</configuration>

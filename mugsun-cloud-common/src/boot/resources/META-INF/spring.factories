@@ -1,0 +1,8 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.mugsun.boot.monitor.AccessLogRetentionEnvironmentPostProcessor,\
+com.mugsun.boot.config.RedisDevFallbackEnvironmentPostProcessor,\
+com.mugsun.boot.config.JetCacheRedisUriEnvironmentPostProcessor
+
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+com.mugsun.boot.common.module.ModuleSwitchFailureAnalyzer,\
+com.mugsun.boot.common.setting.InvalidSettingFailureAnalyzer

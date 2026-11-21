@@ -1,0 +1,84 @@
+package com.mugsun.boot.security;
+
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * multipart 白名单（{@link MultipartAuthFilter}）：只有这里列出的 servletPath 允许 multipart，且必须已登录。
+ * <p>按规范化后的 servletPath 精确比对（区分大小写，不支持通配和路径变量，所以上传接口不能带 {id} 之类的变量）。
+ * 新增上传接口时把路径追加到 {@code mugsun.security.multipart.allowed-paths}；启动时 {@link MultipartEndpointAudit}
+ * 会对照识别出的 multipart 接口：漏配（接口需要 multipart 但不在白名单）打 WARN，多配（白名单里的路径当前没有
+ * 对应接口，例如可选模块未装配）打 INFO。
+ * <p>注意：在 yml 里写这个列表是整体替换，要把默认的 7 条一起写上。
+ * <p>启动校验（{@link #validate}）：空串、不以 / 开头、含 * 、含 .. 、含 ; 、含 { 或 } 的条目一律拒绝启动，
+ * 防止误配成通配或无法精确命中的路径。
+ */
+@Component
+@ConfigurationProperties(prefix = "mugsun.security.multipart")
+public class MultipartGuardProperties implements InitializingBean {
+
+	/** 默认 7 个上传接口：附件、头像、正文图片、用户导入、行政区导入、sourcemap、知识库资料 */
+	public static final List<String> DEFAULT_ALLOWED_PATHS = List.of(
+		"/system/file/upload",
+		"/auth/avatar/upload",
+		"/system/richtext/image/upload",
+		"/system/user/import",
+		"/system/region/import",
+		"/system/track/sourcemap/upload",
+		"/system/ai/knowledge/asset/upload-file");
+
+	private List<String> allowedPaths = new ArrayList<>(DEFAULT_ALLOWED_PATHS);
+
+	public List<String> getAllowedPaths() {
+		return allowedPaths;
+	}
+
+	public void setAllowedPaths(List<String> allowedPaths) {
+		this.allowedPaths = allowedPaths == null ? new ArrayList<>() : allowedPaths;
+	}
+
+	@Override
+	public void afterPropertiesSet() {
+		validate(allowedPaths);
+	}
+
+	/** 逐条校验，任何一条不合规就抛异常（容器启动失败） */
+	public static void validate(List<String> paths) {
+		for (int i = 0; i < paths.size(); i++) {
+			String reason = invalidReason(paths.get(i));
+			if (reason != null) {
+				throw new IllegalStateException("mugsun.security.multipart.allowed-paths[" + i + "] = \""
+					+ paths.get(i) + "\" 不合法：" + reason + "。只能写精确的 servletPath，如 /system/file/upload");
+			}
+		}
+	}
+
+	static String invalidReason(String path) {
+		if (path == null || path.isBlank()) {
+			return "不能为空";
+		}
+		if (!path.equals(path.strip())) {
+			return "首尾不能有空白";
+		}
+		if (!path.startsWith("/")) {
+			return "必须以 / 开头";
+		}
+		if (path.contains("*")) {
+			return "不支持通配符 * 或 **";
+		}
+		if (path.contains("..")) {
+			return "不能含 ..";
+		}
+		if (path.contains(";")) {
+			return "不能含 ;";
+		}
+		if (path.contains("{") || path.contains("}")) {
+			return "不支持路径变量 { }";
+		}
+		return null;
+	}
+}

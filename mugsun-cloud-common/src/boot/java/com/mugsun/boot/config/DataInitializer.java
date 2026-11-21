@@ -1,0 +1,586 @@
+package com.mugsun.boot.config;
+
+import com.mugsun.boot.demo.ConditionalOnNotDemo;
+
+import com.mugsun.boot.common.constant.RoleConstants;
+import com.mugsun.boot.common.constant.TenantConstants;
+import com.mugsun.boot.common.constant.UserConstants;
+import com.mugsun.boot.tenant.TenantContext;
+import com.mugsun.boot.system.entity.SysMenu;
+import com.mugsun.boot.system.entity.SysRole;
+import com.mugsun.boot.system.entity.SysRoleMenu;
+import com.mugsun.boot.system.entity.SysUser;
+import com.mugsun.boot.system.entity.SysUserRole;
+import com.mugsun.boot.system.mapper.SysMenuMapper;
+import com.mugsun.boot.system.mapper.SysRoleMapper;
+import com.mugsun.boot.system.mapper.SysRoleMenuMapper;
+import com.mugsun.boot.system.mapper.SysUserMapper;
+import com.mugsun.boot.system.mapper.SysUserRoleMapper;
+import com.mybatisflex.core.query.QueryWrapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Component;
+
+/**
+ * 初始化数据：首次启动创建超级管理员及其角色、菜单权限；
+ * 幂等播种内置普通用户角色（自助注册默认归属）。
+ */
+@Component
+@ConditionalOnNotDemo
+public class DataInitializer implements CommandLineRunner {
+
+	private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
+
+	private final SysUserMapper userMapper;
+	private final SysRoleMapper roleMapper;
+	private final SysMenuMapper menuMapper;
+	private final SysUserRoleMapper userRoleMapper;
+	private final SysRoleMenuMapper roleMenuMapper;
+	private final PasswordEncoder passwordEncoder;
+	private final com.mugsun.boot.security.SecurityPolicyService securityPolicyService;
+	private final com.mugsun.boot.system.mapper.SysTenantMapper tenantMapper;
+
+	/** 开发/联调：幂等播种低权账号 fronttest（sec 探针与 e2e 约定密码 123456） */
+	@Value("${mugsun.lab.seed-fronttest:false}")
+	private boolean seedFronttest;
+
+	public DataInitializer(SysUserMapper userMapper, SysRoleMapper roleMapper, SysMenuMapper menuMapper,
+						   SysUserRoleMapper userRoleMapper, SysRoleMenuMapper roleMenuMapper,
+						   PasswordEncoder passwordEncoder,
+						   com.mugsun.boot.security.SecurityPolicyService securityPolicyService,
+						   com.mugsun.boot.system.mapper.SysTenantMapper tenantMapper) {
+		this.userMapper = userMapper;
+		this.roleMapper = roleMapper;
+		this.menuMapper = menuMapper;
+		this.userRoleMapper = userRoleMapper;
+		this.roleMenuMapper = roleMenuMapper;
+		this.passwordEncoder = passwordEncoder;
+		this.securityPolicyService = securityPolicyService;
+		this.tenantMapper = tenantMapper;
+	}
+
+	@Override
+	public void run(String... args) {
+		// 启动初始化写平台租户表，无会话上下文——经中心忽略入口显式声明，规避 fail-closed
+		TenantContext.ignore(() -> {
+			seedPlatformTenantName();
+			seed();
+			seedCommonRole();
+			seedFronttestUser();
+			reanchorSeedMenus();
+			seedTopMenuPage();
+			seedDataScopePage();
+			seedApiScopePage();
+			seedApiKeyLogButton();
+			seedUsualLogPage();
+			seedDataAuditPermission();
+			seedJobServerPage();
+			seedFlowRunningPage();
+			seedGenDatasourcePage();
+			seedGenSchemePage();
+			seedSerialNumberPage();
+			seedNotifyPages();
+			return null;
+		});
+	}
+
+	/** 平台租户的默认名称（UX-013） */
+	static final String PLATFORM_TENANT_NAME = "平台租户";
+
+	/**
+	 * 平台租户（000000）补名称，幂等：没有这一行就补一行，有但名称为空就补名称，已有名称一律不动。
+	 * 不加 Flyway 迁移（V4–V6 已被在审 PR 预留、且不允许乱序），三种方言共用同一段 mapper 写法。
+	 * 多实例同时启动时靠 sys_tenant.tenant_code 唯一索引兜底，插入冲突只记日志。
+	 */
+	void seedPlatformTenantName() {
+		try {
+			com.mugsun.boot.system.entity.SysTenant exist = tenantMapper.selectOneByQuery(
+				QueryWrapper.create().eq("tenant_code", TenantConstants.DEFAULT_TENANT_ID));
+			if (exist == null) {
+				com.mugsun.boot.system.entity.SysTenant t = new com.mugsun.boot.system.entity.SysTenant();
+				t.setTenantCode(TenantConstants.DEFAULT_TENANT_ID);
+				t.setTenantName(PLATFORM_TENANT_NAME);
+				t.setStatus(1);
+				t.setAccountCount(-1);
+				tenantMapper.insertSelective(t);
+				log.info("已补平台租户 {}「{}」", TenantConstants.DEFAULT_TENANT_ID, PLATFORM_TENANT_NAME);
+			} else if (exist.getTenantName() == null || exist.getTenantName().isBlank()) {
+				com.mugsun.boot.system.entity.SysTenant upd =
+					com.mybatisflex.core.util.UpdateEntity.of(com.mugsun.boot.system.entity.SysTenant.class, exist.getId());
+				upd.setTenantName(PLATFORM_TENANT_NAME);
+				tenantMapper.update(upd);
+				log.info("已补平台租户 {} 的名称「{}」", TenantConstants.DEFAULT_TENANT_ID, PLATFORM_TENANT_NAME);
+			}
+		} catch (Exception e) {
+			log.warn("补平台租户名称跳过：{}", e.getMessage());
+		}
+	}
+
+	/**
+	 * 联调低权用户：挂普通用户角色（无管理写权限），供 api-probe sec / 浏览器越权对照。
+	 */
+	private void seedFronttestUser() {
+		if (!seedFronttest) {
+			return;
+		}
+		if (userMapper.selectCountByQuery(QueryWrapper.create().eq("username", "fronttest")) > 0) {
+			return;
+		}
+		seedCommonRole();
+		SysRole common = roleMapper.selectOneByQuery(QueryWrapper.create()
+			.eq("role_code", RoleConstants.USER)
+			.eq("tenant_id", TenantConstants.DEFAULT_TENANT_ID));
+		if (common == null) {
+			return;
+		}
+		SysUser u = new SysUser();
+		u.setUsername("fronttest");
+		u.setPassword(passwordEncoder.encode("123456"));
+		u.setMustChangePassword(0);
+		u.setNickname("前端测试");
+		u.setStatus(1);
+		u.setIsLeader(0);
+		u.setTenantId(TenantConstants.DEFAULT_TENANT_ID);
+		try {
+			userMapper.insert(u);
+			SysUserRole ur = new SysUserRole();
+			ur.setUserId(u.getId());
+			ur.setRoleId(common.getId());
+			userRoleMapper.insert(ur);
+		} catch (Exception e) {
+			log.warn("播种 fronttest 跳过（可能已存在或唯一约束差异）：{}", e.getMessage());
+		}
+	}
+
+	/**
+	 * 播种内置普通用户角色（幂等，存量库也补）：自助注册的默认归属角色，
+	 * 仅本人数据范围、无任何权限码——注册即可登录见工作台，又不碰管理面。
+	 */
+	private void seedCommonRole() {
+		long exists = roleMapper.selectCountByQuery(QueryWrapper.create()
+			.eq("role_code", RoleConstants.USER)
+			.eq("tenant_id", TenantConstants.DEFAULT_TENANT_ID));
+		if (exists > 0) {
+			return;
+		}
+		SysRole commonRole = new SysRole();
+		commonRole.setRoleName("普通用户");
+		commonRole.setRoleCode(RoleConstants.USER);
+		commonRole.setSort(9);
+		commonRole.setDataScope(com.mugsun.boot.common.constant.DataScopeConstants.SELF);
+		commonRole.setTenantId(TenantConstants.DEFAULT_TENANT_ID);
+		roleMapper.insert(commonRole);
+	}
+
+	/**
+	 * 种子按钮/授权重锚（幂等）：V39/V45/V46 迁移含硬编码雪花 ID，全新环境播种菜单 ID 不同会悬空——
+	 * 启动时按业务键（permission/role_code）把种子菜单挂回真实父菜单、授权挂回 datatest 角色。
+	 */
+	private void reanchorSeedMenus() {
+		String menu = BizTables.of("sys_menu");
+		String role = BizTables.of("sys_role");
+		String roleMenu = BizTables.of("sys_role_menu");
+		String lim = com.mugsun.boot.gen.DbDialects.current().limitOne();
+		com.mybatisflex.core.row.Db.updateBySql(
+			"UPDATE " + menu + " SET parent_id = (SELECT id FROM " + menu
+				+ " WHERE permission = 'sys:user:list' AND is_deleted = 0" + lim + ") "
+				+ "WHERE permission IN ('sys:user:add','sys:user:edit','sys:user:remove','sys:user:grant','sys:user:reset',"
+				+ "'sys:user:phone','sys:user:phone:plain','sys:user:idcard','sys:user:idcard:plain') AND is_deleted = 0 "
+				+ "AND EXISTS (SELECT 1 FROM " + menu + " WHERE permission = 'sys:user:list' AND is_deleted = 0)");
+		com.mybatisflex.core.row.Db.updateBySql(
+			"UPDATE " + menu + " SET parent_id = (SELECT parent_id FROM " + menu
+				+ " WHERE permission = 'sys:user:list' AND is_deleted = 0" + lim + ") "
+				+ "WHERE permission = 'sys:gen:list' AND is_deleted = 0 "
+				+ "AND EXISTS (SELECT 1 FROM " + menu + " WHERE permission = 'sys:user:list' AND is_deleted = 0)");
+		com.mybatisflex.core.row.Db.updateBySql(
+			"UPDATE " + roleMenu + " SET role_id = (SELECT id FROM " + role
+				+ " WHERE role_code = 'datatest' AND is_deleted = 0" + lim + ") "
+				+ "WHERE menu_id IN (SELECT id FROM " + menu
+				+ " WHERE permission IN ('sys:user:add','sys:user:phone') AND is_deleted = 0) "
+				+ "AND is_deleted = 0 AND role_id NOT IN (SELECT id FROM " + role + ") "
+				+ "AND EXISTS (SELECT 1 FROM " + role + " WHERE role_code = 'datatest' AND is_deleted = 0)");
+	}
+
+	/** 顶部菜单方案页。基线已灌过的库靠这里补菜单和按钮权限。 */
+	private void seedTopMenuPage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/top-menu"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000143L);
+			page.setParentId(parent.getId());
+			page.setMenuName("顶部菜单");
+			page.setPath("/system/top-menu");
+			page.setComponent("/system/top-menu");
+			page.setMenuType("C");
+			page.setPermission("sys:top-menu:list");
+			page.setSort(43);
+			page.setIcon("ri:layout-top-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000144L, "保存顶部菜单", "sys:top-menu:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000145L, "删除顶部菜单", "sys:top-menu:remove", 2);
+		seedMenuButton(page.getId(), 1200000000000000146L, "配置顶部菜单", "sys:top-menu:grant", 3);
+	}
+
+	/** 数据权限规则页。基线已灌过的库靠这里补菜单和按钮权限。 */
+	private void seedDataScopePage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/data-scope"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000147L);
+			page.setParentId(parent.getId());
+			page.setMenuName("数据权限");
+			page.setPath("/system/data-scope");
+			page.setComponent("/system/data-scope");
+			page.setMenuType("C");
+			page.setPermission("sys:data-scope:list");
+			page.setSort(44);
+			page.setIcon("ri:shield-keyhole-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000148L, "保存数据权限", "sys:data-scope:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000149L, "删除数据权限", "sys:data-scope:remove", 2);
+	}
+
+	/** 接口权限页。基线已灌过的库靠这里补菜单和按钮权限。 */
+	private void seedApiScopePage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/api-scope"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000150L);
+			page.setParentId(parent.getId());
+			page.setMenuName("接口权限");
+			page.setPath("/system/api-scope");
+			page.setComponent("/system/api-scope");
+			page.setMenuType("C");
+			page.setPermission("sys:api-scope:list");
+			page.setSort(45);
+			page.setIcon("ri:route-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000151L, "保存接口权限", "sys:api-scope:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000152L, "删除接口权限", "sys:api-scope:remove", 2);
+		seedMenuButton(page.getId(), 1200000000000000153L, "授权接口权限", "sys:api-scope:grant", 3);
+	}
+
+	/** 密钥页上的调用记录按钮。基线已灌过的库靠这里补权限码。 */
+	private void seedApiKeyLogButton() {
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/open-platform/api-key"));
+		if (page == null) {
+			page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("component", "/system/api-key"));
+		}
+		if (page == null) {
+			return;
+		}
+		seedMenuButton(page.getId(), 1200000000000000154L, "查看密钥调用记录", "sys:api-key:log", 4);
+	}
+
+	/** 通用日志页。基线已灌过的库靠这里补菜单。 */
+	private void seedUsualLogPage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/usual-log"));
+		if (page != null) {
+			return;
+		}
+		page = new SysMenu();
+		page.setId(1200000000000000155L);
+		page.setParentId(parent.getId());
+		page.setMenuName("通用日志");
+		page.setPath("/system/usual-log");
+		page.setComponent("/system/usual-log");
+		page.setMenuType("C");
+		page.setPermission("sys:usual-log:list");
+		page.setSort(46);
+		page.setIcon("ri:file-list-2-line");
+		page.setIsPublic(0);
+		page.setIsHide(0);
+		menuMapper.insert(page);
+	}
+
+	/** 变更记录页补上查看权限。已有菜单但权限为空时补上，避免打开页面却被拒绝。 */
+	private void seedDataAuditPermission() {
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/data-audit"));
+		if (page == null || (page.getPermission() != null && !page.getPermission().isBlank())) {
+			return;
+		}
+		page.setPermission("sys:data-audit:list");
+		menuMapper.update(page);
+	}
+
+	/** 任务服务页。基线已灌过的库靠这里补菜单和按钮。 */
+	private void seedJobServerPage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/job-server"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000156L);
+			page.setParentId(parent.getId());
+			page.setMenuName("任务服务");
+			page.setPath("/system/job-server");
+			page.setComponent("/system/job-server");
+			page.setMenuType("C");
+			page.setPermission("sys:job-server:list");
+			page.setSort(27);
+			page.setIcon("ri:server-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000157L, "保存任务服务", "sys:job-server:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000158L, "删除任务服务", "sys:job-server:remove", 2);
+		seedMenuButton(page.getId(), 1200000000000000159L, "同步任务服务", "sys:job-server:sync", 3);
+	}
+
+	/** 正在办理的流程。基线已灌过的库靠这里补菜单和按钮。 */
+	private void seedFlowRunningPage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/flow-running"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000160L);
+			page.setParentId(parent.getId());
+			page.setMenuName("运行中的流程");
+			page.setPath("/system/flow-running");
+			page.setComponent("/system/flow-running");
+			page.setMenuType("C");
+			page.setPermission("sys:flow:running");
+			page.setSort(28);
+			page.setIcon("ri:git-commit-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000161L, "终止运行中的流程", "sys:flow:running:terminate", 1);
+		seedMenuButton(page.getId(), 1200000000000000162L, "挂起或恢复流程", "sys:flow:running:active", 2);
+	}
+
+	private void seedGenDatasourcePage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/gen-datasource"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000163L);
+			page.setParentId(parent.getId());
+			page.setMenuName("生成数据源");
+			page.setPath("/system/gen-datasource");
+			page.setComponent("/system/gen-datasource");
+			page.setMenuType("C");
+			page.setPermission("sys:gen-ds:list");
+			page.setSort(19);
+			page.setIcon("ri:database-2-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000164L, "保存生成数据源", "sys:gen-ds:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000165L, "删除生成数据源", "sys:gen-ds:remove", 2);
+		seedMenuButton(page.getId(), 1200000000000000166L, "测试生成数据源", "sys:gen-ds:test", 3);
+	}
+
+	private void seedGenSchemePage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/gen-scheme"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000167L);
+			page.setParentId(parent.getId());
+			page.setMenuName("生成方案");
+			page.setPath("/system/gen-scheme");
+			page.setComponent("/system/gen-scheme");
+			page.setMenuType("C");
+			page.setPermission("sys:gen-scheme:list");
+			page.setSort(18);
+			page.setIcon("ri:settings-4-line");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000168L, "保存生成方案", "sys:gen-scheme:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000169L, "删除生成方案", "sys:gen-scheme:remove", 2);
+		seedMenuButton(page.getId(), 1200000000000000170L, "启用生成方案", "sys:gen-scheme:enable", 3);
+	}
+
+	/** 单号规则页。基线已灌过的库靠这里补菜单和按钮。 */
+	private void seedSerialNumberPage() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu page = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/serial-number"));
+		if (page == null) {
+			page = new SysMenu();
+			page.setId(1200000000000000171L);
+			page.setParentId(parent.getId());
+			page.setMenuName("单号规则");
+			page.setPath("/system/serial-number");
+			page.setComponent("/system/serial-number");
+			page.setMenuType("C");
+			page.setPermission("sys:serial:list");
+			page.setSort(43);
+			page.setIcon("ri:hashtag");
+			page.setIsPublic(0);
+			page.setIsHide(0);
+			menuMapper.insert(page);
+		} else if (page.getPermission() == null || page.getPermission().isBlank()) {
+			page.setPermission("sys:serial:list");
+			menuMapper.update(page);
+		}
+		seedMenuButton(page.getId(), 1200000000000000172L, "保存单号规则", "sys:serial:save", 1);
+		seedMenuButton(page.getId(), 1200000000000000173L, "删除单号规则", "sys:serial:remove", 2);
+		seedMenuButton(page.getId(), 1200000000000000174L, "生成单号", "sys:serial:generate", 3);
+	}
+
+	/** 通知渠道和通知模板页。基线已灌过的库靠这里补菜单和按钮。 */
+	private void seedNotifyPages() {
+		SysMenu parent = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (parent == null) {
+			return;
+		}
+		SysMenu channel = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/notify-channel"));
+		if (channel == null) {
+			channel = new SysMenu();
+			channel.setId(1200000000000000175L);
+			channel.setParentId(parent.getId());
+			channel.setMenuName("通知渠道");
+			channel.setPath("/system/notify-channel");
+			channel.setComponent("/system/notify-channel");
+			channel.setMenuType("C");
+			channel.setPermission("sys:notify-channel:list");
+			channel.setSort(44);
+			channel.setIcon("ri:router-line");
+			channel.setIsPublic(0);
+			channel.setIsHide(0);
+			menuMapper.insert(channel);
+		}
+		seedMenuButton(channel.getId(), 1200000000000000176L, "保存通知渠道", "sys:notify-channel:save", 1);
+		seedMenuButton(channel.getId(), 1200000000000000177L, "删除通知渠道", "sys:notify-channel:remove", 2);
+		SysMenu template = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/notify-template"));
+		if (template == null) {
+			template = new SysMenu();
+			template.setId(1200000000000000178L);
+			template.setParentId(parent.getId());
+			template.setMenuName("通知模板");
+			template.setPath("/system/notify-template");
+			template.setComponent("/system/notify-template");
+			template.setMenuType("C");
+			template.setPermission("sys:notify:list");
+			template.setSort(45);
+			template.setIcon("ri:draft-line");
+			template.setIsPublic(0);
+			template.setIsHide(0);
+			menuMapper.insert(template);
+		}
+		seedMenuButton(template.getId(), 1200000000000000179L, "保存通知模板", "sys:notify:save", 1);
+		seedMenuButton(template.getId(), 1200000000000000180L, "删除通知模板", "sys:notify:remove", 2);
+	}
+
+	private void seedMenuButton(Long parentId, Long id, String name, String permission, int sort) {
+		if (menuMapper.selectCountByQuery(QueryWrapper.create().eq("permission", permission)) > 0) {
+			return;
+		}
+		SysMenu button = new SysMenu();
+		button.setId(id);
+		button.setParentId(parentId);
+		button.setMenuName(name);
+		button.setMenuType("F");
+		button.setPermission(permission);
+		button.setSort(sort);
+		button.setIsPublic(0);
+		button.setIsHide(0);
+		menuMapper.insert(button);
+	}
+
+	private void seed() {
+		if (userMapper.selectCountByQuery(QueryWrapper.create().eq("username", UserConstants.ADMIN_USERNAME)) > 0) {
+			return;
+		}
+		// 角色
+		SysRole adminRole = new SysRole();
+		adminRole.setRoleName("超级管理员");
+		adminRole.setRoleCode(RoleConstants.ADMIN);
+		adminRole.setSort(1);
+		adminRole.setDataScope(com.mugsun.boot.common.constant.DataScopeConstants.ALL);
+		adminRole.setTenantId(TenantConstants.DEFAULT_TENANT_ID);
+		roleMapper.insert(adminRole);
+		// 菜单：系统管理 > 用户管理（V60 迁移可能已播种，按 path 幂等复用，防重复目录）
+		SysMenu systemMenu = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system"));
+		if (systemMenu == null) {
+			systemMenu = new SysMenu();
+			systemMenu.setParentId(0L);
+			systemMenu.setMenuName("系统管理");
+			systemMenu.setPath("/system");
+			systemMenu.setMenuType("M");
+			systemMenu.setSort(1);
+			menuMapper.insert(systemMenu);
+		}
+		SysMenu userMenu = menuMapper.selectOneByQuery(QueryWrapper.create().eq("path", "/system/user"));
+		if (userMenu == null) {
+			userMenu = new SysMenu();
+			userMenu.setParentId(systemMenu.getId());
+			userMenu.setMenuName("用户管理");
+			userMenu.setPath("/system/user");
+			userMenu.setMenuType("M");
+			userMenu.setPermission("sys:user:list");
+			userMenu.setSort(1);
+			menuMapper.insert(userMenu);
+		}
+		// 管理员用户
+		SysUser admin = new SysUser();
+		admin.setUsername(UserConstants.ADMIN_USERNAME);
+		admin.setPassword(passwordEncoder.encode(securityPolicyService.getInitPassword()));
+		admin.setMustChangePassword(1);
+		admin.setNickname("超级管理员");
+		admin.setStatus(1);
+		admin.setIsLeader(0);
+		admin.setTenantId(TenantConstants.DEFAULT_TENANT_ID);
+		userMapper.insert(admin);
+		// 用户-角色
+		SysUserRole userRole = new SysUserRole();
+		userRole.setUserId(admin.getId());
+		userRole.setRoleId(adminRole.getId());
+		userRoleMapper.insert(userRole);
+		// 角色-菜单
+		for (Long menuId : new Long[]{systemMenu.getId(), userMenu.getId()}) {
+			SysRoleMenu roleMenu = new SysRoleMenu();
+			roleMenu.setRoleId(adminRole.getId());
+			roleMenu.setMenuId(menuId);
+			roleMenuMapper.insert(roleMenu);
+		}
+	}
+}

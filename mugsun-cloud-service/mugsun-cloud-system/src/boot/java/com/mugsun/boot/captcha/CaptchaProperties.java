@@ -1,0 +1,326 @@
+package com.mugsun.boot.captcha;
+
+import com.mugsun.boot.common.setting.InvalidSettingException;
+import com.mugsun.boot.common.setting.StrictEnumSetting;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+/**
+ * 行为验证码配置（前缀 {@code mugsun.captcha}）。
+ * <p>v0.6.3 起旧的数字图形验证码（{@code type=IMAGE}、{@code GET /auth/captcha}）已移除；
+ * {@code default-types} 与旧键 {@code type} 在启动时按 {@link StrictEnumSetting} 严格解析，非法值（含 IMAGE）启动失败。
+ */
+@Component
+@ConfigurationProperties(prefix = "mugsun.captcha")
+public class CaptchaProperties implements InitializingBean {
+
+	private static final Logger log = LoggerFactory.getLogger(CaptchaProperties.class);
+
+	public static final String PROP_TYPE = "mugsun.captcha.type";
+	public static final String PROP_DEFAULT_TYPES = "mugsun.captcha.default-types";
+	public static final String PROP_SEED_WARP_STRENGTH = "mugsun.captcha.click.seed-warp-strength";
+
+	/**
+	 * 平台默认启用的题型：五种全开（滑块、词语点选、旋转、图标点选、拼图还原），每次随机出一种（config 返回 RANDOM）。
+	 * 旋转 / 图标点选只能部分抵御自动求解，与其它题型一起随机出、不单独使用
+	 * （同时改 application.yml、application-demo.yml 的 default-types，CaptchaDefaultTypesTest 校验三处一致）。
+	 */
+	public static final java.util.List<String> PLATFORM_DEFAULT_TYPES = java.util.List.of("SLIDER", "WORD_CLICK", "ROTATE", "ICON_CLICK", "JIGSAW");
+
+	/** 已移除的取值 → 改法 */
+	public static final java.util.Map<String, String> REMOVED_TYPES = java.util.Map.of("IMAGE",
+		"旧的数字图形验证码（IMAGE）已在 v0.6.3 移除。请删掉这个取值，改用 SLIDER、WORD_CLICK 等行为验证码题型；"
+			+ "要关闭全部验证码请设 mugsun.captcha.enabled=false");
+
+	/** 旧键 {@code type} 唯一还认的取值：SLIDER（等同于不写） */
+	public enum LegacyType { SLIDER }
+
+	/** 全局开关（关闭 = 所有场景都不要验证码；prod 默认 true） */
+	private boolean enabled = true;
+	/**
+	 * 已废弃：v0.6.3 前用于在 SLIDER 与旧数字码 IMAGE 之间切换。现在只认 SLIDER（无作用，启动打 WARN），
+	 * IMAGE 与其它值启动失败。题型由 {@link #defaultTypes} 与租户设置决定。
+	 */
+	private String type;
+	/** 存储：redis（默认，集群）| memory（单机/开发；prod profile 禁用） */
+	private String store = "redis";
+	private final Slider slider = new Slider();
+	private final Background background = new Background();
+	private final RateLimit rateLimit = new RateLimit();
+	/** 租户未单独配置启用类型时的默认集合（默认五种全开：SLIDER,WORD_CLICK,ROTATE,ICON_CLICK,JIGSAW） */
+	private java.util.List<String> defaultTypes = new java.util.ArrayList<>(PLATFORM_DEFAULT_TYPES);
+	private final Rotate rotate = new Rotate();
+	private final Click click = new Click();
+	private final Jigsaw jigsaw = new Jigsaw();
+	/** 图标目录（classpath: 或 file:），须含 manifest.json 与 <slug>.png；生产建议换成私有图库 */
+	private String iconDir = "classpath:captcha/icons/";
+	/** 出图并发上限（本节点），超限 40012；≤0 不限 */
+	private int renderMaxConcurrent = 16;
+	/** 等待出图许可的最长毫秒数 */
+	private long renderAcquireTimeoutMs = 200;
+
+	public boolean isEnabled() { return enabled; }
+	public void setEnabled(boolean enabled) { this.enabled = enabled; }
+	public String getType() { return type; }
+	public void setType(String type) { this.type = type; }
+	public String getStore() { return store; }
+	public void setStore(String store) { this.store = store; }
+	public Slider getSlider() { return slider; }
+	public Background getBackground() { return background; }
+	public RateLimit getRateLimit() { return rateLimit; }
+	public java.util.List<String> getDefaultTypes() { return defaultTypes; }
+	public void setDefaultTypes(java.util.List<String> defaultTypes) { this.defaultTypes = defaultTypes; }
+	public Rotate getRotate() { return rotate; }
+	public Click getClick() { return click; }
+	public Jigsaw getJigsaw() { return jigsaw; }
+	public String getIconDir() { return iconDir; }
+	public void setIconDir(String iconDir) { this.iconDir = iconDir; }
+	public int getRenderMaxConcurrent() { return renderMaxConcurrent; }
+	public void setRenderMaxConcurrent(int v) { this.renderMaxConcurrent = v; }
+	public long getRenderAcquireTimeoutMs() { return renderAcquireTimeoutMs; }
+	public void setRenderAcquireTimeoutMs(long v) { this.renderAcquireTimeoutMs = v; }
+
+	/** 旋转题：圆图直径（原始像素）、容差（度）、键盘步长（度）、最小初始偏转角 */
+	public static class Rotate {
+		static final int OFFSET_DEFAULT = 0;
+		private String dir = "classpath:captcha/rotate/";
+		private int pieceSize = 160;
+		private int toleranceDeg = 10;
+		private int keyboardStep = 5;
+		private int minAngle = 30;
+		/** pointer 轨迹重放去重窗口（秒），≤0 关闭 */
+		private long trackReplayWindowSeconds = 600;
+		/** 孔位置相对取圆处的随机偏移上限（像素）；实际偏移幅度在 [ceil(上限/2), 上限]、方向随机；0 关闭 */
+		private int holeOffsetPx = OFFSET_DEFAULT;
+		public int getHoleOffsetPx() { return holeOffsetPx; }
+		public void setHoleOffsetPx(int holeOffsetPx) { this.holeOffsetPx = holeOffsetPx; }
+
+		public String getDir() { return dir; }
+		public void setDir(String dir) { this.dir = dir; }
+		public int getPieceSize() { return pieceSize; }
+		public void setPieceSize(int v) { this.pieceSize = v; }
+		public int getToleranceDeg() { return toleranceDeg; }
+		public void setToleranceDeg(int v) { this.toleranceDeg = v; }
+		public int getKeyboardStep() { return keyboardStep; }
+		public void setKeyboardStep(int v) { this.keyboardStep = v; }
+		public int getMinAngle() { return minAngle; }
+		public void setMinAngle(int v) { this.minAngle = v; }
+		public long getTrackReplayWindowSeconds() { return trackReplayWindowSeconds; }
+		public void setTrackReplayWindowSeconds(long v) { this.trackReplayWindowSeconds = v; }
+	}
+
+	/** 文字/图标点选：目标数、干扰数、命中半径下限、时长范围 */
+	public static class Click {
+		private int count = 3;
+		private int decoys = 2;
+		private int minRadiusPx = 22;
+		private long minDurationMs = 400;
+		private long maxDurationMs = 30000;
+		/** WORD_CLICK 私有词库（classpath: 或 file:，每行一个 3–4 字词，# 注释）；空 = 内置 captcha/words.txt */
+		private String wordsFile;
+		/** 与 IconSeedWarp.warp 钳位上限一致 */
+		public static final double SEED_WARP_STRENGTH_MAX = 0.35;
+		/**
+		 * ICON_CLICK seed-warp 最大位移相对图标短边比例（#77）。
+		 * 默认 0.14；0=关闭形变。合法区间 [0, {@link #SEED_WARP_STRENGTH_MAX}]，
+		 * 与渲染钳位一致；越界在 {@link CaptchaProperties#validate()} 钳回。不做 R7-1 高对比。
+		 */
+		private double seedWarpStrength = 0.14;
+
+		public int getCount() { return count; }
+		public void setCount(int v) { this.count = v; }
+		public int getDecoys() { return decoys; }
+		public void setDecoys(int v) { this.decoys = v; }
+		public int getMinRadiusPx() { return minRadiusPx; }
+		public void setMinRadiusPx(int v) { this.minRadiusPx = v; }
+		public long getMinDurationMs() { return minDurationMs; }
+		public void setMinDurationMs(long v) { this.minDurationMs = v; }
+		public long getMaxDurationMs() { return maxDurationMs; }
+		public void setMaxDurationMs(long v) { this.maxDurationMs = v; }
+		public String getWordsFile() { return wordsFile; }
+		public void setWordsFile(String v) { this.wordsFile = v; }
+		public double getSeedWarpStrength() { return seedWarpStrength; }
+		public void setSeedWarpStrength(double v) { this.seedWarpStrength = v; }
+	}
+
+	/** 拼图还原：行列数（2×2 起） */
+	public static class Jigsaw {
+		private int rows = 2;
+		private int cols = 2;
+
+		public int getRows() { return rows; }
+		public void setRows(int v) { this.rows = Math.max(2, Math.min(4, v)); }
+		public int getCols() { return cols; }
+		public void setCols(int v) { this.cols = Math.max(2, Math.min(4, v)); }
+	}
+
+	/** 绑定完成后严格校验 {@code type} 与 {@code default-types}，非法值抛 {@link InvalidSettingException}，启动失败 */
+	@Override
+	public void afterPropertiesSet() {
+		validate();
+	}
+
+	/** 见 {@link #afterPropertiesSet()}；返回解析后的平台默认题型 */
+	public java.util.Set<CaptchaType> validate() {
+		if (StrictEnumSetting.parseOne(PROP_TYPE, type, LegacyType.class, REMOVED_TYPES) != null) {
+			log.warn("配置项 {} 已废弃且不再起作用（题型由 {} 与租户设置决定），请删掉这一项", PROP_TYPE, PROP_DEFAULT_TYPES);
+		}
+		clampSeedWarpStrength();
+		return StrictEnumSetting.parseList(PROP_DEFAULT_TYPES, defaultTypes, CaptchaType.class, REMOVED_TYPES);
+	}
+
+	/**
+	 * 将 {@code click.seed-warp-strength} 钳到 [0, {@link Click#SEED_WARP_STRENGTH_MAX}]（#77）。
+	 * 与渲染侧 {@code IconSeedWarp.warp} 一致；NaN / 无穷启动失败。
+	 */
+	private void clampSeedWarpStrength() {
+		double raw = click.getSeedWarpStrength();
+		if (Double.isNaN(raw) || Double.isInfinite(raw)) {
+			throw new InvalidSettingException(PROP_SEED_WARP_STRENGTH, String.valueOf(raw),
+				"须为 [0, " + Click.SEED_WARP_STRENGTH_MAX + "] 的有限数；0=关闭形变");
+		}
+		double clamped = Math.max(0, Math.min(Click.SEED_WARP_STRENGTH_MAX, raw));
+		if (clamped != raw) {
+			log.warn("配置项 {}={} 已钳到 [0, {}] → {}", PROP_SEED_WARP_STRENGTH, raw,
+				Click.SEED_WARP_STRENGTH_MAX, clamped);
+			click.setSeedWarpStrength(clamped);
+		}
+	}
+
+	public static class Slider {
+		/** 底图原始尺寸 */
+		private int width = 320;
+		private int height = 180;
+		/** 拼图块主体边长（不含凸起） */
+		private int pieceSize = 46;
+		/** 挑战有效期（秒） */
+		private long expireSeconds = 120;
+		/** captchaToken 有效期（秒） */
+		private long tokenExpireSeconds = 120;
+		/** 落点容差（底图原始像素） */
+		private int tolerancePx = 6;
+		/** 服务端计时下限：verify 到达时间 - 签发时间 ≥ 该值 */
+		private long minDurationMs = 300;
+		private long maxDurationMs = 15000;
+		private int minTrackPoints = 8;
+		private int maxTrackPoints = 400;
+		/** 键盘模式：时长下限、按键次数区间 */
+		private long keyboardMinDurationMs = 600;
+		private int keyboardMinKeyPresses = 3;
+		private int keyboardMaxKeyPresses = 300;
+		/** 键盘模式每次按键位移（底图原始像素），challenge 下发给前端 */
+		private int keyboardStepPx = 4;
+		/** 假缺口数量（0–2） */
+		private int decoyCount = 2;
+		/** token 是否强制绑定 IP / UA 哈希（默认仅记录） */
+		private boolean bindIp = false;
+		private boolean bindUa = false;
+
+		public int getWidth() { return width; }
+		public void setWidth(int width) { this.width = width; }
+		public int getHeight() { return height; }
+		public void setHeight(int height) { this.height = height; }
+		public int getPieceSize() { return pieceSize; }
+		public void setPieceSize(int pieceSize) { this.pieceSize = pieceSize; }
+		public long getExpireSeconds() { return expireSeconds; }
+		public void setExpireSeconds(long expireSeconds) { this.expireSeconds = expireSeconds; }
+		public long getTokenExpireSeconds() { return tokenExpireSeconds; }
+		public void setTokenExpireSeconds(long tokenExpireSeconds) { this.tokenExpireSeconds = tokenExpireSeconds; }
+		public int getTolerancePx() { return tolerancePx; }
+		public void setTolerancePx(int tolerancePx) { this.tolerancePx = tolerancePx; }
+		public long getMinDurationMs() { return minDurationMs; }
+		public void setMinDurationMs(long minDurationMs) { this.minDurationMs = minDurationMs; }
+		public long getMaxDurationMs() { return maxDurationMs; }
+		public void setMaxDurationMs(long maxDurationMs) { this.maxDurationMs = maxDurationMs; }
+		public int getMinTrackPoints() { return minTrackPoints; }
+		public void setMinTrackPoints(int minTrackPoints) { this.minTrackPoints = minTrackPoints; }
+		public int getMaxTrackPoints() { return maxTrackPoints; }
+		public void setMaxTrackPoints(int maxTrackPoints) { this.maxTrackPoints = maxTrackPoints; }
+		public long getKeyboardMinDurationMs() { return keyboardMinDurationMs; }
+		public void setKeyboardMinDurationMs(long v) { this.keyboardMinDurationMs = v; }
+		public int getKeyboardMinKeyPresses() { return keyboardMinKeyPresses; }
+		public void setKeyboardMinKeyPresses(int v) { this.keyboardMinKeyPresses = v; }
+		public int getKeyboardMaxKeyPresses() { return keyboardMaxKeyPresses; }
+		public void setKeyboardMaxKeyPresses(int v) { this.keyboardMaxKeyPresses = v; }
+		public int getKeyboardStepPx() { return keyboardStepPx; }
+		public void setKeyboardStepPx(int v) { this.keyboardStepPx = v; }
+		public int getDecoyCount() { return decoyCount; }
+		public void setDecoyCount(int decoyCount) { this.decoyCount = decoyCount; }
+		public boolean isBindIp() { return bindIp; }
+		public void setBindIp(boolean bindIp) { this.bindIp = bindIp; }
+		public boolean isBindUa() { return bindUa; }
+		public void setBindUa(boolean bindUa) { this.bindUa = bindUa; }
+	}
+
+	public static class Background {
+		/** 背景图目录（classpath: 或 file:），支持 jpg/jpeg/png；为空时用纯色占位 */
+		private String dir = "classpath:captcha/bg/";
+		/** 轮换：random | round-robin */
+		private String rotate = "random";
+		/** 目录重新扫描间隔（秒），0 = 只在启动时加载 */
+		private long reloadSeconds = 600;
+		/** 占位底色 */
+		private String placeholderColor = "#E6F4FF";
+
+		public String getDir() { return dir; }
+		public void setDir(String dir) { this.dir = dir; }
+		public String getRotate() { return rotate; }
+		public void setRotate(String rotate) { this.rotate = rotate; }
+		public long getReloadSeconds() { return reloadSeconds; }
+		public void setReloadSeconds(long reloadSeconds) { this.reloadSeconds = reloadSeconds; }
+		public String getPlaceholderColor() { return placeholderColor; }
+		public void setPlaceholderColor(String placeholderColor) { this.placeholderColor = placeholderColor; }
+	}
+
+	public static class RateLimit {
+		/** 单 IP 每分钟可取挑战次数 */
+		private int challengePerMinute = 30;
+		/** 每秒挑战生成全局上限（redis 存储时跨节点计数；memory 存储时为单节点） */
+		private int globalChallengePerSecond = 200;
+		/** 指针模式：窗口内失败上限 */
+		private int verifyFailMax = 5;
+		/** 键盘模式：窗口内失败上限（更严） */
+		private int keyboardFailMax = 3;
+		/** 键盘模式：单 IP 每分钟校验次数上限 */
+		private int keyboardVerifyPerMinute = 6;
+		/** 键盘模式：单 IP 每分钟取题上限（比 challenge-per-minute 更严） */
+		private int keyboardChallengePerMinute = 10;
+		private long failWindowSeconds = 600;
+		private long lockSeconds = 600;
+		/** 发送短信验证码：单手机号每天上限、单 IP 每小时上限（叠加原有同号 60s 节流） */
+		private int smsPhonePerDay = 10;
+		private int smsIpPerHour = 20;
+		/** 发送短信短窗口频率限制（对所有 sms-code 请求计数，含无 token；60 秒窗口自动恢复） */
+		private int smsPhonePerMinute = 5;
+		private int smsIpPerMinute = 30;
+
+		public int getSmsPhonePerMinute() { return smsPhonePerMinute; }
+		public void setSmsPhonePerMinute(int v) { this.smsPhonePerMinute = v; }
+		public int getSmsIpPerMinute() { return smsIpPerMinute; }
+		public void setSmsIpPerMinute(int v) { this.smsIpPerMinute = v; }
+
+		public int getChallengePerMinute() { return challengePerMinute; }
+		public void setChallengePerMinute(int v) { this.challengePerMinute = v; }
+		public int getGlobalChallengePerSecond() { return globalChallengePerSecond; }
+		public void setGlobalChallengePerSecond(int v) { this.globalChallengePerSecond = v; }
+		public int getVerifyFailMax() { return verifyFailMax; }
+		public void setVerifyFailMax(int v) { this.verifyFailMax = v; }
+		public int getKeyboardFailMax() { return keyboardFailMax; }
+		public void setKeyboardFailMax(int v) { this.keyboardFailMax = v; }
+		public int getKeyboardVerifyPerMinute() { return keyboardVerifyPerMinute; }
+		public void setKeyboardVerifyPerMinute(int v) { this.keyboardVerifyPerMinute = v; }
+		public int getKeyboardChallengePerMinute() { return keyboardChallengePerMinute; }
+		public void setKeyboardChallengePerMinute(int v) { this.keyboardChallengePerMinute = v; }
+		public long getFailWindowSeconds() { return failWindowSeconds; }
+		public void setFailWindowSeconds(long v) { this.failWindowSeconds = v; }
+		public int getSmsPhonePerDay() { return smsPhonePerDay; }
+		public void setSmsPhonePerDay(int v) { this.smsPhonePerDay = v; }
+		public int getSmsIpPerHour() { return smsIpPerHour; }
+		public void setSmsIpPerHour(int v) { this.smsIpPerHour = v; }
+		public long getLockSeconds() { return lockSeconds; }
+		public void setLockSeconds(long v) { this.lockSeconds = v; }
+	}
+}

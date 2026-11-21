@@ -1,0 +1,884 @@
+package com.mugsun.boot.system.controller;
+
+import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.stp.StpUtil;
+import com.mugsun.boot.common.constant.FieldMaskConstants;
+import com.mugsun.boot.common.repeat.RepeatSubmit;
+import com.mugsun.boot.common.constant.UserConstants;
+import com.mugsun.boot.datascope.DataScope;
+import com.mugsun.boot.datascope.DataScopeContext;
+import com.mugsun.boot.log.AuditService;
+import com.mugsun.boot.log.OperationLog;
+import com.mugsun.boot.notify.api.NotifySendApi;
+import com.mugsun.boot.system.entity.SysUser;
+import com.mugsun.boot.system.entity.SysUserRole;
+import com.mugsun.boot.system.excel.SysUserExcel;
+import com.mugsun.boot.system.excel.SysUserExportExcel;
+import com.mugsun.boot.system.mapper.SysUserMapper;
+import com.mugsun.boot.system.mapper.SysUserRoleMapper;
+import com.mugsun.boot.system.service.UserSelectOptions;
+import com.mugsun.boot.system.payload.StatusParam;
+import com.mugsun.boot.system.payload.UserGrantParam;
+import com.mugsun.boot.system.payload.UserImportResult;
+import com.mugsun.core.tool.api.R;
+import com.mugsun.core.web.excel.ExcelUtil;
+import com.mybatisflex.core.paginate.Page;
+import com.mybatisflex.core.query.QueryColumn;
+import com.mybatisflex.core.query.QueryWrapper;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.List;
+import java.util.Map;
+import com.mugsun.boot.tenant.TenantContext;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * 用户管理
+ */
+@RestController
+@RequestMapping("/system/user")
+@SaCheckLogin
+public class SysUserController {
+
+	private static final Logger log = LoggerFactory.getLogger(SysUserController.class);
+
+	private final SysUserMapper userMapper;
+	private final PasswordEncoder passwordEncoder;
+	private final AuditService auditService;
+	private final SysUserRoleMapper userRoleMapper;
+	private final com.mugsun.boot.system.mapper.SysRoleMapper roleMapper;
+	private final com.mugsun.boot.system.mapper.SysDeptMapper deptMapper;
+	private final com.mugsun.boot.system.mapper.SysPostMapper postMapper;
+	private final com.mugsun.boot.security.SecurityPolicyService securityPolicyService;
+	private final NotifySendApi notifySendApi;
+	private final com.mugsun.boot.auth.LoginLockService loginLockService;
+	private final com.mugsun.boot.log.UsualLogService usualLogService;
+	private final com.mugsun.boot.system.service.SysUserManageService userManageService;
+	private final com.mugsun.boot.system.service.UserRoleAssignGuard roleAssignGuard;
+	private final com.mugsun.boot.system.service.UserDataScopeGuard dataScopeGuard;
+
+	public SysUserController(SysUserMapper userMapper, PasswordEncoder passwordEncoder, AuditService auditService,
+							 SysUserRoleMapper userRoleMapper,
+							 com.mugsun.boot.system.mapper.SysRoleMapper roleMapper,
+							 com.mugsun.boot.system.mapper.SysDeptMapper deptMapper,
+							 com.mugsun.boot.system.mapper.SysPostMapper postMapper,
+							 com.mugsun.boot.security.SecurityPolicyService securityPolicyService,
+							 NotifySendApi notifySendApi,
+							 com.mugsun.boot.auth.LoginLockService loginLockService,
+							 com.mugsun.boot.log.UsualLogService usualLogService,
+							 com.mugsun.boot.system.service.SysUserManageService userManageService,
+							 com.mugsun.boot.system.service.UserRoleAssignGuard roleAssignGuard,
+							 com.mugsun.boot.system.service.UserDataScopeGuard dataScopeGuard) {
+		this.userMapper = userMapper;
+		this.passwordEncoder = passwordEncoder;
+		this.auditService = auditService;
+		this.userRoleMapper = userRoleMapper;
+		this.roleMapper = roleMapper;
+		this.deptMapper = deptMapper;
+		this.postMapper = postMapper;
+		this.securityPolicyService = securityPolicyService;
+		this.notifySendApi = notifySendApi;
+		this.loginLockService = loginLockService;
+		this.usualLogService = usualLogService;
+		this.userManageService = userManageService;
+		this.roleAssignGuard = roleAssignGuard;
+		this.dataScopeGuard = dataScopeGuard;
+	}
+
+	@GetMapping("/page")
+	@SaCheckPermission("sys:user:list")
+	@DataScope
+	public R<Page<SysUser>> page(@RequestParam(defaultValue = "1") long pageNum,
+								 @RequestParam(defaultValue = "10") long pageSize,
+								 @RequestParam(required = false) String username,
+								 @RequestParam(required = false) String nickname,
+								 @RequestParam(required = false) String phone,
+								 @RequestParam(required = false) Integer status,
+								 @RequestParam(required = false) Long deptId) {
+		QueryWrapper query = buildUserQuery(username, nickname, phone, status, deptId);
+		// 行级数据权限：@DataScope 激活后由数据权限方言自动注入 OR 并集条件（无需手工 apply）
+		Page<SysUser> page = userMapper.paginate(pageNum, pageSize, query);
+		// 密码脱敏
+		page.getRecords().forEach(u -> u.setPassword(null));
+		enrichOrg(page.getRecords());
+		return R.data(page);
+	}
+
+	/** 用户列表查询条件构造（page 与 export 共用：值走参数化绑定，LIKE 前后模糊） */
+	private QueryWrapper buildUserQuery(String username, String nickname, String phone, Integer status, Long deptId) {
+		QueryWrapper query = QueryWrapper.create().orderBy("id", false);
+		if (username != null && !username.isBlank()) {
+			query.like("username", username.trim());
+		}
+		if (nickname != null && !nickname.isBlank()) {
+			query.like("nickname", nickname.trim());
+		}
+		if (phone != null && !phone.isBlank()) {
+			query.like("phone", phone.trim());
+		}
+		if (status != null) {
+			query.eq("status", status);
+		}
+		if (deptId != null) {
+			query.eq("dept_id", deptId);
+		}
+		return query;
+	}
+
+	/** 组织信息富化：部门/岗位/角色名/主管名批量回填（按 id 集批量查，避免 N+1） */
+	private void enrichOrg(List<SysUser> records) {
+		if (records == null || records.isEmpty()) {
+			return;
+		}
+		java.util.Set<Long> deptIds = new java.util.HashSet<>();
+		java.util.Set<Long> postIds = new java.util.HashSet<>();
+		java.util.Set<Long> leaderIds = new java.util.HashSet<>();
+		List<Long> userIds = new java.util.ArrayList<>();
+		for (SysUser u : records) {
+			if (u.getDeptId() != null) {
+				deptIds.add(u.getDeptId());
+			}
+			if (u.getPostId() != null) {
+				postIds.add(u.getPostId());
+			}
+			if (u.getLeaderId() != null) {
+				leaderIds.add(u.getLeaderId());
+			}
+			userIds.add(u.getId());
+		}
+		Map<Long, String> deptMap = new java.util.HashMap<>();
+		if (!deptIds.isEmpty()) {
+			deptMapper.selectListByQuery(QueryWrapper.create().in("id", deptIds))
+				.forEach(d -> deptMap.put(d.getId(), d.getDeptName()));
+		}
+		Map<Long, String> postMap = new java.util.HashMap<>();
+		if (!postIds.isEmpty()) {
+			postMapper.selectListByQuery(QueryWrapper.create().in("id", postIds))
+				.forEach(p -> postMap.put(p.getId(), p.getPostName()));
+		}
+		Map<Long, String> leaderMap = new java.util.HashMap<>();
+		if (!leaderIds.isEmpty()) {
+			userMapper.selectListByQuery(QueryWrapper.create().in("id", leaderIds))
+				.forEach(l -> {
+					String label = l.getRealName() != null && !l.getRealName().isBlank()
+						? l.getRealName()
+						: (l.getNickname() != null ? l.getNickname() : l.getUsername());
+					leaderMap.put(l.getId(), label);
+				});
+		}
+		// 角色名：user_role 批量取回后按角色 id 集查名
+		List<SysUserRole> userRoles = userRoleMapper.selectListByQuery(QueryWrapper.create().in("user_id", userIds));
+		Map<Long, String> roleNameMap = new java.util.HashMap<>();
+		if (!userRoles.isEmpty()) {
+			roleMapper.selectListByQuery(QueryWrapper.create().in("id",
+					userRoles.stream().map(SysUserRole::getRoleId).distinct().toList()))
+				.forEach(r -> roleNameMap.put(r.getId(), r.getRoleName()));
+		}
+		Map<Long, List<String>> namesByUser = new java.util.HashMap<>();
+		for (SysUserRole ur : userRoles) {
+			String name = roleNameMap.get(ur.getRoleId());
+			if (name != null) {
+				namesByUser.computeIfAbsent(ur.getUserId(), k -> new java.util.ArrayList<>()).add(name);
+			}
+		}
+		for (SysUser u : records) {
+			u.setDeptName(deptMap.get(u.getDeptId()));
+			u.setPostName(postMap.get(u.getPostId()));
+			u.setLeaderName(leaderMap.get(u.getLeaderId()));
+			List<String> names = namesByUser.get(u.getId());
+			u.setRoleNames(names == null ? null : String.join("、", names));
+		}
+	}
+
+	@GetMapping("/detail")
+	@SaCheckPermission("sys:user:list")
+	@DataScope
+	public R<SysUser> detail(@RequestParam Long id) {
+		// 手机号/身份证的 明文/脱敏/不可见 由按角色决策的脱敏处理器统一裁决（绑权限码而非绑端点，与 page 表现一致）
+		// 行级：按 id 走 QueryWrapper 查询以经 @DataScope 方言注入数据范围（selectOneById 直查会绕过行级范围），越范围返 null
+		SysUser user = userMapper.selectOneByQuery(QueryWrapper.create().eq("id", id));
+		if (user == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再看");
+		}
+		user.setPassword(null);
+		// 角色回显（建档弹窗编辑态）
+		user.setRoleIds(userRoleMapper.selectListByQuery(QueryWrapper.create().eq("user_id", id))
+			.stream().map(SysUserRole::getRoleId).toList());
+		enrichOrg(List.of(user));
+		return R.data(user);
+	}
+
+	/** 部门/岗位归属校验：存在且属当前租户（防挂到他租户组织越权取数） */
+	private void assertOrgValid(SysUser user) {
+		if (user.getDeptId() != null
+			&& deptMapper.selectCountByQuery(QueryWrapper.create().eq("id", user.getDeptId())) == 0) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个部门不存在，或属于其他租户。请重新选择部门");
+		}
+		if (user.getPostId() != null
+			&& postMapper.selectCountByQuery(QueryWrapper.create().eq("id", user.getPostId())) == 0) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个岗位不存在，或属于其他租户。请重新选择岗位");
+		}
+		if (user.getLeaderId() != null) {
+			if (user.getId() != null && user.getLeaderId().equals(user.getId())) {
+				throw new com.mugsun.core.tool.exception.ServiceException("直属主管不能选自己。请改选其他人，或先不填");
+			}
+			SysUser leader = userMapper.selectOneById(user.getLeaderId());
+			if (leader == null) {
+				throw new com.mugsun.core.tool.exception.ServiceException("这位主管不存在，或属于其他租户。请重新选择");
+			}
+		}
+	}
+
+	private void normalizeUser(SysUser user) {
+		if (user.getId() == null) {
+			String username = user.getUsername() == null ? "" : user.getUsername().trim();
+			if (username.isEmpty()) {
+				throw new com.mugsun.core.tool.exception.ServiceException("请填写账号");
+			}
+			user.setUsername(username);
+			if (user.getStatus() == null) {
+				user.setStatus(1);
+			}
+		} else if (user.getUsername() != null && !user.getUsername().isBlank()) {
+			user.setUsername(user.getUsername().trim());
+		}
+		if (user.getUsername() != null && !user.getUsername().isBlank()
+			&& !user.getUsername().matches("^[A-Za-z][A-Za-z0-9_]{1,63}$")) {
+			throw new com.mugsun.core.tool.exception.ServiceException("账号请用字母开头，只能包含字母、数字和下划线，最长 64 位");
+		}
+		if (user.getStatus() != null && user.getStatus() != 0 && user.getStatus() != 1) {
+			throw new com.mugsun.core.tool.exception.ServiceException("状态只能选择启用或停用");
+		}
+		if (user.getSex() != null && user.getSex() != 0 && user.getSex() != 1 && user.getSex() != 2) {
+			throw new com.mugsun.core.tool.exception.ServiceException("性别只能选择未知、男或女");
+		}
+		if (user.getNickname() != null && user.getNickname().length() > 64) {
+			throw new com.mugsun.core.tool.exception.ServiceException("昵称请控制在 64 个字以内");
+		}
+		if (user.getRealName() != null && user.getRealName().length() > 64) {
+			throw new com.mugsun.core.tool.exception.ServiceException("真实姓名请控制在 64 个字以内");
+		}
+		if (user.getCode() != null && user.getCode().length() > 64) {
+			throw new com.mugsun.core.tool.exception.ServiceException("工号请控制在 64 个字以内");
+		}
+		if (user.getEmail() != null && !user.getEmail().isBlank()) {
+			String email = user.getEmail().trim();
+			if (email.length() > 128 || !email.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
+				throw new com.mugsun.core.tool.exception.ServiceException("邮箱格式不正确。请填写类似 name@example.com 的地址，不需要可以留空");
+			}
+			user.setEmail(email);
+		}
+		if (user.getPhone() != null && !user.getPhone().isBlank() && !user.getPhone().matches("^1\\d{10}$")) {
+			throw new com.mugsun.core.tool.exception.ServiceException("手机号请填写 11 位，以 1 开头。不需要手机号可以留空");
+		}
+	}
+
+	/** 用户下拉选项（value=id / label=昵称，供收件人选择等场景）；持码+数据范围约束，防全租户账号枚举。
+	 *  成千账号场景不下全量：默认仅返回启用用户前 {@link UserConstants#USER_SELECT_LIMIT} 条，
+	 *  keyword 远程搜索（用户名/昵称模糊）；ids 精确取（编辑回显，不限启用态/条数） */
+	@GetMapping("/select")
+	@SaCheckPermission("sys:user:list")
+	@DataScope
+	public R<List<java.util.Map<String, Object>>> select(@RequestParam(required = false) String keyword,
+			@RequestParam(required = false) List<Long> ids) {
+		return R.data(UserSelectOptions.of(userMapper.selectListByQuery(UserSelectOptions.query(keyword, ids))));
+	}
+
+	/**
+	 * 切换是否主管：is_leader 0↔1。
+	 * 标记为主管后可出现在 leader-list，供他人选直属主管。
+	 */
+	@PostMapping("/set-leader")
+	@SaCheckPermission("sys:user:edit")
+	@OperationLog("设置主管")
+	public R<Void> setLeader(@RequestParam Long userId) {
+		assertTargetOperable(userId, true);
+		SysUser user = userMapper.selectOneById(userId);
+		if (user == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再设主管");
+		}
+		int next = (user.getIsLeader() != null && user.getIsLeader() == 1) ? 0 : 1;
+		SysUser patch = new SysUser();
+		patch.setId(userId);
+		patch.setIsLeader(next);
+		patch.sanitizeForUpdate();
+		userMapper.update(patch);
+		return R.success(next == 1 ? "已设为主管" : "已取消主管");
+	}
+
+	/** 当前用户的直属主管信息（单 id；无则空列表） */
+	@GetMapping("/leader-info")
+	@SaCheckPermission("sys:user:list")
+	@DataScope
+	public R<List<SysUser>> leaderInfo(@RequestParam Long userId) {
+		SysUser user = userMapper.selectOneByQuery(QueryWrapper.create().eq("id", userId));
+		if (user == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再看主管");
+		}
+		if (user.getLeaderId() == null) {
+			return R.data(List.of());
+		}
+		SysUser leader = userMapper.selectOneByQuery(QueryWrapper.create().eq("id", user.getLeaderId()));
+		if (leader == null) {
+			return R.data(List.of());
+		}
+		leader.setPassword(null);
+		return R.data(List.of(leader));
+	}
+
+	/**
+	 * 主管候选列表（is_leader=1 且启用）：供建档选直属主管。
+	 * realName 模糊匹配真实姓名/昵称/用户名。
+	 */
+	@GetMapping("/leader-list")
+	@SaCheckPermission("sys:user:list")
+	@DataScope
+	public R<List<java.util.Map<String, Object>>> leaderList(
+			@RequestParam(required = false) String realName) {
+		QueryWrapper query = QueryWrapper.create()
+			.eq("is_leader", 1)
+			.eq("status", 1);
+		if (realName != null && !realName.isBlank()) {
+			String kw = realName.trim();
+			query.and(new QueryColumn("real_name").like(kw)
+				.or(new QueryColumn("nickname").like(kw))
+				.or(new QueryColumn("username").like(kw)));
+		}
+		query.orderBy("id", false).limit(UserConstants.USER_SELECT_LIMIT);
+		return R.data(userMapper.selectListByQuery(query).stream()
+			.map(u -> {
+				java.util.Map<String, Object> option = new java.util.HashMap<>();
+				option.put("value", u.getId());
+				String name = u.getRealName() != null && !u.getRealName().isBlank()
+					? u.getRealName()
+					: (u.getNickname() != null ? u.getNickname() : u.getUsername());
+				option.put("label", name + "（" + u.getUsername() + "）");
+				option.put("realName", name);
+				return option;
+			})
+			.toList());
+	}
+
+	@PostMapping("/submit")
+	@RepeatSubmit
+	@OperationLog("保存用户")
+	public R<java.util.Map<String, Object>> submit(@RequestBody SysUser user) {
+		// 新增走 sys:user:add，编辑走 sys:user:edit（与前端按钮门控码对齐，避免"可见却越权失败"）
+		StpUtil.checkPermission(user.getId() == null ? "sys:user:add" : "sys:user:edit");
+		// 字段级写门控（新建/编辑一致，读写权对称）：无字段明文权则不得写该敏感字段——
+		// 编辑时置 null 交 Flex update 忽略、保留原值（防"看不到明文却把脱敏串覆盖入库"的污染与越权改写）；新建时即不落该字段
+		if (!StpUtil.hasPermission(FieldMaskConstants.PERM_USER_PHONE_PLAIN)) {
+			user.setPhone(null);
+		}
+		if (!StpUtil.hasPermission(FieldMaskConstants.PERM_USER_ID_CARD_PLAIN)) {
+			user.setIdCard(null);
+		}
+		// 回写防护（编辑场景）：脱敏串（含 *）或密文形态值一律视为「未修改」置 null 交 Flex 忽略，
+		// 杜绝脱敏值污染入库与密文二次加密（读管线任何回显形态都不会毁数据）
+		if (user.getPhone() != null && user.getPhone().contains("*")) {
+			user.setPhone(null);
+		}
+		if (user.getIdCard() != null
+			&& (user.getIdCard().contains("*") || com.mugsun.boot.common.crypto.Sm4Util.looksLikeCipher(user.getIdCard()))) {
+			user.setIdCard(null);
+		}
+		boolean creating = user.getId() == null;
+		normalizeUser(user);
+		// 部门/岗位归属校验（建档挂组织，防跨租户）
+		assertOrgValid(user);
+		// 操作者的数据范围只取一次：保存前检查目标用户、保存后复核结果都用这一份
+		DataScopeContext.Ctx scope = dataScopeGuard.operatorScope();
+		String oneTimePassword = null;
+		if (creating) {
+			roleAssignGuard.assertAssignable(null, user.getRoleIds());
+			oneTimePassword = userManageService.create(user, scope);
+		} else {
+			// 审计前镜像恒脱敏读：与操作者角色无关，敏感字段永不落明文入审计
+			SysUser before = com.mugsun.boot.common.mask.FieldMaskContext.maskedRead(() -> userMapper.selectOneById(user.getId()));
+			if (before == null) {
+				throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再编辑");
+			}
+			assertTargetOperable(user.getId(), true, scope);
+			roleAssignGuard.assertAssignable(user.getId(), user.getRoleIds());
+			// 更新+数据范围复核+审计+角色同步在同一事务内（任一步失败整体回滚）
+			userManageService.update(user, before, scope);
+		}
+		if (creating && oneTimePassword != null) {
+			java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+			data.put("initialPassword", oneTimePassword);
+			R<java.util.Map<String, Object>> r = R.data(data);
+			r.setMsg("已创建。一次性口令仅此一次返回，请立刻交给对方；首次登录须改密");
+			return r;
+		}
+		if (creating) {
+			return R.success("已创建。请把账号和刚设置的密码交给对方；首次登录须改密");
+		}
+		boolean disabled = user.getStatus() != null && user.getStatus() == 0;
+		return R.success(disabled
+			? "已保存。这名用户已停用，会被踢下线，启用前不能登录"
+			: "已保存。列表里可以查看这名用户的部门和状态");
+	}
+
+	@PostMapping("/remove")
+	@SaCheckPermission("sys:user:remove")
+	@RepeatSubmit
+	@OperationLog("删除用户")
+	public R<Void> remove(@RequestBody List<Long> ids) {
+		if (ids == null || ids.isEmpty()) {
+			throw new com.mugsun.core.tool.exception.ServiceException("请先选择要删除的用户");
+		}
+		if (ids.stream().anyMatch(id -> id == null)) {
+			throw new com.mugsun.core.tool.exception.ServiceException("有用户不存在。请刷新列表后再删除");
+		}
+		List<SysUser> users = userMapper.selectListByIds(ids);
+		if (users.size() != ids.size()) {
+			throw new com.mugsun.core.tool.exception.ServiceException("有用户不存在，或已经被删除。请刷新列表后再试");
+		}
+		DataScopeContext.Ctx scope = dataScopeGuard.operatorScope();
+		for (Long id : ids) {
+			assertTargetOperable(id, false, scope);
+		}
+		// 清角色关联+删用户在同一事务内；提交后回收会话
+		userManageService.removeUsers(users);
+		return R.success("已删除 " + users.size() + " 个用户。他们不能再登录，列表里不会再出现");
+	}
+
+	/**
+	 * 导出用户（与 page 同查询条件，受 @DataScope 行级范围约束）。
+	 * 独立导出码 sys:user:export：只有列表读权（sys:user:list）不能整表导出。
+	 * 手机号导出形态由字段级权限裁决（@ColumnMask 读管线自动生效）：无查看权→空、无明文权→脱敏、有明文权→明文。
+	 */
+	@OperationLog("导出用户")
+	@GetMapping("/export")
+	@SaCheckPermission("sys:user:export")
+	@DataScope
+	public void export(HttpServletResponse response,
+					   @RequestParam(required = false) String username,
+					   @RequestParam(required = false) String nickname,
+					   @RequestParam(required = false) String phone,
+					   @RequestParam(required = false) Integer status,
+					   @RequestParam(required = false) Long deptId) {
+		List<SysUser> users = userMapper.selectListByQuery(buildUserQuery(username, nickname, phone, status, deptId));
+		enrichOrg(users);
+		List<SysUserExportExcel> rows = users.stream().map(user -> {
+			SysUserExportExcel row = new SysUserExportExcel();
+			row.setUsername(user.getUsername());
+			row.setNickname(user.getNickname());
+			row.setDeptName(user.getDeptName());
+			row.setRoleNames(user.getRoleNames());
+			row.setEmail(user.getEmail());
+			row.setPhone(user.getPhone());
+			row.setStatus(user.getStatus());
+			row.setCreateTime(user.getCreateTime());
+			return row;
+		}).toList();
+		ExcelUtil.export(response, "用户数据", "用户", rows, SysUserExportExcel.class);
+	}
+
+	/** 导入模板下载：表头 + 一行示例（权限码与导入一致：sys:user:import） */
+	@GetMapping("/import-template")
+	@SaCheckPermission("sys:user:import")
+	public void importTemplate(HttpServletResponse response) {
+		SysUserExcel example = new SysUserExcel();
+		example.setUsername("zhangsan");
+		example.setNickname("张三");
+		example.setDeptName("研发中心");
+		example.setPostName("开发工程师");
+		example.setEmail("zhangsan@example.com");
+		example.setPhone("13800000000");
+		example.setStatus(1);
+		ExcelUtil.export(response, "用户导入模板", "用户导入", List.of(example), SysUserExcel.class);
+	}
+
+	/**
+	 * 导入用户：逐行处理，单行失败不影响其余行，返回结构化成败明细。
+	 * 空用户名行整行跳过（不计成败）；格式错误（手机号不合规/状态非法）记失败行；
+	 * 已存在账号：updateSupport=false 记失败「已存在」，=true 覆盖更新 昵称/状态/邮箱/部门/岗位（不更新密码与手机号）。
+	 */
+	@PostMapping("/import")
+	@SaCheckPermission("sys:user:import")
+	@OperationLog("导入用户")
+	public R<UserImportResult> importUser(@RequestParam(value = "file", required = false) MultipartFile file,
+										  @RequestParam(required = false, defaultValue = "false") boolean updateSupport) {
+		List<SysUserExcel> rows = com.mugsun.boot.common.excel.ImportFiles.requireRows(
+			com.mugsun.boot.common.excel.ImportFiles.readExcel(file, SysUserExcel.class),
+			MSG_IMPORT_NO_ROWS);
+		String tenant = TenantContext.current();
+		// 整批共用一份操作者数据范围：覆盖前检查目标用户，写入后逐行复核
+		DataScopeContext.Ctx scope = dataScopeGuard.operatorScope();
+		int success = 0;
+		List<UserImportResult.FailRow> failList = new java.util.ArrayList<>();
+		List<UserImportResult.CreatedRow> created = new java.util.ArrayList<>();
+		for (int i = 0; i < rows.size(); i++) {
+			SysUserExcel row = rows.get(i);
+			String username = row.getUsername() == null ? null : row.getUsername().trim();
+			if (username == null || username.isEmpty()) {
+				continue;
+			}
+			try {
+				String otp = importRow(row, username, updateSupport, tenant, scope);
+				success++;
+				if (otp != null) {
+					created.add(new UserImportResult.CreatedRow(i + 2, username, otp));
+				}
+			} catch (com.mugsun.core.tool.exception.ServiceException e) {
+				// rowIndex 为 Excel 物理行号：表头占第 1 行，首条数据为第 2 行
+				failList.add(new UserImportResult.FailRow(i + 2, username, e.getMessage()));
+			} catch (org.springframework.dao.DuplicateKeyException e) {
+				// 唯一约束冲突（用户名/手机号与他账号重复）：记失败行而非整批 500
+				failList.add(new UserImportResult.FailRow(i + 2, username, "与已有账号数据冲突（用户名或手机号重复）。请改一个还没用过的用户名或手机号后再导入"));
+			}
+		}
+		UserImportResult result = new UserImportResult(success, failList.size(), failList, created);
+		if (success == 0) {
+			// 导入 0 条不算成功：有失败行时带回明细便于逐行修改；全是空行时同「没有数据」
+			if (failList.isEmpty()) {
+				throw new com.mugsun.core.tool.exception.ServiceException(MSG_IMPORT_NO_ROWS);
+			}
+			R<UserImportResult> fail = R.fail(com.mugsun.core.tool.api.ResultCode.FAILURE,
+				"一条都没有导入。共 " + failList.size() + " 行有问题，请按失败明细改好后再导入");
+			fail.setData(result);
+			return fail;
+		}
+		return R.data(result);
+	}
+
+	/** 表格解析出 0 行，或全部是空用户名行 */
+	static final String MSG_IMPORT_NO_ROWS = "这份表格里没有用户。请先下载模板，至少填好用户名后再导入";
+
+	/** 导入单行：格式校验 → 部门/岗位名解析 → 新增或按 updateSupport 覆盖；写入后按操作者的数据范围复核 */
+	private String importRow(SysUserExcel row, String username, boolean updateSupport, String tenant,
+							 DataScopeContext.Ctx scope) {
+		String phone = trimToNull(row.getPhone());
+		// 手机号格式校验（与 submit 同规：短信登录按号取人，脏号即冒注面）
+		if (phone != null && !phone.matches("^1\\d{10}$")) {
+			throw new com.mugsun.core.tool.exception.ServiceException("手机号格式不正确。请改成 11 位、以 1 开头的手机号后再导入");
+		}
+		Integer status = row.getStatus();
+		if (status != null && status != 0 && status != 1) {
+			throw new com.mugsun.core.tool.exception.ServiceException("状态须为1或0。请改成 1（启用）或 0（禁用）后再导入");
+		}
+		Long deptId = resolveDeptId(row.getDeptName());
+		Long postId = resolvePostId(row.getPostName());
+		SysUser existing = userMapper.selectOneByQuery(QueryWrapper.create().eq("username", username));
+		if (existing != null) {
+			if (!updateSupport) {
+				throw new com.mugsun.core.tool.exception.ServiceException("已存在。请改一个用户名，或打开覆盖后再导入");
+			}
+			// 覆盖更新：仅模板承载字段（不更新密码/手机号）；空白字段视为「不更新」，置 null 交 Flex update 忽略、保留原值
+			assertTargetOperable(existing.getId(), true, scope);
+			SysUser update = new SysUser();
+			update.setId(existing.getId());
+			update.setNickname(trimToNull(row.getNickname()));
+			update.setStatus(status);
+			update.setEmail(trimToNull(row.getEmail()));
+			update.setDeptId(deptId);
+			update.setPostId(postId);
+			update.sanitizeForUpdate();
+			userManageService.importOverwrite(update, scope);
+			return null;
+		}
+		// 新增：初始密码入库（与 submit 同款收尾：审计字段服务端清洗 + 配额锁内检查+插入防并发超额）
+		SysUser user = new SysUser();
+		user.setUsername(username);
+		user.setNickname(trimToNull(row.getNickname()));
+		user.setStatus(status == null ? 1 : status);
+		user.setEmail(trimToNull(row.getEmail()));
+		user.setPhone(phone);
+		user.setDeptId(deptId);
+		user.setPostId(postId);
+		String raw = securityPolicyService.generateOneTimePassword();
+		user.setPassword(passwordEncoder.encode(raw));
+		user.setMustChangePassword(1);
+		// 模板不承载「是否负责人」，须显式给默认值：不给则 ORM 写入显式 NULL，撞 is_leader 非空约束整批 500
+		user.setIsLeader(0);
+		user.sanitizeForInsert();
+		user.setTenantId(null);
+		// 配额锁内检查+插入、数据范围复核、记密码历史在同一事务内，复核不过这一行回滚
+		userManageService.importCreate(user, tenant, scope);
+		return raw;
+	}
+
+	/** 部门名 → id（空名不挂；无匹配记失败行；重名取首条） */
+	private Long resolveDeptId(String deptName) {
+		String name = trimToNull(deptName);
+		if (name == null) {
+			return null;
+		}
+		List<com.mugsun.boot.system.entity.SysDept> depts = deptMapper
+			.selectListByQuery(QueryWrapper.create().eq("dept_name", name));
+		if (depts.isEmpty()) {
+			throw new com.mugsun.core.tool.exception.ServiceException("部门不存在：" + name);
+		}
+		return depts.get(0).getId();
+	}
+
+	/** 岗位名 → id（空名不挂；无匹配记失败行；重名取首条） */
+	private Long resolvePostId(String postName) {
+		String name = trimToNull(postName);
+		if (name == null) {
+			return null;
+		}
+		List<com.mugsun.boot.system.entity.SysPost> posts = postMapper
+			.selectListByQuery(QueryWrapper.create().eq("post_name", name));
+		if (posts.isEmpty()) {
+			throw new com.mugsun.core.tool.exception.ServiceException("岗位不存在：" + name);
+		}
+		return posts.get(0).getId();
+	}
+
+	/** 空白字符串归一为 null（导入语义：空白即「未填写」） */
+	private String trimToNull(String value) {
+		if (value == null) {
+			return null;
+		}
+		String trimmed = value.trim();
+		return trimmed.isEmpty() ? null : trimmed;
+	}
+
+	/** 重置为一次性随机口令（批量；事务原子，重置即踢全部在线端；口令仅响应返回一次） */
+	@PostMapping("/reset-password")
+	@SaCheckPermission("sys:user:reset")
+	@OperationLog("重置密码")
+	@Transactional(rollbackFor = Exception.class)
+	public R<List<java.util.Map<String, Object>>> resetPassword(@RequestBody List<Long> ids) {
+		List<java.util.Map<String, Object>> issued = new java.util.ArrayList<>();
+		DataScopeContext.Ctx scope = dataScopeGuard.operatorScope();
+		for (Long id : ids) {
+			assertTargetOperable(id, true, scope);
+			SysUser existing = userMapper.selectOneById(id);
+			if (existing == null) {
+				throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再重置");
+			}
+			String raw = securityPolicyService.generateOneTimePassword();
+			SysUser user = new SysUser();
+			user.setId(id);
+			String encoded = passwordEncoder.encode(raw);
+			user.setPassword(encoded);
+			user.setMustChangePassword(1);
+			userMapper.update(user);
+			securityPolicyService.logPassword(id, encoded);
+			StpUtil.kickout(id);
+			java.util.Map<String, Object> row = new java.util.LinkedHashMap<>();
+			row.put("id", id);
+			row.put("username", existing.getUsername());
+			row.put("initialPassword", raw);
+			issued.add(row);
+		}
+		R<List<java.util.Map<String, Object>>> r = R.data(issued);
+		r.setMsg("已重置为一次性口令，请立刻交给对方；首次登录须改密");
+		return r;
+	}
+
+	/** 当前租户仍被锁定的账号，含失败锁定和管理员锁定。 */
+	@GetMapping("/locks")
+	@SaCheckPermission("sys:user:edit")
+	public R<List<Map<String, Object>>> locks() {
+		return R.data(loginLockService.list(TenantContext.current()));
+	}
+
+	/** 管理员锁定。不填分钟数则一直锁定，直到解锁。锁定后踢下线。 */
+	@PostMapping("/lock")
+	@SaCheckPermission("sys:user:edit")
+	@OperationLog("锁定账号")
+	public R<Void> lock(@RequestBody Map<String, Object> body) {
+		Long id = longOf(body.get("id"));
+		if (id == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("请选择要锁定的用户");
+		}
+		assertTargetOperable(id, false);
+		SysUser user = userMapper.selectOneById(id);
+		if (user == null || user.getUsername() == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再锁定");
+		}
+		Integer minutes = intOf(body.get("minutes"));
+		loginLockService.manualLock(
+			loginLockService.keyOf(user.getTenantId(), user.getUsername()),
+			body.get("reason") == null ? null : String.valueOf(body.get("reason")),
+			minutes,
+			String.valueOf(StpUtil.getLoginId()));
+		StpUtil.kickout(id);
+		String reason = body.get("reason") == null ? "" : String.valueOf(body.get("reason")).trim();
+		usualLogService.record("warn", user.getUsername(), "锁定账号：" + reason, user.getTenantId());
+		return R.success("账号已锁定");
+	}
+
+	/** 管理员解锁。同时清掉失败次数锁定。 */
+	@PostMapping("/unlock")
+	@SaCheckPermission("sys:user:edit")
+	@OperationLog("解锁账号")
+	public R<Void> unlockAccount(@RequestBody Map<String, Object> body) {
+		String lockKey = body.get("lockKey") == null ? null : String.valueOf(body.get("lockKey"));
+		if (lockKey == null || lockKey.isBlank()) {
+			Long id = longOf(body.get("id"));
+			if (id == null) {
+				throw new com.mugsun.core.tool.exception.ServiceException("请选择要解锁的账号");
+			}
+			assertTargetOperable(id, true);
+			SysUser user = userMapper.selectOneById(id);
+			if (user == null) {
+				throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再解锁");
+			}
+			lockKey = loginLockService.keyOf(user.getTenantId(), user.getUsername());
+		} else if (!lockKey.startsWith(TenantContext.current() + ":")) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这是其他租户的账号，不能在这里解锁。请切到对应租户后再试");
+		} else {
+			// 传锁键和传用户 id 过同一套检查：锁键里的账号在本租户有对应用户，就按这名用户校验数据范围和管理员保护；
+			// 没有对应用户（有人拿不存在的账号试密码留下的锁）没有要保护的对象，直接清
+			String account = loginLockService.usernameOf(lockKey);
+			SysUser locked = account == null || account.isBlank() ? null
+				: userMapper.selectOneByQuery(QueryWrapper.create().eq("username", account));
+			if (locked != null) {
+				assertTargetOperable(locked.getId(), true);
+			}
+		}
+		loginLockService.clear(lockKey);
+		int colon = lockKey.indexOf(':');
+		String username = colon < 0 ? lockKey : lockKey.substring(colon + 1);
+		String tenant = colon < 0 ? TenantContext.current() : lockKey.substring(0, colon);
+		usualLogService.record("info", username, "已解锁账号", tenant);
+		return R.success("账号已解锁");
+	}
+
+	private static Long longOf(Object raw) {
+		if (raw == null || String.valueOf(raw).isBlank()) {
+			return null;
+		}
+		try {
+			return Long.valueOf(String.valueOf(raw));
+		} catch (NumberFormatException e) {
+			throw new com.mugsun.core.tool.exception.ServiceException("用户编号不正确");
+		}
+	}
+
+	private static Integer intOf(Object raw) {
+		if (raw == null || String.valueOf(raw).isBlank()) {
+			return null;
+		}
+		try {
+			return Integer.valueOf(String.valueOf(raw));
+		} catch (NumberFormatException e) {
+			throw new com.mugsun.core.tool.exception.ServiceException("锁定时长请填写分钟数");
+		}
+	}
+
+	/** 启用 / 停用用户（停用即踢全部在线端） */
+	@PostMapping("/status")
+	@SaCheckPermission("sys:user:edit")
+	@RepeatSubmit
+	@OperationLog("变更用户状态")
+	public R<Void> status(@RequestBody StatusParam param) {
+		if (param == null || param.id() == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("请选择要改状态的用户");
+		}
+		if (param.status() == null || (param.status() != 0 && param.status() != 1)) {
+			throw new com.mugsun.core.tool.exception.ServiceException("状态只能选择启用或停用");
+		}
+		assertTargetOperable(param.id(), false);
+		SysUser user = new SysUser();
+		user.setId(param.id());
+		user.setStatus(param.status());
+		userMapper.update(user);
+		if (param.status() == 0) {
+			StpUtil.kickout(param.id());
+			return R.success("已停用。这名用户会被踢下线，启用前不能登录");
+		}
+		return R.success("已启用。这名用户可以重新登录");
+	}
+
+	/** 查询用户已授权角色 id 集合（授权回显） */
+	@GetMapping("/role-ids")
+	@SaCheckPermission("sys:user:grant")
+	public R<List<Long>> roleIds(@RequestParam Long userId) {
+		assertUserInScope(userId);
+		List<Long> ids = userRoleMapper
+			.selectListByQuery(QueryWrapper.create().eq("user_id", userId))
+			.stream()
+			.map(SysUserRole::getRoleId)
+			.toList();
+		return R.data(ids);
+	}
+
+	/** 用户授权角色（事务原子；用户与角色均须属当前租户——中间表 sys_user_role 无 tenant_id，必须先证归属） */
+	@PostMapping("/grant")
+	@SaCheckPermission("sys:user:grant")
+	@OperationLog("用户授权")
+	@Transactional(rollbackFor = Exception.class)
+	public R<Void> grant(@RequestBody UserGrantParam param) {
+		assertUserInScope(param.userId());
+		// roleIds 为 null 时下面会清空该用户全部角色，校验时按空列表算
+		roleAssignGuard.assertAssignable(param.userId(), param.roleIds() == null ? List.of() : param.roleIds());
+		if (param.roleIds() != null) {
+			for (Long roleId : param.roleIds()) {
+				if (roleMapper.selectOneById(roleId) == null) {
+					throw new com.mugsun.core.tool.exception.ServiceException("角色不存在：" + roleId);
+				}
+			}
+		}
+		userRoleMapper.deleteByQuery(QueryWrapper.create().eq("user_id", param.userId()));
+		if (param.roleIds() != null) {
+			for (Long roleId : param.roleIds()) {
+				SysUserRole userRole = new SysUserRole();
+				userRole.setUserId(param.userId());
+				userRole.setRoleId(roleId);
+				userRoleMapper.insert(userRole);
+			}
+		}
+		return R.success("授权成功");
+	}
+
+	/** 用户归属校验，只动一个用户的接口用：操作者的数据范围现取 */
+	private void assertUserInScope(Long userId) {
+		assertUserInScope(userId, dataScopeGuard.operatorScope());
+	}
+
+	/**
+	 * 用户归属校验：先看存在且属于当前租户（Flex 租户条件天然挡跨租户直查，null 即越界或不存在），
+	 * 再看在不在操作者的数据范围内（和用户列表同一套规则，列表里看不到的人不能动）。
+	 * @param scope 操作者的数据范围；批量接口在循环外取一次传进来
+	 */
+	private void assertUserInScope(Long userId, DataScopeContext.Ctx scope) {
+		if (userId == null || userMapper.selectOneById(userId) == null) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这个用户不存在，或属于其他租户。请刷新列表后再试");
+		}
+		dataScopeGuard.assertCovers(scope, userId);
+	}
+
+	/** 目标用户操作保护，只动一个用户的接口用：操作者的数据范围现取 */
+	private void assertTargetOperable(Long userId, boolean allowSelf) {
+		assertTargetOperable(userId, allowSelf, dataScopeGuard.operatorScope());
+	}
+
+	/**
+	 * 目标用户操作保护：
+	 * 目标须在当前租户、在操作者的数据范围内；
+	 * 内置 admin 角色持有者仅平台超管可操作（防租户内改密/停用/删除管理员致账号接管）；
+	 * allowSelf=false 时禁止操作自己（防自杀/自锁）。
+	 */
+	private void assertTargetOperable(Long userId, boolean allowSelf, DataScopeContext.Ctx scope) {
+		assertUserInScope(userId, scope);
+		if (!allowSelf && StpUtil.getLoginIdAsLong() == userId) {
+			throw new com.mugsun.core.tool.exception.ServiceException("不能对当前登录账号执行这个操作。请换一个账号登录后再试，或改其他用户");
+		}
+		if (!TenantContext.isPlatformSuperAdmin() && holdsAdminRole(userId)) {
+			throw new com.mugsun.core.tool.exception.ServiceException("这是内置管理员账号，当前身份不能修改。请使用平台超管，或改其他用户");
+		}
+	}
+
+	/** 该用户是否持有内置 admin 角色（中间表无 tenant_id，角色 id 全局唯一，经角色表反查角色码） */
+	private boolean holdsAdminRole(Long userId) {
+		List<Long> roleIds = userRoleMapper.selectListByQuery(QueryWrapper.create().eq("user_id", userId))
+			.stream().map(SysUserRole::getRoleId).toList();
+		if (roleIds.isEmpty()) {
+			return false;
+		}
+		return roleMapper.selectListByIds(roleIds).stream()
+			.anyMatch(r -> com.mugsun.boot.common.constant.RoleConstants.ADMIN.equals(r.getRoleCode()));
+	}
+}

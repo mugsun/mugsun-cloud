@@ -1,0 +1,52 @@
+package com.mugsun.boot.log;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Arrays;
+import java.util.regex.Pattern;
+
+/**
+ * 审计参数脱敏 + 截断（两条审计切面共用）：密码/密钥/令牌类字段 JSON 值置 ***，超长截断。
+ */
+public final class AuditMask {
+
+	private static final int MAX_LEN = 2000;
+	// 名单与 ApiParamMask 同源：密码/密钥/令牌/凭据类 + PII（手机号/身份证）+ 验证码类（一次性码亦不落明文）
+	// paramsSample 是 AI 渠道的 Webhook 地址，地址里带着群机器人的 key
+	private static final String SENSITIVE_KEYS = "password|oldPassword|newPassword|initialPassword|adminPassword|oneTimePassword|dsPassword|pwd|passwd|"
+		+ "secret|clientSecret|client_secret|apiKey|api_key|apikey|secretKey|secret_key|appSecret|app_secret|"
+		+ "accessKeySecret|accessToken|access_token|refreshToken|refresh_token|"
+		+ "token|credential|credentials|privateKey|sign|paramsSample|params_sample|"
+		+ "phone|mobile|idCard|idcard|id_card|code|smsCode|captchaCode|captcha_code";
+	private static final Pattern MASK = Pattern.compile(
+		"(?i)(\"(?:" + SENSITIVE_KEYS + ")\"\\s*:\\s*)\"[^\"]*\"");
+	// 字符串字段里嵌着的 JSON（如 AI 应用导入的 dsl）序列化后引号被转义成 \"，单独再遮一遍
+	private static final Pattern MASK_ESCAPED = Pattern.compile(
+		"(?i)(\\\\\"(?:" + SENSITIVE_KEYS + ")\\\\\"\\s*:\\s*)\\\\\"(?:[^\"\\\\]|\\\\[^\"])*\\\\\"");
+
+	private AuditMask() {
+	}
+
+	/** 序列化入参 + 脱敏 + 截断；不可序列化时降级 Arrays.toString（并对 key=val 形态也做脱敏） */
+	public static String maskAndTruncate(ObjectMapper objectMapper, Object[] args) {
+		String raw;
+		boolean json = true;
+		try {
+			Object[] data = Arrays.stream(args)
+				.filter(a -> a != null && !(a instanceof jakarta.servlet.http.HttpServletRequest)
+					&& !(a instanceof HttpServletResponse) && !(a instanceof MultipartFile))
+				.toArray();
+			raw = objectMapper.writeValueAsString(data);
+		} catch (Exception e) {
+			json = false;
+			raw = Arrays.toString(args);
+		}
+		String masked = json
+			? MASK_ESCAPED.matcher(MASK.matcher(raw).replaceAll("$1\"***\"")).replaceAll("$1\\\\\"***\\\\\"")
+			// 降级串形态 password=xxx / password:xxx 也脱敏
+			: raw.replaceAll("(?i)((?:" + SENSITIVE_KEYS + ")\\s*[=:]\\s*)[^,\\s\\]}]+", "$1***");
+		return masked.length() > MAX_LEN ? masked.substring(0, MAX_LEN) + "...(truncated)" : masked;
+	}
+}
