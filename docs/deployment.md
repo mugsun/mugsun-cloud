@@ -347,6 +347,8 @@ ip=203.0.113.7 method=GET uri=/system/user/list status=200 ms=41 ttfb=38 route=m
 | `MUGSUN_GATEWAY_ACCESS_LOG` | 记哪些请求：`all` 每个都记，`problems` 只记按警告级别记的那些，`none` 不记 | `all` |
 | `MUGSUN_GATEWAY_SLOW_MILLIS` | `ttfb` 达到多少毫秒算慢请求；`0` 表示不按耗时区分 | `3000` |
 
+两个变量留空和不设一样，用默认值。写了认不出的值（比如 `3s`），网关拒绝启动，日志里写明是哪一项。
+
 AI 对话这类流式接口，网关要等服务发来第一段输出才开始回应，`ttfb` 里包含等大模型的时间，会比普通接口长。这类警告太多的话把 `MUGSUN_GATEWAY_SLOW_MILLIS` 调大。
 
 ### 按客户端地址限制访问
@@ -459,7 +461,7 @@ grep ' ACCESS ' 网关的日志文件 | sed -E 's/^([0-9T:-]{16}).* ip=([^ ]*).*
 
 | 变量 | 作用 | 默认值 |
 | --- | --- | --- |
-| `MUGSUN_GATEWAY_DYNAMIC_ROUTES` | 写 `true` 打开动态路由 | `false` |
+| `MUGSUN_GATEWAY_DYNAMIC_ROUTES` | 写 `true` 打开动态路由；留空和不设一样，不打开 | `false` |
 
 路由写在 Nacos 的这份配置里：
 

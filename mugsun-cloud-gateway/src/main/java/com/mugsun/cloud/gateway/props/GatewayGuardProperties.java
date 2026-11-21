@@ -171,8 +171,12 @@ public class GatewayGuardProperties {
 			return enabled;
 		}
 
-		public void setEnabled(boolean enabled) {
-			this.enabled = enabled;
+		/**
+		 * 参数用 Boolean 不用 boolean：环境变量在、值是空的时候（编排文件里没配的变量常是这样），空字符串转不成 boolean，
+		 * 网关会启动不了；用 Boolean 时这一项保持默认值，和没有这个变量一样
+		 */
+		public void setEnabled(Boolean enabled) {
+			this.enabled = enabled != null && enabled;
 		}
 
 		public String getDataId() {
@@ -206,6 +210,8 @@ public class GatewayGuardProperties {
 			NONE
 		}
 
+		private static final long DEFAULT_SLOW_MILLIS = 3000;
+
 		/** 记哪些请求 */
 		private Mode mode = Mode.ALL;
 
@@ -213,7 +219,7 @@ public class GatewayGuardProperties {
 		 * 从收到请求到开始回应超过这么多毫秒算慢请求，这一行按警告级别记；0 表示不按耗时区分。
 		 * 不看整个请求的时长：下载大文件、流式输出、WebSocket 连接本来就会持续很久。
 		 */
-		private long slowMillis = 3000;
+		private long slowMillis = DEFAULT_SLOW_MILLIS;
 
 		public Mode getMode() {
 			return mode;
@@ -227,8 +233,9 @@ public class GatewayGuardProperties {
 			return slowMillis;
 		}
 
-		public void setSlowMillis(long slowMillis) {
-			this.slowMillis = slowMillis;
+		/** 参数用 Long 不用 long，原因和 {@link DynamicRoutes#setEnabled} 一样：变量在、值是空的时候保持默认值 */
+		public void setSlowMillis(Long slowMillis) {
+			this.slowMillis = slowMillis == null ? DEFAULT_SLOW_MILLIS : slowMillis;
 		}
 	}
 }
