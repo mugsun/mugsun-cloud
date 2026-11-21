@@ -59,7 +59,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。埋点库是另一个库，由 track 自己迁移。
 - 有些状态各进程在内存里各存一份，又只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源。其它服务靠公共层的 `SharedStateSyncTask` 定时重新加载，新增这类状态时要在那里补上。system 自己不跑这个任务，所以 system 目前只能部署一个实例。
 - 可选模块的服务可以不部署。system 用 `CloudGisModuleStatus`、`CloudTrackModuleStatus` 这样的类查注册中心，决定菜单显不显示；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`、`TrackModuleRequired`。
-- 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器和拦截器：新服务带了它们保护的功能，就把它们划进公共层。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
+- 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器、拦截器和配置类：新服务带了它们保护或配置的功能，就让新服务也带上。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
+- 进不了公共层的类（它依赖的组件不是每个服务都带），用 `sync-rules.json` 的 `extras` 单独拷给需要的服务，不要在 `src/main` 里照着重写一份。例子：文件存储的配置类 `FileStorageTikaConfig` 单独拷给了 track。
 - PowerJob 执行器只在 system 上启动：同一个应用名下的执行器，调度中心派任务时不加区分。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 

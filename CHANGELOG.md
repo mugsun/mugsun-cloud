@@ -29,6 +29,7 @@
   - 埋点库 `mugsun_track` 由 track 自己建库和迁移
   - 告警站内信写主库，实时推送经 Redis 由 system 投递，推送方式固定为 redis
   - 校验文件地址签名的过滤器划进公共层，各服务端口上的 `/file/**` 都有防护
+  - 文件类型识别的配置 `FileStorageTikaConfig` 单独拷给 track，和单体版用同一份
   - PowerJob 执行器只在 system 上启动，埋点的三个 PowerJob 处理器用不了
   - 「问数据」没有大模型可用，只按规则解析问题，等 AI 拆过来再接
 - 多个服务共用一个库的处理

@@ -70,6 +70,12 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" }
 ```
 
+服务也可以这样单独带一个类。`system.file.FileStorageTikaConfig` 是文件存储组件的配置，留在 system。track 也带文件存储，要用同一份配置；但这个类进不了公共层，因为公共层和 gis 不带文件存储组件。所以给 track 单独拷一份：
+
+```json
+{ "module": "mugsun-boot-core", "classes": ["system.file.FileStorageTikaConfig"], "to": "mugsun-cloud-service/mugsun-cloud-track" }
+```
+
 列在 `extras` 里的类不能引用没有一起拷贝的类，否则脚本报错。
 
 ## mugsun-boot 有新提交时
@@ -167,7 +173,9 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 2. 在网关的路由里把它的路径写在 `mugsun-system` 前面。
 3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
 4. 在 system 里写一个模块状态类，照 `CloudGisModuleStatus` 的写。system 靠它知道这个服务有没有部署，决定菜单显不显示。
-5. 逐个检查留在 system 的过滤器和拦截器。新服务带了它们保护的功能，就把它们加进 `commonClasses`。track 带文件存储，所以 `system.file.LocalFileAccessFilter` 进了公共层：不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。
+5. 逐个检查留在 system 的过滤器、拦截器和配置类。新服务带了它们保护或配置的功能，就让新服务也带上它们：各服务都能带的加进 `commonClasses`，只有个别服务能带的写进 `extras`。track 带文件存储，所以有两处：
+   - `system.file.LocalFileAccessFilter` 进了公共层。不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。
+   - `system.file.FileStorageTikaConfig` 单独拷给了 track。它管文件类型怎么识别，不带的话 track 用的是组件的默认识别方式，和单体版不是同一份配置。
 6. 新服务带了 PowerJob 依赖的话，在启动类上排除 `PowerJobAutoConfiguration`，照 `TrackApplication` 的写。执行器只在 system 上启动。
 7. 打包后跑 `python3 scripts/compare_libs.py`，新服务包里第三方库的版本要和单体版一致。不一致时的处理见上面的「第三方库的版本」。
 
