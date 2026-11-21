@@ -13,11 +13,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.ErrorResponse;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import reactor.netty.http.client.PrematureCloseException;
 
-import java.net.ConnectException;
-import java.net.NoRouteToHostException;
-import java.net.UnknownHostException;
+import java.io.IOException;
+import java.net.SocketTimeoutException;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -26,7 +24,7 @@ import java.util.concurrent.TimeoutException;
  * <ul>
  *   <li>网关主动拒绝（{@link GatewayRejectedException}）：用异常里的状态码和说明文字</li>
  *   <li>注册中心里找不到可用的服务实例：503</li>
- *   <li>连不上服务或连接被服务中途断开：502</li>
+ *   <li>连不上服务，或者连接中途断了（对方关闭、重置，比如实例被强杀）：502</li>
  *   <li>连接或响应超时：504</li>
  *   <li>其他没预料到的错误：500</li>
  * </ul>
@@ -73,11 +71,14 @@ public class GatewayErrorHandler implements ErrorWebExceptionHandler {
 				return errorResponse.getStatusCode();
 			}
 			if (current instanceof ConnectTimeoutException || current instanceof ReadTimeoutException
-				|| current instanceof TimeoutException) {
+				|| current instanceof TimeoutException || current instanceof SocketTimeoutException) {
 				return HttpStatus.GATEWAY_TIMEOUT;
 			}
-			if (current instanceof ConnectException || current instanceof PrematureCloseException
-				|| current instanceof UnknownHostException || current instanceof NoRouteToHostException) {
+			// 和后端之间的连接出的错都是 IOException：连不上、解析不到地址、中途被对方关闭或重置。按类型一个个列的话会漏：
+			// 连接被重置时，JDK 报 SocketException，Linux 上 Netty 用 epoll 时报的是它自己的 NativeIoException。
+			// 网关自己不读写文件，走到这里的 IOException 只会出在网络连接上。客户端上传到一半断开也会走到这里，
+			// 那时客户端已经收不到响应，返回哪个状态码都一样
+			if (current instanceof IOException) {
 				return HttpStatus.BAD_GATEWAY;
 			}
 			current = current.getCause();

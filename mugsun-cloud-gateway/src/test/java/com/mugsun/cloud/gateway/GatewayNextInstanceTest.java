@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway;
 
+import io.netty.channel.ChannelOption;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -35,6 +36,8 @@ class GatewayNextInstanceTest {
 
 	private static final AtomicInteger BROKEN_HITS = new AtomicInteger();
 
+	private static final AtomicInteger RESET_HITS = new AtomicInteger();
+
 	/** 好的实例：把收到的请求方法、请求体长度和内容摘要报回来 */
 	private static final DisposableServer LIVE = HttpServer.create().host("127.0.0.1").port(0)
 		.handle((request, response) -> {
@@ -53,6 +56,19 @@ class GatewayNextInstanceTest {
 		})))
 		.bindNow();
 
+	/** 连得上、但收完请求就把连接重置的实例：进程被强杀时，正在等它应答的一方看到的就是这个 */
+	private static final DisposableServer RESET = HttpServer.create().host("127.0.0.1").port(0)
+		.handle((request, response) -> request.receive().aggregate().then(Mono.defer(() -> {
+			RESET_HITS.incrementAndGet();
+			response.withConnection(connection -> {
+				// SO_LINGER 设成 0 再关：内核直接发 RST，不走正常的关闭流程
+				connection.channel().config().setOption(ChannelOption.SO_LINGER, 0);
+				connection.channel().close();
+			});
+			return Mono.<Void>never();
+		})))
+		.bindNow();
+
 	@LocalServerPort
 	int gatewayPort;
 
@@ -64,6 +80,7 @@ class GatewayNextInstanceTest {
 		service(registry, 0, "half-dead", dead, live);
 		service(registry, 1, "all-dead", dead);
 		service(registry, 2, "half-broken", broken, live);
+		service(registry, 3, "half-reset", "http://127.0.0.1:" + RESET.port(), live);
 	}
 
 	private static void service(DynamicPropertyRegistry registry, int index, String name, String... instances) {
@@ -81,6 +98,7 @@ class GatewayNextInstanceTest {
 	void resetCounters() {
 		LIVE_HITS.set(0);
 		BROKEN_HITS.set(0);
+		RESET_HITS.set(0);
 	}
 
 	@Test
@@ -130,6 +148,20 @@ class GatewayNextInstanceTest {
 		assertThat(statuses).containsExactlyInAnyOrder(200, 200, 502, 502);
 		assertThat(LIVE_HITS).hasValue(2);
 		assertThat(BROKEN_HITS.get()).isGreaterThanOrEqualTo(2);
+	}
+
+	/** 请求发到对方以后连接被重置：和对方不应答就断开一样，返回 502，不重试 */
+	@Test
+	void connectionResetIsBadGatewayAndNotRetried() {
+		List<Integer> statuses = new ArrayList<>();
+		for (int i = 0; i < 4; i++) {
+			statuses.add(client().post().uri("/half-reset/save").bodyValue("data").exchange()
+				.returnResult(String.class).getStatus().value());
+		}
+
+		assertThat(statuses).containsExactlyInAnyOrder(200, 200, 502, 502);
+		assertThat(LIVE_HITS).hasValue(2);
+		assertThat(RESET_HITS.get()).isGreaterThanOrEqualTo(2);
 	}
 
 	private static String echoOf(String method, String body) {
