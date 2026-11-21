@@ -206,6 +206,22 @@ def short(fqn):
     return fqn[len(ROOT_PKG) + 1:] if fqn.startswith(ROOT_PKG + ".") else fqn
 
 
+def core_refs_in(source, index):
+    """一份源码引用到的 core 类。source 是源码文本，index 是 core 的类索引。"""
+    body = strip_comments(source)
+    found = set()
+    for match in IMPORT_RE.finditer(body):
+        name, star = match.group(2), match.group(3)
+        if star and name in index.by_pkg:
+            found |= {name + "." + simple for simple in index.by_pkg[name]
+                      if re.search(r"\b" + re.escape(simple) + r"\b", body)}
+    for match in re.finditer(re.escape(ROOT_PKG) + r"\.[\w.]+", body):
+        target = index._resolve(match.group(0))
+        if target:
+            found.add(target)
+    return found
+
+
 def module_core_refs(files, module, index):
     """可选模块的源码引用到的 core 类：{core 类: 引用它的一个模块文件}。"""
     refs = {}
@@ -213,18 +229,7 @@ def module_core_refs(files, module, index):
     for path in sorted(files):
         if not path.startswith(prefix) or not path.endswith(".java"):
             continue
-        body = strip_comments(files[path].decode("utf-8"))
-        found = set()
-        for match in IMPORT_RE.finditer(body):
-            name, star = match.group(2), match.group(3)
-            if star and name in index.by_pkg:
-                found |= {name + "." + simple for simple in index.by_pkg[name]
-                          if re.search(r"\b" + re.escape(simple) + r"\b", body)}
-        for match in re.finditer(re.escape(ROOT_PKG) + r"\.[\w.]+", body):
-            target = index._resolve(match.group(0))
-            if target:
-                found.add(target)
-        for cls in found:
+        for cls in core_refs_in(files[path].decode("utf-8"), index):
             refs.setdefault(cls, path[len(prefix):])
     return refs
 
@@ -253,7 +258,9 @@ def plan(rules, boot, ref):
     """算出每个目标模块 src/boot 下应该有哪些文件。返回 ({模块目录: {相对路径: 内容}}, 索引, 划分结果)。"""
     core = rules["core"]
     modules = rules.get("modules", [])
-    prefixes = [core["module"] + "/src/main"] + [m["module"] + "/src/main" for m in modules]
+    extras = rules.get("extras", [])
+    sources = [core["module"]] + [m["module"] for m in modules] + [e["module"] for e in extras]
+    prefixes = [name + "/src/main" for name in sorted(set(sources))]
     files = read_tree(boot, ref, prefixes)
     out = collections.defaultdict(dict)
 
@@ -268,15 +275,39 @@ def plan(rules, boot, ref):
         elif cls in system:
             out[targets["system"]][rel] = files[path]
 
-    for extra in rules.get("extras", []):
-        if extra["module"] != core["module"]:
-            die("extras 目前只支持从 %s 拷贝" % core["module"])
-        wanted = expand(index, extra["classes"])
+    # 单独拷贝的类：可以来自 core，也可以来自可选模块。它引用的类要么一起拷，要么目标模块里本来就有
+    # （目标是 system 时有公共层和 system 的类，是其它服务时只有公共层的类，网关不依赖公共层，什么都没有）。
+    service_targets = {m["target"] for m in modules}
+    module_indexes = {}
+    for extra in extras:
+        source, to = extra["module"], extra["to"]
+        if to == targets["system"]:
+            available = common | system
+        elif to == targets["common"] or to in service_targets:
+            available = common
+        else:
+            available = set()
+        if source == core["module"]:
+            src_index, src_root = index, java_root
+        else:
+            src_root = source + "/src/main/java"
+            if source not in module_indexes:
+                module_indexes[source] = JavaIndex(files, src_root)
+            src_index = module_indexes[source]
+        wanted = expand(src_index, extra["classes"])
         for cls in sorted(wanted):
-            outside = sorted(short(dep) for dep in index.deps[cls] if dep not in wanted)
+            if source == core["module"]:
+                outside = {dep for dep in src_index.deps[cls] if dep not in wanted and dep not in available}
+            else:
+                outside = {dep for dep in src_index.deps[cls] if dep not in wanted}
+                outside |= {dep for dep in core_refs_in(src_index.text[cls], index) if dep not in available}
             if outside:
-                die("extras 里的 %s 还引用了没有一起拷贝的类：%s" % (short(cls), "、".join(outside)))
-            out[extra["to"]]["java/" + index.paths[cls][len(java_root) + 1:]] = files[index.paths[cls]]
+                die("extras 里的 %s 还引用了没有一起拷贝、目标模块 %s 里也没有的类：%s"
+                    % (short(cls), to, "、".join(sorted(short(dep) for dep in outside))))
+            rel = "java/" + src_index.paths[cls][len(src_root) + 1:]
+            if rel in out[to]:
+                die("extras 里的 %s 在目标模块 %s 里已经有了，不用单独拷贝" % (short(cls), to))
+            out[to][rel] = files[src_index.paths[cls]]
 
     def owner_of(cls):
         if cls in common:

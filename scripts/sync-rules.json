@@ -39,7 +39,13 @@
       "demo.DemoSchemaGuard",
       "message.MessageService",
       "websocket.RedisWsMessageSender",
-      "system.file.LocalFileAccessFilter"
+      "system.file.LocalFileAccessFilter",
+      "gen.AiModelService",
+      "gen.GenAiDraftEnhancer",
+      "gen.GenNaming",
+      "gen.entity.GenTable",
+      "gen.entity.GenColumn",
+      "system.service.HandlerSelectService"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -58,10 +64,16 @@
   },
   "extras": [
     { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" },
-    { "module": "mugsun-boot-core", "classes": ["system.file.FileStorageTikaConfig"], "to": "mugsun-cloud-service/mugsun-cloud-track" }
+    { "module": "mugsun-boot-core", "classes": ["system.file.FileStorageTikaConfig"], "to": "mugsun-cloud-service/mugsun-cloud-track" },
+    {
+      "module": "mugsun-boot-ai",
+      "classes": ["ai.entity.AiSecret", "ai.mapper.AiSecretMapper", "ai.support.AiDateTimeDeserializer"],
+      "to": "mugsun-cloud-service/mugsun-cloud-system"
+    }
   ],
   "modules": [
     { "module": "mugsun-boot-gis", "target": "mugsun-cloud-service/mugsun-cloud-gis" },
-    { "module": "mugsun-boot-track", "target": "mugsun-cloud-service/mugsun-cloud-track" }
+    { "module": "mugsun-boot-track", "target": "mugsun-cloud-service/mugsun-cloud-track" },
+    { "module": "mugsun-boot-ai", "target": "mugsun-cloud-service/mugsun-cloud-ai" }
   ]
 }
