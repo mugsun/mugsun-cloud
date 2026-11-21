@@ -1,0 +1,17 @@
+# 构建上下文是仓库根目录。先全部排除，再只放行构建要用的文件，路径相对仓库根目录。
+*
+!pom.xml
+!mugsun-cloud-common/
+!mugsun-cloud-gateway/
+!mugsun-cloud-service/
+!deploy/docker/entrypoint.sh
+!deploy/docker/healthcheck.sh
+
+# 放行的目录里也不要的：构建产物、日志，还有不进仓库的本机配置和密钥文件
+**/target
+**/logs
+**/*.log
+**/.DS_Store
+**/application-local.yml
+**/.mugsun
+**/.env
