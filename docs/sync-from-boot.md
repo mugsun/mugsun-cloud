@@ -22,12 +22,13 @@
 | 来源 | 去向 |
 | --- | --- |
 | `mugsun-boot-gis` | `mugsun-cloud-service/mugsun-cloud-gis/src/boot` |
+| `mugsun-boot-track` | `mugsun-cloud-service/mugsun-cloud-track/src/boot` |
 
 没有同步的部分：
 
 - `MugsunApplication`。每个服务有自己的启动类。
 - 测试代码。
-- `mugsun-boot-track`、`mugsun-boot-ai`。这两个模块对应的服务还没拆。
+- `mugsun-boot-ai`。这个模块对应的服务还没拆。
 
 `application.yml` 改名是因为每个服务有自己的 `application.yml`。服务的配置先引入 `mugsun-boot-defaults.yml`，再引入微服务版的 `mugsun-cloud-defaults.yml`，最后写自己的端口和服务名。
 
@@ -88,7 +89,7 @@ python3 scripts/sync_from_boot.py --ref <提交>   # 或者指定提交、分支
 
 | 现象 | 处理 |
 | --- | --- |
-| 找不到某个第三方库的类 | mugsun-boot 加了依赖。对照它的 `mugsun-boot-core/pom.xml`，加到公共层或 system 的 pom 里 |
+| 找不到某个第三方库的类 | mugsun-boot 加了依赖。对照它对应模块的 pom，加到公共层或对应服务的 pom 里 |
 | 脚本报「公共层的类引用了只能留在 system 的类」 | 按报错里的提示改 `sync-rules.json` |
 
 ## 要手工跟着改的地方
@@ -101,7 +102,10 @@ python3 scripts/sync_from_boot.py --ref <提交>   # 或者指定提交、分支
 | `CorsConfig` 的跨域规则 | 网关 `application.yml` 里的 `globalcors` |
 | 父 pom 和 `mugsun-boot-core/pom.xml` 的依赖、版本号 | 父 pom、`mugsun-cloud-common/pom.xml`、system 的 pom |
 | `mugsun-boot-gis/pom.xml` 的依赖 | `mugsun-cloud-gis` 的 pom |
+| `mugsun-boot-track/pom.xml` 的依赖 | `mugsun-cloud-track` 的 pom |
+| sms4j 间接带入的 `hutool-http` 的版本，mugsun-bom 升级 sms4j 时会变 | 父 pom 的 `hutool-http.version` |
 | `OptionalModuleConfiguration` 里 GIS 模块状态的判断规则 | system 的 `CloudGisModuleStatus` |
+| 埋点模块里 `TrackModuleStatus` 的实现和 `mugsun.track.enabled` 的规则 | system 的 `CloudTrackModuleStatus` |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 
 ## 检查 `src/boot` 有没有被手改
@@ -124,7 +128,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 
 可选模块只能引用公共层的类，拆出去的服务里没有 system 的代码。脚本会检查这一点，引用了留在 system 的类就报错并列出来。这时有两种处理：
 
-- 那个类各服务都能带：把它加进 `commonClasses`。
+- 那个类各服务都能带：把它加进 `commonClasses`。track 要发站内信，`message.MessageService` 和 `websocket.RedisWsMessageSender` 就是这样进公共层的。
 - 那个类只能在 system 里跑：先设计服务间调用，再拆这个模块。
 
 另外还要做这几件事：
@@ -133,6 +137,9 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 2. 在网关的路由里把它的路径写在 `mugsun-system` 前面。
 3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
 4. 在 system 里写一个模块状态类，照 `CloudGisModuleStatus` 的写。system 靠它知道这个服务有没有部署，决定菜单显不显示。
+5. 逐个检查留在 system 的过滤器和拦截器。新服务带了它们保护的功能，就把它们加进 `commonClasses`。track 带文件存储，所以 `system.file.LocalFileAccessFilter` 进了公共层：不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。
+6. 新服务带了 PowerJob 依赖的话，在启动类上排除 `PowerJobAutoConfiguration`，照 `TrackApplication` 的写。执行器只在 system 上启动。
+7. 对照单体版打出的包，检查新服务包里第三方库的版本。单体版里由别的模块间接带进来的库，新服务要自己显式引入，版本取单体版包里的那个。
 
 ## 为什么包名不改
 

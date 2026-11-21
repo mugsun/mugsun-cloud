@@ -23,6 +23,14 @@
   - 网关把 `/system/gis/**` 转给它，没部署时这些接口返回 503
   - system 按注册中心里有没有 gis 实例决定 GIS 菜单显不显示
   - 系统参数 `gis.module.enabled` 可以不停服务关掉 GIS
+- track 服务：对应 `mugsun-boot-track`（埋点分析），端口 8103，可以不部署
+  - 网关把 `/track/**` 和 `/system/track/**` 转给它，没部署时返回 503
+  - system 按注册中心里有没有 track 实例决定埋点分析菜单显不显示
+  - 埋点库 `mugsun_track` 由 track 自己建库和迁移
+  - 告警站内信写主库，实时推送经 Redis 由 system 投递，推送方式固定为 redis
+  - 校验文件地址签名的过滤器划进公共层，各服务端口上的 `/file/**` 都有防护
+  - PowerJob 执行器只在 system 上启动，埋点的三个 PowerJob 处理器用不了
+  - 「问数据」没有大模型可用，只按规则解析问题，等 AI 拆过来再接
 - 多个服务共用一个库的处理
   - 主库迁移和初始数据只由 system 执行，其它服务不跑 Flyway，要先启动 system
   - 在 system 里改的数据权限规则、接口权限、租户数据源，其它服务 30 秒内生效

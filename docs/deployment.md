@@ -48,6 +48,8 @@ export MUGSUN_OPENAPI_TRUSTED_PROXIES=172.30.88.10/32
 
 各变量的含义见 mugsun-boot 的配置文档。
 
+生产环境打开了本地存储直出（`enable-access: true`）时，`MUGSUN_FILE_SIGN_SECRET` 每个服务都要配。校验文件地址签名的过滤器各服务都带，没配会拒绝启动。
+
 Redis 也要是同一个：登录态存在 Redis 里。`dev` 配置下连不上 Redis 时会退回进程内存储，多个实例之间登录态就不通了。设置 `mugsun.redis.mode=redis` 可以禁止这种降级。
 
 ## 4. Nacos 要开鉴权，只在内网开放
@@ -70,7 +72,11 @@ Redis 也要是同一个：登录态存在 Redis 里。`dev` 配置下连不上 
 - 首次部署时先启动 system，等它启动完成，再启动其它服务。
 - 升级时先升 system，再升其它服务。
 
-埋点库 `mugsun_track` 的迁移脚本在 mugsun-boot 的埋点模块里，这个版本没有带。
+埋点库 `mugsun_track` 是另一个库，由 track 服务自己管：
+
+- track 启动时库不存在就建库，然后执行埋点库的迁移脚本。数据库账号要有 `CREATEDB` 权限，或者事先把库建好。mugsun-boot 的 `scripts/init-db.sql` 两样都做了。
+- 埋点库的连接用 `TRACK_JDBC_URL` 这组变量，和单体版相同。不设时按主库的地址和账号连 `mugsun_track`。
+- 埋点分析的菜单在主库里，由 system 的迁移写入。所以 track 也要在 system 之后启动。
 
 ## 6. 权限规则和租户数据源的改动，其它服务最长 30 秒后生效
 
@@ -82,7 +88,7 @@ Redis 也要是同一个：登录态存在 Redis 里。`dev` 配置下连不上 
 | 接口权限规则和角色授权 | 保存后立即生效 | 最长 30 秒后生效 |
 | 租户的独立数据源（新增、修改、停用） | 保存后立即生效 | 最长 30 秒后生效 |
 
-其它服务每 30 秒从库里重新加载一次。也就是说，收回一个角色的接口授权、收紧一条数据权限规则之后，gis 服务在最长 30 秒内还按旧的规则放行。给租户换数据源之后的 30 秒内，gis 服务还在读写原来的库。
+其它服务每 30 秒从库里重新加载一次。也就是说，收回一个角色的接口授权、收紧一条数据权限规则之后，gis 和 track 服务在最长 30 秒内还按旧的规则放行。给租户换数据源之后的 30 秒内，这两个服务还在读写原来的库。埋点库不分租户，不受租户数据源影响。
 
 间隔用 `mugsun.cloud.sync.interval-ms` 调，单位是毫秒，配给 system 以外的服务。调小了生效快，查库也更频繁。
 
@@ -94,27 +100,31 @@ Redis 也要是同一个：登录态存在 Redis 里。`dev` 配置下连不上 
 
 system 服务目前按单实例部署。部署多个 system 实例时，表里的三样设置只在处理保存请求的那个实例上生效，其它 system 实例要重启才跟上。
 
-## 7. gis 服务可以不部署
+## 7. gis 和 track 服务可以不部署
 
-system 按 Nacos 里有没有 `mugsun-gis` 的实例判断 GIS 在不在：
+system 按 Nacos 里有没有对应服务的实例判断模块在不在：
 
-| 情况 | 管理后台 | `/system/gis/**` |
+| 服务名 | 有实例 | 没有实例 |
 | --- | --- | --- |
-| 有实例 | 显示 GIS 菜单 | 由 gis 服务应答 |
-| 没有实例 | 不显示 GIS 菜单 | 网关返回 503 |
+| `mugsun-gis` | 显示 GIS 菜单，`/system/gis/**` 由 gis 应答 | 不显示 GIS 菜单，`/system/gis/**` 返回 503 |
+| `mugsun-track` | 显示埋点分析菜单，`/track/**` 和 `/system/track/**` 由 track 应答 | 不显示埋点分析菜单，这两类路径返回 503 |
 
-- gis 服务注册上之后，菜单几秒内出现。
-- 实例全部消失后，菜单过一分钟左右才消失。重启或滚动发布 gis 服务时菜单不会少一块，这段时间里点进 GIS 页面会看到 503。这段时间用 system 的 `mugsun.cloud.module.absent-grace` 调，默认 `60s`。
+- 服务注册上之后，菜单几秒内出现。
+- 实例全部消失后，菜单过一分钟左右才消失。重启或滚动发布服务时菜单不会少一块，这段时间里点进对应的页面会看到 503。这段时间用 system 的 `mugsun.cloud.module.absent-grace` 调，默认 `60s`。
 - 已经登录的用户要刷新页面，菜单才会变。
+- `/track/**` 是埋点 SDK 上报用的公开接口。没部署 track 时，SDK 的上报会收到 503。
 
-单体版的两个开关照样可用：
+单体版的开关照样可用：
 
 | 开关 | 配给谁 | 效果 |
 | --- | --- | --- |
 | 系统参数 `gis.module.enabled=false` | 在管理后台改 | 菜单隐藏，gis 服务对 `/system/gis/**` 返回 404，不用停服务 |
 | `MUGSUN_GIS_ENABLED=false` | system | system 当 GIS 不存在，菜单隐藏 |
+| `MUGSUN_TRACK_ENABLED=false` | system | system 当埋点不存在，菜单隐藏 |
 
-gis 服务自己不接受 `MUGSUN_GIS_ENABLED=false`，带着这个值会拒绝启动。不需要 GIS 就不要部署这个服务。
+- 埋点没有系统参数开关，单体版也没有。
+- 后两个开关只管菜单和登录信息。对应的服务还在跑的话，它的接口照常应答。
+- gis 和 track 服务自己不接受这两个值，带着 `false` 会拒绝启动。不需要某个模块就不要部署它的服务。
 
 ## 8. 健康检查
 
@@ -123,7 +133,7 @@ gis 服务自己不接受 `MUGSUN_GIS_ENABLED=false`，带着这个值会拒绝�
 | `/_gateway/health` | 网关 | 负载均衡对网关的探活 |
 | `/actuator/**` | system | 和单体版一样，管理后台的监控页在用，由服务自己鉴权 |
 
-gis 服务的 `/actuator` 不经网关，要探活就在内网直接访问它自己的端口。
+gis 和 track 服务的 `/actuator` 不经网关，要探活就在内网直接访问它们自己的端口。
 
 ## 9. 转发相关的行为
 
@@ -141,3 +151,35 @@ gis 服务的 `/actuator` 不经网关，要探活就在内网直接访问它自
 - 框架在个别出错场景下会把完整地址记进日志。网关前面的反向代理如果开了访问日志，也会记下完整地址。
 
 这些日志要按含有登录令牌来保管，或者在代理上配置成不记查询串。
+
+## 11. track 服务也用文件存储
+
+会话回放、接口报文和 sourcemap 存在文件存储里，由 track 服务读写。配置项和 system 用的是同一组（`dromara.x-file-storage.*`）。
+
+- 用本地存储时，track 把文件写在自己机器的存储目录里。生产配置下这个目录是 `FILE_STORAGE_PATH`，默认 `/var/lib/mugsun/files/`。容器部署要给它挂卷，否则容器重建后回放和 sourcemap 就没了。
+- track 部署多个实例时，用对象存储，或者让各实例挂同一个共享目录。
+- 生产配置里 `FILE_DOMAIN` 没有默认值，track 也要配，和 system 用同一个值即可。
+- 打开本地存储直出后，带文件存储的服务会在自己的端口上应答 `/file/**`。各服务都带着校验签名的过滤器：公开前缀下的文件可以直接取，其余的没有有效签名一律 404。经网关访问的 `/file/**` 只转给 system。
+- 用环境变量或启动参数改 `dromara.x-file-storage.local-plus[0]` 的某一项时，要把这个列表元素的全部字段一起写上。Spring Boot 对列表是整项替换，只写一个字段会把其它字段丢掉。
+
+## 12. PowerJob 执行器只在 system 上启动
+
+`POWERJOB_ENABLED`、`POWERJOB_SERVER`、`POWERJOB_APP_NAME` 这组变量只对 system 起作用。track 服务不启动执行器，给它设 `POWERJOB_ENABLED=true` 也一样。
+
+原因：同一个应用名下的执行器，调度中心派任务时不加区分。track 也接入的话，system 的任务会被派到 track 上，而 track 没有对应的处理器。
+
+和单体版的差别：
+
+- 管理后台的定时任务页只能选 system 里的处理器。
+- 埋点的三个处理器 `TrackStatsProcessor`、`TrackMaintainProcessor`、`TrackUvBackfillProcessor` 不能再由 PowerJob 触发。
+- 聚合、会话结算、清理和分区维护本来就由 track 服务内的定时任务执行，不受影响。
+- 历史 UV 回填改用启动开关：给 track 设 `MUGSUN_TRACK_UV_BACKFILL_ON_STARTUP=true` 启动一次，回填在后台执行，跑完后去掉这个变量。细节见 mugsun-boot 的 `docs/upgrade/track-uv-backfill.md`。
+- 从单体版迁过来时，调度中心里指向这三个处理器的任务要先停用或删除。留着的话会被派给 system，执行失败。
+
+## 13. 站内信推送固定走 Redis
+
+`mugsun.websocket.sender-type` 在微服务版里固定是 `redis`，不要用环境变量或启动参数改成 `local`。
+
+WebSocket 连接都在 system 上。track 发告警时，站内信写进主库，实时推送发到 Redis，由 system 投递给在线用户。改成 `local` 后，system 不再接收 Redis 里的推送，track 的告警就到不了在线用户。
+
+写在 `config/application-local.yml` 里的 `local` 不起作用。
