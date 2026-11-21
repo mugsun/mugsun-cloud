@@ -37,7 +37,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<mugsun.version>0.2.0-SNAPSHOT</mugsun.version>
-		<!-- Spring Cloud 2025.0.x 对应 Spring Boot 3.5.x；Spring Cloud Alibaba 2025.0.0.0 自带 Nacos 客户端 3.0.3 -->
+		<!-- Spring Cloud 2025.0.x 对应 Spring Boot 3.5.x；Spring Cloud Alibaba 2025.0.0.0 的 Nacos 组件自带 Nacos 客户端 3.0.3 -->
 		<spring-cloud.version>2025.0.3</spring-cloud.version>
 		<spring-cloud-alibaba.version>2025.0.0.0</spring-cloud-alibaba.version>
 		<!-- 以下版本号与 mugsun-boot 的父 pom 一致 -->
@@ -52,6 +52,12 @@
 		     这里写的是单体版实际打进包里的版本。不放进下面的 dependencyManagement：那样会把 system 的版本也锁在这个号上，
 		     以后 mugsun-bom 升级 sms4j 时 system 就跟单体版不一致了 -->
 		<hutool-http.version>5.8.28</hutool-http.version>
+		<!-- 单体版的 AI 模块把 tika-core 定在这个版本（见 mugsun-boot-ai/pom.xml），打进单体版包里的就是它；文件存储组件
+		     x-file-storage 自己带的是 2.4.1。微服务版的 system 和 track 没有 AI 模块，在这里定成和单体版一样 -->
+		<tika.version>3.2.2</tika.version>
+		<!-- 这两个库在单体版包里的版本也是 AI 模块的 tika 带来的，这里写的是单体版包里实际的版本。改 tika.version 时对照单体版的包一起改 -->
+		<commons-io.version>2.20.0</commons-io.version>
+		<commons-collections4.version>4.5.0</commons-collections4.version>
 	</properties>
 
 	<dependencyManagement>
@@ -70,12 +76,12 @@
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
+			<!-- 不引入 spring-cloud-alibaba-dependencies 这份版本清单：它除了管自己的组件，还会改 guava、mybatis-spring-boot-starter
+			     这些库的版本。业务代码也用到这些库，版本要和单体版的包一致。用到它的哪个组件，就在这里单独写那个组件的版本 -->
 			<dependency>
 				<groupId>com.alibaba.cloud</groupId>
-				<artifactId>spring-cloud-alibaba-dependencies</artifactId>
+				<artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
 				<version>${spring-cloud-alibaba.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
 			</dependency>
 			<dependency>
 				<groupId>com.mugsun</groupId>
@@ -116,6 +122,22 @@
 				<groupId>net.sf.geographiclib</groupId>
 				<artifactId>GeographicLib-Java</artifactId>
 				<version>${geographiclib.version}</version>
+			</dependency>
+			<!-- 以下三个库定成单体版包里的版本，原因见上面属性的注释；检查办法见 docs/sync-from-boot.md 的「第三方库的版本」 -->
+			<dependency>
+				<groupId>org.apache.tika</groupId>
+				<artifactId>tika-core</artifactId>
+				<version>${tika.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>commons-io</groupId>
+				<artifactId>commons-io</artifactId>
+				<version>${commons-io.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>org.apache.commons</groupId>
+				<artifactId>commons-collections4</artifactId>
+				<version>${commons-collections4.version}</version>
 			</dependency>
 		</dependencies>
 	</dependencyManagement>

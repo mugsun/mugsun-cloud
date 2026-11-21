@@ -37,3 +37,11 @@
 - 同步脚本支持可选模块：整个模块对应一个服务，并检查它只引用公共层的类
 - 本地开发用的 Nacos：`deploy/dev/nacos.sh`，密钥首次启动时随机生成
 - 文档：`docs/sync-from-boot.md`、`docs/deployment.md`
+
+### 修复
+
+- 第三方库的版本和单体版打出的包对齐，此前有 5 个库不一致
+  - tika-core 2.4.1 → 3.2.2，commons-io 2.16.1 → 2.20.0
+  - commons-collections4 4.4 → 4.5.0，guava 33.4.8 → 33.3.1
+  - mybatis-spring-boot-starter 3.0.5 → 3.0.3
+  - 父 pom 不再引入 `spring-cloud-alibaba-dependencies`，只写 Nacos 组件的版本
