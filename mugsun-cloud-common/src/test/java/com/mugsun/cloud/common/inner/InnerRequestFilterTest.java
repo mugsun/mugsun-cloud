@@ -633,6 +633,86 @@ class InnerRequestFilterTest {
 		assertThat(okOf(held.get(5, TimeUnit.SECONDS))).isTrue();
 	}
 
+	/** 名额按租户分：一个租户占到自己的份额以后，它再来的请求得到「忙」，别的租户照常进得来。按的是签过名的租户号 */
+	@Test
+	void oneTenantCannotFillAnEndpointForTheOthers() throws Exception {
+		InnerProperties properties = limited(3, Duration.ZERO);
+		properties.setMaxConcurrentPerTenant(2);
+		InnerRequestFilter filter = filter(properties);
+		CountDownLatch entered = new CountDownLatch(2);
+		CountDownLatch release = new CountDownLatch(1);
+		behaviour = call -> {
+			if ("000000".equals(call.tenant())) {
+				entered.countDown();
+				await(release);
+			}
+			return Map.of("count", 3);
+		};
+		Future<MockHttpServletResponse> first = inBackground(filter, signed(PATH, "000000", BODY));
+		Future<MockHttpServletResponse> second = inBackground(filter, signed(PATH, "000000", BODY));
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+		MockHttpServletRequest third = signed(PATH, "000000", BODY);
+		MockHttpServletResponse refused = run(filter, third);
+		MockHttpServletResponse other = run(filter, signed(PATH, "T10001", BODY));
+
+		assertThat(codeOf(refused)).as("同一个租户的第三个").isEqualTo("busy");
+		assertResponseSigned(third, refused);
+		assertThat(okOf(other)).as("别的租户").isTrue();
+		assertThat(calls).extracting(InnerCall::tenant).containsExactly("000000", "000000", "T10001");
+
+		release.countDown();
+		assertThat(okOf(first.get(5, TimeUnit.SECONDS))).isTrue();
+		assertThat(okOf(second.get(5, TimeUnit.SECONDS))).isTrue();
+		behaviour = call -> Map.of("count", 3);
+		assertThat(okOf(run(filter, signed(PATH, "000000", BODY)))).as("份额还回来了").isTrue();
+	}
+
+	/** 什么都不配时：一个接口 6 个名额，同一个租户最多 5 个，剩下 1 个别的租户用；6 个都占着时谁也进不来 */
+	@Test
+	void byDefaultOneTenantGetsFiveOfTheSixSlots() throws Exception {
+		InnerProperties properties = properties();
+		properties.setMaxWait(Duration.ZERO);
+		InnerRequestFilter filter = filter(properties);
+		CountDownLatch entered = new CountDownLatch(5);
+		CountDownLatch release = holdCallsInside(entered);
+		List<Future<MockHttpServletResponse>> held = new ArrayList<>();
+		for (int i = 0; i < 5; i++) {
+			held.add(inBackground(filter, signed(PATH, "000000", BODY)));
+		}
+		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+
+		assertThat(codeOf(run(filter, signed(PATH, "000000", BODY)))).as("同一个租户的第六个").isEqualTo("busy");
+		held.add(inBackground(filter, signed(PATH, "T10001", BODY)));
+		for (int i = 0; i < 5_000 && calls.size() < 6; i++) {
+			Thread.sleep(1);
+		}
+		assertThat(calls).as("别的租户进得来").hasSize(6);
+		assertThat(codeOf(run(filter, signed(PATH, "T10002", BODY)))).as("六个都占着，第三个租户").isEqualTo("busy");
+
+		release.countDown();
+		for (Future<MockHttpServletResponse> response : held) {
+			assertThat(okOf(response.get(5, TimeUnit.SECONDS))).isTrue();
+		}
+	}
+
+	/** 启动时把两个上限都写进日志：排查「为什么回了忙」时先看这一行 */
+	@Test
+	void bothLimitsAreLoggedAtStartup() {
+		Logger logger = (Logger) LoggerFactory.getLogger(InnerRequestFilter.class);
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		logger.addAppender(appender);
+		try {
+			filter();
+		} finally {
+			logger.detachAppender(appender);
+		}
+
+		assertThat(appender.list).extracting(ILoggingEvent::getFormattedMessage)
+			.containsExactly("内部接口 1 个：[" + PATH + "]，每个同时最多处理 6 个请求，其中同一个租户最多 5 个");
+	}
+
 	/** 验签通过的请求才来占名额、排队：没有密钥的人既占不满名额，也探测不出接口忙不忙 */
 	@Test
 	void callsThatFailTheSignatureCheckNeverQueueForASlot() throws Exception {
@@ -658,7 +738,7 @@ class InnerRequestFilterTest {
 		CountDownLatch release = holdCallsInside(entered);
 		Future<MockHttpServletResponse> held = inBackground(filter, signed(PATH, "000000", BODY));
 		assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
-		Logger logger = (Logger) LoggerFactory.getLogger(InnerRequestFilter.class);
+		Logger logger = (Logger) LoggerFactory.getLogger(InnerGate.class);
 		ListAppender<ILoggingEvent> appender = new ListAppender<>();
 		appender.start();
 		logger.addAppender(appender);
@@ -860,9 +940,11 @@ class InnerRequestFilterTest {
 		};
 	}
 
+	/** 一个接口这么多个名额，不分租户（同一个租户也能占满）。要测按租户分的，拿到以后自己再改份额 */
 	private static InnerProperties limited(int maxConcurrent, Duration maxWait) {
 		InnerProperties properties = properties();
 		properties.setMaxConcurrent(maxConcurrent);
+		properties.setMaxConcurrentPerTenant(maxConcurrent);
 		properties.setMaxWait(maxWait);
 		return properties;
 	}

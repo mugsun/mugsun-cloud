@@ -106,16 +106,58 @@ class InnerPropertiesTest {
 		assertThatThrownBy(response::validate).hasMessageContaining("max-response-size");
 	}
 
-	/** 不配时：每个内部接口同时处理 5 个，满了等 2 秒；接连失败 3 次熔断，停 10 秒 */
+	/** 不配时：每个内部接口同时处理 6 个，其中同一个租户最多 5 个，满了等 2 秒；接连失败 3 次熔断，停 10 秒 */
 	@Test
 	void concurrencyAndBreakerDefaults() {
 		InnerProperties properties = new InnerProperties();
 		properties.validate();
 
-		assertThat(properties.getMaxConcurrent()).isEqualTo(5);
+		assertThat(properties.getMaxConcurrent()).isEqualTo(6);
+		assertThat(properties.getMaxConcurrentPerTenant()).as("0 是自动算").isZero();
+		assertThat(properties.perTenantLimit()).isEqualTo(5);
 		assertThat(properties.getMaxWait()).isEqualTo(Duration.ofSeconds(2));
 		assertThat(properties.getBreakerFailures()).isEqualTo(3);
 		assertThat(properties.getBreakerPause()).isEqualTo(Duration.ofSeconds(10));
+	}
+
+	/** 没配每个租户的份额时，留出四分之一（至少 1 个）给别的租户；只有 1 个名额时留不出来 */
+	@Test
+	void theSharePerTenantLeavesAQuarterForOthersUnlessConfigured() {
+		Map<Integer, Integer> expected = Map.of(1, 1, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 8, 6, 9, 7, 16, 12, 64, 48);
+		expected.forEach((maxConcurrent, perTenant) -> {
+			InnerProperties properties = new InnerProperties();
+			properties.setMaxConcurrent(maxConcurrent);
+			properties.validate();
+
+			assertThat(properties.perTenantLimit()).as("一共 %d 个名额", maxConcurrent).isEqualTo(perTenant);
+		});
+
+		InnerProperties configured = new InnerProperties();
+		configured.setMaxConcurrent(16);
+		configured.setMaxConcurrentPerTenant(3);
+		configured.validate();
+		assertThat(configured.perTenantLimit()).isEqualTo(3);
+
+		InnerProperties shared = new InnerProperties();
+		shared.setMaxConcurrent(16);
+		shared.setMaxConcurrentPerTenant(16);
+		shared.validate();
+		assertThat(shared.perTenantLimit()).as("配成和总数一样就是不分租户").isEqualTo(16);
+	}
+
+	/** 每个租户的份额配成负数、或者比总数还大，都是配错了：拒绝启动，不悄悄改成别的数 */
+	@Test
+	void theSharePerTenantMustFitInTheTotal() {
+		InnerProperties negative = new InnerProperties();
+		negative.setMaxConcurrentPerTenant(-1);
+		assertThatThrownBy(negative::validate).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("max-concurrent-per-tenant").hasMessageContaining("-1");
+
+		InnerProperties tooMany = new InnerProperties();
+		tooMany.setMaxConcurrent(4);
+		tooMany.setMaxConcurrentPerTenant(5);
+		assertThatThrownBy(tooMany::validate).isInstanceOf(IllegalStateException.class)
+			.hasMessageContaining("max-concurrent-per-tenant").hasMessageContaining("现在是 4").hasMessageContaining("现在是 5");
 	}
 
 	@Test
@@ -162,6 +204,7 @@ class InnerPropertiesTest {
 			Map.entry("mugsun.cloud.inner.max-request-size", "2MB"),
 			Map.entry("mugsun.cloud.inner.max-response-size", "16MB"),
 			Map.entry("mugsun.cloud.inner.max-concurrent", "16"),
+			Map.entry("mugsun.cloud.inner.max-concurrent-per-tenant", "4"),
 			Map.entry("mugsun.cloud.inner.max-wait", "500ms"),
 			Map.entry("mugsun.cloud.inner.breaker-failures", "5"),
 			Map.entry("mugsun.cloud.inner.breaker-pause", "30s")));
@@ -178,6 +221,8 @@ class InnerPropertiesTest {
 		assertThat(properties.getMaxRequestSize()).isEqualTo(DataSize.ofMegabytes(2));
 		assertThat(properties.getMaxResponseSize()).isEqualTo(DataSize.ofMegabytes(16));
 		assertThat(properties.getMaxConcurrent()).isEqualTo(16);
+		assertThat(properties.getMaxConcurrentPerTenant()).isEqualTo(4);
+		assertThat(properties.perTenantLimit()).isEqualTo(4);
 		assertThat(properties.getMaxWait()).isEqualTo(Duration.ofMillis(500));
 		assertThat(properties.getBreakerFailures()).isEqualTo(5);
 		assertThat(properties.getBreakerPause()).isEqualTo(Duration.ofSeconds(30));

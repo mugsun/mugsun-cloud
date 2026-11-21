@@ -48,9 +48,16 @@ public class InnerProperties implements InitializingBean {
 
 	/**
 	 * 本服务的每个内部接口同时最多处理几个请求。满了的时候新来的先等 {@link #maxWait}，还轮不到就回「忙」。
-	 * 默认 5，是数据库连接池（默认 10 个连接）的一半：内部接口的查询卡住时，本服务自己的接口还有连接可用
+	 * 默认 6，数据库连接池默认 10 个连接：内部接口的查询卡住时，本服务自己的接口还有连接可用
 	 */
-	private int maxConcurrent = 5;
+	private int maxConcurrent = 6;
+
+	/**
+	 * 上面这些名额里，同一个租户最多占几个，剩下的留给别的租户：一个租户的请求再多再慢，别的租户也进得来。
+	 * 0 是自动算：留出四分之一（至少 1 个），默认 6 个名额时是 5。自己配要在 1 和 {@link #maxConcurrent} 之间，
+	 * 配成和它一样就是不分租户
+	 */
+	private int maxConcurrentPerTenant;
 
 	/** 内部接口处理满了的时候，新来的请求最多等多久；0 是不等 */
 	private Duration maxWait = Duration.ofSeconds(2);
@@ -84,6 +91,10 @@ public class InnerProperties implements InitializingBean {
 		if (maxConcurrent < 1) {
 			throw new IllegalStateException("mugsun.cloud.inner.max-concurrent 至少是 1，现在是 " + maxConcurrent);
 		}
+		if (maxConcurrentPerTenant < 0 || maxConcurrentPerTenant > maxConcurrent) {
+			throw new IllegalStateException("mugsun.cloud.inner.max-concurrent-per-tenant 要在 1 和 max-concurrent（现在是 "
+				+ maxConcurrent + "）之间，或者配 0 让它自动算，现在是 " + maxConcurrentPerTenant);
+		}
 		if (maxWait == null || maxWait.isNegative()) {
 			throw new IllegalStateException("mugsun.cloud.inner.max-wait 不能是负数");
 		}
@@ -113,6 +124,14 @@ public class InnerProperties implements InitializingBean {
 
 	byte[] key() {
 		return secret.getBytes(StandardCharsets.UTF_8);
+	}
+
+	/** 一个内部接口的名额里同一个租户最多占几个：配了就用配的，没配就留出四分之一、至少 1 个给别的租户 */
+	int perTenantLimit() {
+		if (maxConcurrentPerTenant > 0) {
+			return maxConcurrentPerTenant;
+		}
+		return Math.max(1, maxConcurrent - Math.max(1, maxConcurrent / 4));
 	}
 
 	public void setSecret(String secret) {
@@ -173,6 +192,14 @@ public class InnerProperties implements InitializingBean {
 
 	public void setMaxConcurrent(int maxConcurrent) {
 		this.maxConcurrent = maxConcurrent;
+	}
+
+	public int getMaxConcurrentPerTenant() {
+		return maxConcurrentPerTenant;
+	}
+
+	public void setMaxConcurrentPerTenant(int maxConcurrentPerTenant) {
+		this.maxConcurrentPerTenant = maxConcurrentPerTenant;
 	}
 
 	public Duration getMaxWait() {

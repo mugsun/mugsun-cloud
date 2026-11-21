@@ -27,10 +27,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -53,9 +49,11 @@ import java.util.function.Supplier;
  * <p>接口在 {@code TenantContext.execute(调用方传来的租户, ...)} 里执行，这时没有登录用户。成功、业务失败和「忙」都返回 200，
  * 响应带签名；其它情况返回不带签名的错误状态码，调用方一律当作调用失败。
  *
- * <p>每个接口同时最多处理 {@code mugsun.cloud.inner.max-concurrent} 个请求。满了的时候新来的先等
+ * <p>每个接口同时最多处理 {@code mugsun.cloud.inner.max-concurrent} 个请求，其中同一个租户最多
+ * {@code mugsun.cloud.inner.max-concurrent-per-tenant} 个（{@link InnerGate}）。满了的时候新来的先等
  * {@code mugsun.cloud.inner.max-wait}，还轮不到就回「忙」，这次不执行，调用方可以换一个实例。这样一个接口的查询卡住时，
- * 它占住的数据库连接有上限，本服务别的接口还有连接可用。按接口分开限，一个满了不影响别的；验签通过的请求才来占名额。
+ * 它占住的数据库连接有上限，本服务别的接口还有连接可用；一个租户的请求再多再慢，也占不满一个接口，别的租户还进得来。
+ * 按接口分开限，一个满了不影响别的；验签通过的请求才来占名额，租户号用的是签过名的那一个。
  *
  * <p>调用方在请求头里说了最多等多久的，处理期间发出的查询到点就取消（{@link InnerQueryTimeout}）。
  */
@@ -91,7 +89,7 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 	private volatile Map<String, InnerEndpoint> endpoints = Map.of();
 
 	/** 每个接口的名额，和 {@link #endpoints} 的路径一一对应 */
-	private volatile Map<String, Gate> gates = Map.of();
+	private volatile Map<String, InnerGate> gates = Map.of();
 
 	@Autowired
 	public InnerRequestFilter(InnerProperties properties, InnerNonceStore nonceStore, ObjectMapper objectMapper,
@@ -122,16 +120,17 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 	@Override
 	public void afterSingletonsInstantiated() {
 		Map<String, InnerEndpoint> indexed = index(endpointSource.get());
-		Map<String, Gate> built = new HashMap<>();
-		indexed.keySet().forEach(path -> built.put(path, new Gate(properties.getMaxConcurrent())));
+		Map<String, InnerGate> built = new HashMap<>();
+		indexed.keySet().forEach(path -> built.put(path,
+			new InnerGate(path, properties.getMaxConcurrent(), properties.perTenantLimit())));
 		this.gates = Map.copyOf(built);
 		this.endpoints = indexed;
 		if (!properties.configured()) {
 			log.info("没有配置 mugsun.cloud.inner.secret（环境变量 MUGSUN_INNER_SECRET），服务之间的内部调用停用："
 				+ "本服务不接受 /inner 请求，也不向别的服务发起调用");
 		} else if (!endpoints.isEmpty()) {
-			log.info("内部接口 {} 个：{}，每个同时最多处理 {} 个请求", endpoints.size(), new TreeSet<>(endpoints.keySet()),
-				properties.getMaxConcurrent());
+			log.info("内部接口 {} 个：{}，每个同时最多处理 {} 个请求，其中同一个租户最多 {} 个", endpoints.size(),
+				new TreeSet<>(endpoints.keySet()), properties.getMaxConcurrent(), properties.perTenantLimit());
 		}
 	}
 
@@ -277,10 +276,9 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 		if (callerWait > 0) {
 			queueLimit = Math.min(queueLimit, callerWait);
 		}
-		Gate gate = gates.get(path);
+		InnerGate gate = gates.get(path);
 		long queued = System.nanoTime();
-		if (!gate.enter(queueLimit)) {
-			gate.refused(path, (System.nanoTime() - queued) / 1_000_000);
+		if (!gate.enter(tenant, queueLimit)) {
 			answer(response, path, nonce, caller, failure(InnerProtocol.CODE_BUSY, "这个内部接口正忙，这次没有执行"));
 			return;
 		}
@@ -310,7 +308,7 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 			return;
 		} finally {
 			InnerDeadline.clear();
-			gate.leave();
+			gate.leave(tenant);
 		}
 		answer(response, path, nonce, caller, payload);
 		long waited = (started - queued) / 1_000_000;
@@ -407,52 +405,5 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 		response.setHeader("Cache-Control", "no-store");
 		response.setContentLength(payload.length);
 		response.getOutputStream().write(payload);
-	}
-
-	/** 一个内部接口的名额：同时最多放这么多个请求进去处理 */
-	private static final class Gate {
-
-		/** 「忙」的日志最少隔这么久打一行 */
-		private static final long LOG_EVERY_NANOS = 10_000_000_000L;
-
-		private final int limit;
-
-		/** 先到先得：等着的请求不会被后来的插队 */
-		private final Semaphore permits;
-
-		private final AtomicInteger refusedSinceLogged = new AtomicInteger();
-
-		private final AtomicLong loggedAt = new AtomicLong(System.nanoTime() - LOG_EVERY_NANOS);
-
-		private Gate(int limit) {
-			this.limit = limit;
-			this.permits = new Semaphore(limit, true);
-		}
-
-		/** 占一个名额，最多等这么多毫秒。没占到返回 false */
-		private boolean enter(long waitMillis) {
-			try {
-				return permits.tryAcquire(waitMillis, TimeUnit.MILLISECONDS);
-			} catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-				return false;
-			}
-		}
-
-		private void leave() {
-			permits.release();
-		}
-
-		/** 回了一次「忙」。日志 10 秒最多一行，写上这一行代表几次：忙的时候不能每个请求刷一行 */
-		private void refused(String path, long waitedMillis) {
-			int count = refusedSinceLogged.incrementAndGet();
-			long now = System.nanoTime();
-			long last = loggedAt.get();
-			if (now - last >= LOG_EVERY_NANOS && loggedAt.compareAndSet(last, now)) {
-				refusedSinceLogged.addAndGet(-count);
-				log.warn("内部接口 {} 同时在处理的请求到了上限 {} 个（mugsun.cloud.inner.max-concurrent），新来的等了 {}ms 还没轮到，"
-					+ "回了「忙」。这样的日志 10 秒最多一行，这一行代表 {} 次", path, limit, waitedMillis, count);
-			}
-		}
 	}
 }
