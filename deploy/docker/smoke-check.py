@@ -5,7 +5,8 @@
 
 - 登录信息里地图、埋点、AI 三个模块都是打开的：system 在 Nacos 里看得到另外三个服务；
 - 同一个登录态在另外三个服务上也有效：四个服务用的是同一套密钥和同一个 Redis；
-- AI 服务取得到地图和埋点两个服务的数据概况：服务之间的调用是通的，共享密钥对得上；
+- AI 服务取得到地图和埋点两个服务的数据概况：服务之间的调用是通的，共享密钥对得上。
+  这两次请求带着 smoke.sh 给的请求编号，它随后到网关、地图、埋点三处的日志里找这个编号；
 - 登录日志里记下的是自检容器自己的地址：客户端地址经管理后台、网关一路传到了服务；
 - 内部接口经网关访问不到；绕过网关直接访问服务，没有签名会被拒绝；
 - Nacos 不接受没带账号的请求；
@@ -43,13 +44,18 @@ def fail(msg):
     sys.exit(1)
 
 
-def fetch(method, url, body=None, token=None):
-    """返回 (状态码, 响应体解析出的对象)。响应体不是 JSON 时对象为 None，连不上时状态码为 0。"""
+def fetch(method, url, body=None, token=None, trace=None):
+    """返回 (状态码, 响应体解析出的对象)。响应体不是 JSON 时对象为 None，连不上时状态码为 0。
+
+    trace 是这次请求自带的请求编号；不给的话由网关定一个。
+    """
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", token)
+    if trace:
+        req.add_header("X-Trace-Id", trace)
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             status, text = resp.status, resp.read()
@@ -63,9 +69,9 @@ def fetch(method, url, body=None, token=None):
         return status, None
 
 
-def api(method, path, body=None):
+def api(method, path, body=None, trace=None):
     """带登录态访问管理后台反代出来的接口，要求业务上也成功，返回 data。"""
-    status, res = fetch(method, BASE + path, body, TOKEN)
+    status, res = fetch(method, BASE + path, body, TOKEN, trace)
     if status != 200 or not isinstance(res, dict) or res.get("code") != 200:
         fail("%s %s 没有成功：HTTP %s，%s" % (method, path, status, (res or {}).get("msg")))
     return res.get("data")
@@ -91,10 +97,12 @@ for path in ("/api/system/gis/layer/page?pageNum=1&pageSize=1",
 print("OK 同一个登录态在地图、埋点、AI 三个服务上都有效")
 
 # 3. 服务之间的调用：这两个接口由 AI 服务接收，它再分别去地图、埋点服务取数据概况。
-#    没配大模型也会返回取到的数据，只是没有解读文字
+#    没配大模型也会返回取到的数据，只是没有解读文字。
+#    两次请求都带着 smoke.sh 给的请求编号（TRACE_ID）：它随后到网关、地图、埋点三处的日志里找这个编号
+trace_id = os.environ.get("TRACE_ID") or None
 for name, path, source in (("地图", "/api/system/ai/weave/gisAsk", "gis_layer"),
                            ("埋点", "/api/system/ai/weave/trackInsight", "track_app")):
-    data = api("POST", path, {"content": "自检"}) or {}
+    data = api("POST", path, {"content": "自检"}, trace_id) or {}
     got = (data.get("data") or {}).get("source")
     if data.get("grounded") is not True or got != source:
         fail("AI 服务没有取到%s服务的数据：grounded=%s，source=%s" % (name, data.get("grounded"), got))

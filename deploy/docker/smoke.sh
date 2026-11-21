@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定、网关的开关传进了容器并且在起作用、
 # 各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
-# 服务之间互相调用 → 两个 system 实例之间保持一致，从空库一起启动都没有重启过，正常停掉一个的过程中经网关的访问不能有失败
+# 服务之间互相调用、同一个请求编号在网关和服务的日志里都找得到
+# → 两个 system 实例之间保持一致，从空库一起启动都没有重启过，正常停掉一个的过程中经网关的访问不能有失败
 # → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复
 # → 把每个接口都请求一遍：不登录进不去，不用登录的接口和清单一致，网关转给了有这个接口的服务，
 # 没有任何角色的账号进得去的接口和清单一致 → 清理。
@@ -298,8 +299,10 @@ system_addrs=($(ip_of system))
 [ "${#system_addrs[@]}" -eq "${MUGSUN_SYSTEM_REPLICAS}" ] || fail "system 的容器不是 ${MUGSUN_SYSTEM_REPLICAS} 个：${system_addrs[*]}"
 # 它最后建一个没有任何角色的账号并登录，登录令牌放进交接用的卷，留给最后一步
 docker volume create "${handoff}" >/dev/null
+# 它调「AI 问图层」「AI 问埋点」时带上这个请求编号，下面到日志里找它
+trace_id="smoke-$(date +%s)-$$"
 docker run --rm --network "${COMPOSE_PROJECT_NAME}_default" \
-	-e SYSTEM_ADDRS="${system_addrs[*]}" \
+	-e SYSTEM_ADDRS="${system_addrs[*]}" -e TRACE_ID="${trace_id}" \
 	-v "${COMPOSE_PROJECT_NAME}_secrets-service:/secrets/service:ro" -v "${handoff}:/handoff" \
 	-v "${PWD}/boot/smoke.py:/smoke.py:ro" -v "${PWD}/boot/smoke-requirements.txt:/req.txt:ro" \
 	-v "${PWD}/smoke-check.py:/smoke-check.py:ro" \
@@ -310,6 +313,29 @@ checked=$(date +%s)
 after_line=$("${DC[@]}" run --rm -T init show)
 [[ "${after_line}" == *"初始密码已失效"* ]] || fail "改口令以后 init show 没有提示初始密码已失效"
 [[ "${after_line}" != *"${admin_pw}"* ]] || fail "改口令以后 init show 还在打印初始口令"
+
+# ---- 请求编号：拿着它能在网关和服务的日志里找到同一次请求 ----
+# 网关的访问日志里要有上面那个编号；AI 服务转去调地图、埋点服务时带着它，那两个服务每次内部调用记一行日志，
+# 这一行在级别后面的方括号里也要是它（docs/deployment.md「请求编号」）。编号没有传过去，或者服务的日志格式里没有带上它，
+# 这里都会找不到。容器的日志晚一点才读得到，没找到就等一秒再看。
+# 用法：trace_logged <服务> <这一行要匹配的正则>
+trace_logged() {
+	local svc_logs
+	for _ in 1 2 3 4 5 6 7 8 9 10; do
+		svc_logs=$("${DC[@]}" logs --no-color "${1}" 2>&1 || true)
+		if grep -q -E -- "${2}" <<<"${svc_logs}"; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+trace_logged gateway " ACCESS .* trace=${trace_id}( |\$)" || fail "网关的访问日志里没有请求编号 ${trace_id}"
+for svc in gis track; do
+	trace_logged "${svc}" " INFO \[${trace_id}\] .*内部调用 /inner/${svc}/insight/snapshot " \
+		|| fail "${svc} 的日志里没有带着请求编号 ${trace_id} 的内部调用记录：编号没有从 AI 服务传过来，或者日志的格式里没有带上它"
+done
+echo ">> 自检带的请求编号在网关、地图、埋点三处的日志里都找得到"
 
 # ---- 时区（默认 Asia/Shanghai，MUGSUN_TZ 可改） ----
 # 库里的时间列不带时区，按后端 JVM 的时区写入、页面原样显示，所以常驻容器的时区偏移要一致；
