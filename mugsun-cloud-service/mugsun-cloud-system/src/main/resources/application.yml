@@ -36,3 +36,7 @@ mugsun:
         # 埋点服务在注册中心里的名字。没部署这个服务时，菜单里不显示埋点分析，登录信息里 trackEnabled 为 false。
         # 和单体版一样，MUGSUN_TRACK_ENABLED=false 也会把埋点关掉；埋点没有系统参数开关
         service-id: mugsun-track
+      ai:
+        # AI 服务在注册中心里的名字。没部署这个服务时，菜单里不显示 AI，登录信息里 aiEnabled 为 false。
+        # 和单体版一样，MUGSUN_AI_ENABLED=false 或系统参数 ai.module.enabled=false 也会把 AI 关掉
+        service-id: mugsun-ai

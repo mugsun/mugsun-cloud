@@ -20,13 +20,15 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * system 服务怎么判断 GIS、埋点这些可选模块在不在、开没开：注册中心用一个假的代替，时间用手动拨的钟。
+ * system 服务怎么判断 GIS、埋点、AI 这些可选模块在不在、开没开：注册中心用一个假的代替，时间用手动拨的钟。
  */
 class ModuleStatusTest {
 
 	private static final String GIS = "mugsun-gis";
 
 	private static final String TRACK = "mugsun-track";
+
+	private static final String AI = "mugsun-ai";
 
 	private final FakeDiscovery discovery = new FakeDiscovery();
 
@@ -255,6 +257,67 @@ class ModuleStatusTest {
 				.isInstanceOf(InvalidModuleSwitchException.class)
 				.hasMessageContaining("mugsun.track.enabled")
 				.hasMessageContaining("MUGSUN_TRACK_ENABLED");
+		}
+	}
+
+	@Test
+	void aiIsOffWhenOnlyOtherServicesAreDeployed() {
+		CloudAiModuleStatus ai = new CloudAiModuleStatus(presence, paramService, AI, null);
+		discovery.up(GIS);
+		discovery.up(TRACK);
+
+		assertThat(ai.present()).isFalse();
+		assertThat(ai.enabled()).isFalse();
+	}
+
+	@Test
+	void aiIsOnByDefaultWhenItsServiceIsDeployed() {
+		CloudAiModuleStatus ai = new CloudAiModuleStatus(presence, paramService, AI, null);
+		discovery.up(AI);
+		when(paramService.getValue(ModuleSwitch.PARAM_AI)).thenReturn(null);
+
+		assertThat(ai.present()).isTrue();
+		assertThat(ai.enabled()).isTrue();
+		assertThat(gis.present()).isFalse();
+	}
+
+	@Test
+	void systemParamTurnsAiOffEvenIfTheServiceIsDeployed() {
+		CloudAiModuleStatus ai = new CloudAiModuleStatus(presence, paramService, AI, null);
+		discovery.up(AI);
+		when(paramService.getValue(ModuleSwitch.PARAM_AI)).thenReturn("false");
+
+		assertThat(ai.present()).isTrue();
+		assertThat(ai.enabled()).isFalse();
+	}
+
+	@Test
+	void gisSystemParamDoesNotTurnAiOff() {
+		CloudAiModuleStatus ai = new CloudAiModuleStatus(presence, paramService, AI, null);
+		discovery.up(AI);
+		when(paramService.getValue(ModuleSwitch.PARAM_GIS)).thenReturn("false");
+
+		assertThat(ai.enabled()).isTrue();
+	}
+
+	@Test
+	void configSwitchTurnsAiOffWithoutAskingTheRegistry() {
+		discovery.up(AI);
+		when(paramService.getValue(ModuleSwitch.PARAM_AI)).thenReturn("true");
+		CloudAiModuleStatus off = new CloudAiModuleStatus(presence, paramService, AI, "false");
+
+		assertThat(off.present()).isFalse();
+		assertThat(off.enabled()).isFalse();
+		assertThat(discovery.calls).isZero();
+	}
+
+	@Test
+	void illegalAiConfigSwitchFailsAtStartup() {
+		for (String raw : new String[] {"", "1", " true"}) {
+			assertThatThrownBy(() -> new CloudAiModuleStatus(presence, paramService, AI, raw))
+				.isInstanceOf(InvalidModuleSwitchException.class)
+				.hasMessageContaining("mugsun.ai.enabled")
+				.hasMessageContaining("MUGSUN_AI_ENABLED");
 		}
 	}
 
