@@ -1,11 +1,11 @@
-# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个服务、管理后台、监控中心。
+# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个业务服务、日志服务、管理后台、监控中心。
 #
 #   docker compose -f deploy/docker/docker-compose.yml up -d --build
 #   浏览器打开 http://localhost:8188 ，账号 admin，口令（不写进日志）：
 #   docker compose -f deploy/docker/docker-compose.yml run --rm init show
 #
 # 只需要 Docker（Compose v2.17 以上），镜像都在 Docker 里从源码构建。做法和 mugsun-boot 的 docker-compose.full.yml 一致，
-# 区别是后端从一个进程换成了网关加四个服务，另加一个注册中心。
+# 区别是后端从一个进程换成了网关加四个业务服务和一个日志服务，另加一个注册中心。
 #
 # 默认就是安全的配置，除了监控中心的登录账号（见最后一条），不带任何弱口令：
 #   - 首次启动由 init 生成全部口令和密钥，按使用方拆进六个密钥卷，每个容器只挂自己的那一个，重启不变（见 gen-secrets.sh）；
@@ -24,8 +24,9 @@
 # 一个容器没在运行时，Docker 会把它的名字交给宿主机的 DNS 去查，查到什么地址，请求和口令就发到哪里；
 # 管理后台的 Nginx 还只在启动时查一次，查错了要等重启才改得过来。
 # 时区：常驻容器默认都是 Asia/Shanghai，换时区设 MUGSUN_TZ=<IANA 名称>。库里的时间列不带时区，按后端 JVM 的时区写入，
-# 所以四个服务的时区必须一致；给已经在跑的环境改时区不会改写旧数据。
-# 内存：整套跑起来实测约占 3.5 GB（每个 Java 进程的堆上限默认 512 MB，用 MUGSUN_JAVA_OPTS 改）。
+# 所以各服务的时区必须一致；给已经在跑的环境改时区不会改写旧数据。
+# 内存：整套跑起来实测约占 3.5 GB（加监控中心和日志服务之前测的，现在多了两个 Java 进程，还没有重测；
+# 每个 Java 进程的堆上限默认 512 MB，用 MUGSUN_JAVA_OPTS 改）。
 # 从头构建管理后台的前端更占内存，Docker 至少分 8 GB：单独从头构建实测用到 7.3 GB，分 8 GB（Docker 里看到的是 7.75 GB）能过，
 # 分 6 GB（看到的是 5.8 GB）时连着两次构建到一半被杀掉。构建缓存还在的时候不会重新打包，内存不够也看不出来。
 # 内存不宽裕时先单独构建它，构建期间不要有别的容器和构建占内存，然后再执行上面的 up：
@@ -34,7 +35,7 @@
 # 不要单删密钥卷而保留 pg-data：库口令只在首次初始化时写入，新生成的口令会对不上。
 name: mugsun-cloud
 
-# 四个业务服务共用的构建参数和环境变量。口令和密钥不在这里，在 MUGSUN_ENV_FILE 指的文件里，由镜像的入口脚本读入。
+# 四个业务服务和日志服务共用的构建参数和环境变量。口令和密钥不在这里，在 MUGSUN_ENV_FILE 指的文件里，由镜像的入口脚本读入。
 x-build: &build
   context: ../..
   dockerfile: deploy/docker/Dockerfile
@@ -42,7 +43,7 @@ x-build: &build
 x-service-env: &service-env
   # JVM 默认时区：应用取的当前时间和数据库会话的 now() 都跟它走
   TZ: ${MUGSUN_TZ:-Asia/Shanghai}
-  # 镜像默认按容器内存上限的 75% 定堆大小；这里的容器没有设内存上限，五个进程会各自按整台机器的内存来算，所以写明堆上限
+  # 镜像默认按容器内存上限的 75% 定堆大小；这里的容器没有设内存上限，几个进程会各自按整台机器的内存来算，所以写明堆上限
   JAVA_OPTS: ${MUGSUN_JAVA_OPTS:--Xmx512m}
   MUGSUN_ENV_FILE: /secrets/service.env
   # Nacos、数据库和 Redis 都按固定地址连，原因见文件开头
@@ -195,7 +196,7 @@ services:
     restart: "no"
 
   system:
-    # 主库的建表和升级只由它执行，所以它先启动，其它三个服务等它健康以后再启动（docs/deployment.md 第 6 节）
+    # 主库的建表和升级只由它执行，所以它先启动，其它服务等它健康以后再启动（docs/deployment.md 第 6 节）
     build:
       <<: *build
       target: system
@@ -260,6 +261,22 @@ services:
       <<: *build
       target: ai
     image: mugsun-cloud-ai:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  log:
+    # 日志服务：操作、登录、通用、数据变更、访问、错误六类日志的查询和处理接口。日志由产生它的服务自己写进主库，
+    # 不经过它：它停了只是管理后台的日志页面打不开，日志照常记
+    build:
+      <<: *build
+      target: log
+    image: mugsun-cloud-log:local
     environment: *service-env
     volumes:
       - secrets-service:/secrets:ro
@@ -388,6 +405,8 @@ services:
       track:
         condition: service_healthy
       ai:
+        condition: service_healthy
+      log:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

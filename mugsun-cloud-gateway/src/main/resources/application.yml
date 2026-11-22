@@ -96,6 +96,13 @@ spring:
               uri: lb://mugsun-ai
               predicates:
                 - Path=/system/ai/**,/v1/**
+            # 日志服务：六类日志的查询和处理接口。这些路径和别的 /system/** 一样，本来归兜底的 mugsun-system，
+            # 所以要一个一个写在它前面。日志服务多了、少了接口类时这里要跟着改，漏了的话请求落到 system 上，得到 404；
+            # 两边对不对得上，由日志服务的 LogRoutesTest 检查
+            - id: mugsun-log
+              uri: lb://mugsun-log
+              predicates:
+                - Path=/system/oper-log/**,/system/login-log/**,/system/usual-log/**,/system/data-audit/**,/system/api-log/**,/system/error-log/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

@@ -14,5 +14,6 @@
 	<description>运维用的应用，不承担业务，每个子模块可以单独启动</description>
 	<modules>
 		<module>mugsun-cloud-admin</module>
+		<module>mugsun-cloud-log</module>
 	</modules>
 </project>

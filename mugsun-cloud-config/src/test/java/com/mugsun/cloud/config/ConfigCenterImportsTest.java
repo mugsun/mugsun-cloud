@@ -16,7 +16,8 @@ import org.junit.jupiter.api.Test;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * 网关和各服务的 application.yml 里，从 Nacos 配置中心读哪几份配置：名字要和各自的服务名对得上，每个应用的写法要一样。
+ * 网关、各服务和运维目录下各应用的 application.yml 里，从 Nacos 配置中心读哪几份配置：名字要和各自的服务名对得上，
+ * 每个应用的写法要一样。
  *
  * <p>读哪几份是写在各自文件里的（为什么不能写在共用的文件里，见 system 服务的 application.yml 开头）。照着一个服务抄出新服务时，
  * 最容易漏改的就是这几个名字：漏了不报错，新服务会去读别的服务的配置。
@@ -31,7 +32,7 @@ class ConfigCenterImportsTest {
 	@Test
 	void everyApplicationReadsTheSharedFilesAndItsOwn() throws IOException {
 		List<Path> files = applicationFiles();
-		assertThat(files).as("网关加四个服务，至少五份 application.yml").hasSizeGreaterThanOrEqualTo(5);
+		assertThat(files).as("网关、四个业务服务、监控中心和日志服务，至少七份 application.yml").hasSizeGreaterThanOrEqualTo(7);
 
 		for (Path file : files) {
 			List<Map<String, Object>> documents = documents(file);
@@ -66,7 +67,7 @@ class ConfigCenterImportsTest {
 		}
 	}
 
-	/** 网关和每个服务的 application.yml，从仓库根目录找 */
+	/** 网关、每个服务和运维目录下每个应用的 application.yml，从仓库根目录找 */
 	private static List<Path> applicationFiles() throws IOException {
 		Path root = Path.of("").toAbsolutePath();
 		while (root != null && !(Files.isDirectory(root.resolve("mugsun-cloud-gateway"))
@@ -77,8 +78,10 @@ class ConfigCenterImportsTest {
 		String settings = "src/main/resources/application.yml";
 		List<Path> files = new ArrayList<>();
 		files.add(root.resolve("mugsun-cloud-gateway").resolve(settings));
-		try (Stream<Path> services = Files.list(root.resolve("mugsun-cloud-service"))) {
-			services.map(service -> service.resolve(settings)).filter(Files::isRegularFile).sorted().forEach(files::add);
+		for (String parent : List.of("mugsun-cloud-service", "mugsun-cloud-ops")) {
+			try (Stream<Path> apps = Files.list(root.resolve(parent))) {
+				apps.map(app -> app.resolve(settings)).filter(Files::isRegularFile).sorted().forEach(files::add);
+			}
 		}
 		return files;
 	}

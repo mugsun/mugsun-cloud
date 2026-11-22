@@ -921,7 +921,7 @@ order by t.instance_id;
 
 ## 16. 用 Docker Compose 起全套
 
-`deploy/docker/docker-compose.yml` 一条命令起全套：PostgreSQL（带 PostGIS 和 pgvector）、Redis、Nacos、网关、四个服务和管理后台。只需要 Docker 和 Compose v2.17 以上，镜像都在 Docker 里从源码构建，不用装 JDK 和 Node。
+`deploy/docker/docker-compose.yml` 一条命令起全套：PostgreSQL（带 PostGIS 和 pgvector）、Redis、Nacos、网关、四个业务服务、日志服务（第 19 节）、监控中心（第 18 节）和管理后台。只需要 Docker 和 Compose v2.17 以上，镜像都在 Docker 里从源码构建，不用装 JDK 和 Node。
 
 ```bash
 docker compose -f deploy/docker/docker-compose.yml up -d --build
@@ -942,7 +942,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show    # 看 a
 | 可信代理（第 2 节） | 管理后台的 Nginx 是网关前面唯一的代理，网关的 `MUGSUN_OPENAPI_TRUSTED_PROXIES` 只写它一个地址 |
 | 同一套密钥（第 3 节）、服务之间调用的密钥（第 4 节） | 首次启动时随机生成一套，四个服务读同一个密钥文件。网关的密钥文件里只有接入 Nacos 的账号 |
 | Nacos 开鉴权（第 5 节） | 打开客户端鉴权。网关和四个服务共用一个账号，它只能注册和查询服务、读配置，改不了配置。管理员口令只有一次性的初始化容器读得到 |
-| 先启动 system（第 6 节） | gis、track、ai 等 system 健康以后才启动 |
+| 先启动 system（第 6 节） | gis、track、ai 和日志服务等 system 健康以后才启动 |
 | 文件存储要挂卷（第 12 节） | system 和 track 共用一个卷，目录布局和单体版一样 |
 
 各服务按 `prod` 配置运行：密钥缺失拒绝启动，验证码打开，接口文档关闭。
@@ -1102,7 +1102,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 
 | 镜像 | 来源 |
 | --- | --- |
-| 网关和四个服务 | `deploy/docker/Dockerfile`，一个文件五个构建目标。基础镜像固定摘要，以 uid 10001 运行，带人大金仓和达梦的驱动 |
+| 网关、四个业务服务、日志服务和监控中心 | `deploy/docker/Dockerfile`，一个文件七个构建目标。基础镜像固定摘要，以 uid 10001 运行，带人大金仓和达梦的驱动 |
 | 管理后台 | mugsun-pc 仓库自己的 Dockerfile，源码取一个固定的提交 |
 | PostgreSQL | `ghcr.io/mugsun/postgis-pgvector:16-3.4`，和单体版用的是同一个。按标签拉取，没有固定摘要；要固定就设 `MUGSUN_PG_IMAGE=<镜像>@sha256:<摘要>` |
 | Redis、Nacos、初始化容器用的 Alpine | 固定摘要 |
@@ -1113,7 +1113,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 
 ### 只用镜像
 
-五个镜像可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`：
+七个镜像可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`admin`：
 
 ```bash
 docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
@@ -1381,3 +1381,23 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 现在还没有的：
 
 - 网关的详细信息看不到，只看得到在不在线。网关是对外的入口，它的监控接口只开了健康检查。
+
+## 19. 日志服务：日志的查询单独成一个服务
+
+对应 BladeX 的 `blade-ops/blade-log`。代码在 `mugsun-cloud-ops/mugsun-cloud-log`，服务名 `mugsun-log`，端口 8105。
+
+| 项 | 说明 |
+| --- | --- |
+| 管什么 | 管理后台六个日志页面用的接口：操作日志 `/system/oper-log/**`、登录日志 `/system/login-log/**`、通用日志 `/system/usual-log/**`、数据变更记录 `/system/data-audit/**`、访问日志 `/system/api-log/**`、错误日志 `/system/error-log/**`。路径和单体版一样，网关按路径转给它 |
+| 日志谁来写 | 产生日志的服务自己写进主库，不经过日志服务。各服务连的是同一个主库，日志服务只读，外加两处写：处理、删除错误日志，登录日志页上的解锁账号（清 Redis 里的锁定标记） |
+| 它没在运行时 | 这六组路径经网关返回 503，管理后台的日志页面打不开，菜单还在。各服务照常记日志，等它起来以后都查得到 |
+| 和 BladeX 不一样的地方 | BladeX 的各服务把日志发给日志服务，由它写库。这里各服务直接写库：少一次网络调用，日志服务停了也不丢日志 |
+
+- 它和 gis、track、ai 是同一类服务：依赖公共层，读同一个密钥文件，用同一个 Nacos 账号，健康检查是 `/ping`，停止时的步骤、每个实例领机器号、到配置中心读的几份配置（它自己的那份叫 `mugsun-log.yaml`）都一样。本文前面说「四个服务」的要求，对它同样适用；前面各节的实测数字是加它之前测的。
+- 要在 system 健康以后启动：主库的表由 system 建。
+- 各服务出错时都记错误日志。拆出日志服务以前，只有 system 出错会记，gis、track、ai 出错只在各自的日志文件里。
+- 按保留期删旧日志的定时清理还在 system 里，没有跟过来。
+
+### 验证到什么程度
+
+只编译过，并用一个测试核对了网关的路由和日志服务里的接口类对得上（`LogRoutesTest`）。日志服务还没有实际启动过：六个页面经网关能不能查、解锁账号和处理错误日志管不管用、别的服务出错是不是记得进来，都还没有测。

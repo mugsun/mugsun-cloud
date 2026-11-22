@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud-ops</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-log</artifactId>
+	<name>mugsun-cloud-log</name>
+	<description>日志服务：操作、登录、通用、数据变更、访问、错误六类日志的查询和处理（从 mugsun-boot-core 里分出来的接口）</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-common</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>mugsun-cloud-log</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<skip>false</skip>
+					<mainClass>com.mugsun.cloud.log.LogApplication</mainClass>
+					<!-- 和 java -jar 一致：以仓库根目录为工作目录，读 ./config/application-local.yml -->
+					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+					<profiles>
+						<profile>dev</profile>
+					</profiles>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

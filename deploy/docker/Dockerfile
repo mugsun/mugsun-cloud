@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
-# 网关、四个业务服务和监控中心的镜像：一个文件，六个构建目标 gateway / system / gis / track / ai / admin。
+# 网关、四个业务服务、日志服务和监控中心的镜像：一个文件，七个构建目标 gateway / system / gis / track / ai / log / admin。
 # 构建上下文是仓库根目录，例：
 #   docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
 # 整套一起起，用同目录的 docker-compose.yml。
@@ -28,7 +28,7 @@ COPY mugsun-cloud-common/ mugsun-cloud-common/
 COPY mugsun-cloud-gateway/ mugsun-cloud-gateway/
 COPY mugsun-cloud-service/ mugsun-cloud-service/
 COPY mugsun-cloud-ops/ mugsun-cloud-ops/
-# 六个包一次打出来，下面六个目标各取各的
+# 七个包一次打出来，下面七个目标各取各的
 RUN --mount=type=cache,target=/root/.m2 \
     mkdir -p /root/.m2/repository && cp -R /core-m2/com /root/.m2/repository/ \
     && mvn -B -q -Pkingbase,dameng package -DskipTests
@@ -72,6 +72,11 @@ FROM runtime AS ai
 COPY --from=build --chown=mugsun:mugsun /build/mugsun-cloud-service/mugsun-cloud-ai/target/mugsun-cloud-ai.jar /app/app.jar
 ENV MUGSUN_HEALTH_PORT=8104 MUGSUN_HEALTH_PATH=/ping
 EXPOSE 8104
+
+FROM runtime AS log
+COPY --from=build --chown=mugsun:mugsun /build/mugsun-cloud-ops/mugsun-cloud-log/target/mugsun-cloud-log.jar /app/app.jar
+ENV MUGSUN_HEALTH_PORT=8105 MUGSUN_HEALTH_PATH=/ping
+EXPOSE 8105
 
 FROM runtime AS admin
 COPY --from=build --chown=mugsun:mugsun /build/mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar /app/app.jar

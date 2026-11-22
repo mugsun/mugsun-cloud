@@ -20,16 +20,23 @@
       "auth.MugsunStpInterface",
       "auth.IpRegionService",
       "auth.IpRegionProperties",
+      "auth.LoginLockService",
+      "auth.lock.*",
       "log.OperationLog",
       "log.OperationLogAspect",
       "log.AutoAuditAspect",
       "log.OperLogProperties",
       "log.AuditField",
+      "log.mapper.SysDataAuditMapper",
+      "log.mapper.SysLoginLogMapper",
+      "log.mapper.SysUsualLogMapper",
       "monitor.TraceIdFilter",
       "monitor.ActuatorAuthFilter",
       "monitor.ApiLogFilter",
       "monitor.AccessLogFilter",
       "monitor.AccessLogRetentionEnvironmentPostProcessor",
+      "monitor.ErrorLogRecorder",
+      "monitor.OperatorNameLookup",
       "demo.ConditionalOnNotDemo",
       "demo.DemoConstants",
       "demo.DemoReadOnlyFilter",
@@ -53,6 +60,16 @@
     "systemClasses": [
       "config.DataInitializer",
       "config.*SchemaRunner"
+    ],
+    "services": [
+      {
+        "target": "mugsun-cloud-ops/mugsun-cloud-log",
+        "classes": [
+          "log.controller.*",
+          "monitor.controller.ApiLogController",
+          "monitor.controller.ErrorLogController"
+        ]
+      }
     ],
     "resources": [
       { "match": "application.yml", "to": "common", "as": "mugsun-boot-defaults.yml" },

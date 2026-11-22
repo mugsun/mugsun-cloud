@@ -17,6 +17,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务：`/system/gis/**` 下的全部接口，对应单体版的 `mugsun-boot-gis`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
+| `mugsun-cloud-ops/mugsun-cloud-log` | 8105 | 日志服务：操作、登录、通用、数据变更、访问、错误六类日志的查询和处理接口，从 system 里分出来的，接口路径不变 |
 | `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心：一个页面看到网关和各服务的每个实例在不在线，基于 Spring Boot Admin。可以不部署 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源、服务之间的调用等 |
 | `mugsun-cloud-config` | 无 | 配置中心：启动时从 Nacos 读配置的组件，和读路由、灰度规则这类单份配置的公用代码。网关和公共层都依赖它 |
@@ -41,11 +42,11 @@ python3 scripts/sync_from_boot.py            # 从 ../mugsun-boot 的 HEAD 同�
 python3 scripts/sync_from_boot.py --check    # 只比较，有差异时退出码为 1
 ```
 
-哪些类进公共层、哪些留在 system、哪个模块对应哪个服务，规则写在 `scripts/sync-rules.json`，说明见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。
+哪些类进公共层、哪些留在 system、哪些分给别的服务（现在是日志服务）、哪个模块对应哪个服务，规则写在 `scripts/sync-rules.json`，说明见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。
 
 ## 用 Docker 起全套
 
-只需要 Docker（Compose v2.17 以上），不用装 JDK 和 Node。一条命令起 PostgreSQL、Redis、Nacos、网关、四个服务和管理后台：
+只需要 Docker（Compose v2.17 以上），不用装 JDK 和 Node。一条命令起 PostgreSQL、Redis、Nacos、网关、四个业务服务、日志服务、监控中心和管理后台：
 
 ```bash
 git clone https://github.com/mugsun/mugsun-cloud.git && cd mugsun-cloud
@@ -120,6 +121,12 @@ java -jar mugsun-cloud-service/mugsun-cloud-ai/target/mugsun-cloud-ai.jar --spri
 
 ```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
+java -jar mugsun-cloud-ops/mugsun-cloud-log/target/mugsun-cloud-log.jar --spring.profiles.active=dev
+```
+
+```bash
+export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-gateway/target/mugsun-cloud-gateway.jar
 ```
 
@@ -128,7 +135,7 @@ export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar
 ```
 
-`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。
+`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。
 
 最后一条命令启动的是监控中心，也可以不启动。启动后浏览器打开 <http://localhost:8200>，能看到各实例在不在线；登录账号见[部署文档](./docs/deployment.md)第 18 节。
 

@@ -12,8 +12,8 @@ mugsun-cloud 的业务代码和 mugsun-boot 同源：各模块 src/boot/ 下的�
     python3 scripts/sync_from_boot.py --boot <路径>     # mugsun-boot 不在 ../mugsun-boot 时
     python3 scripts/sync_from_boot.py --check          # 只比较不写文件，有差异时退出码 1
     python3 scripts/sync_from_boot.py --locked --check # 和上次同步的提交比较：同步来的文件有没有被手改
-    python3 scripts/sync_from_boot.py --explain <类名>  # 说明某个类为什么进了公共层
-    python3 scripts/sync_from_boot.py --report         # 列出公共层和 system 各自用到的第三方包
+    python3 scripts/sync_from_boot.py --explain <类名>  # 说明某个类分到了哪里、为什么
+    python3 scripts/sync_from_boot.py --report         # 列出公共层和各服务各自用到的第三方包
 
 划分规则在 scripts/sync-rules.json，说明见 docs/sync-from-boot.md。
 只用 Python 标准库，兼容 Python 3.8+。
@@ -266,6 +266,52 @@ def partition_core(index, rules):
     return common, system, parent
 
 
+def split_services(index, rules, common, system):
+    """core 里分给别的服务的类（规则 core.services）：从 system 里拿出来，放进规则里 target 写的模块。
+
+    分出去的类只能引用公共层的类和一起分出去的类，留在 system 的类也不能再引用它们：拆开以后两边不在一个进程里。
+    返回 ({目标模块: 类}, 留在 system 的类)。"""
+    moved, owner = collections.OrderedDict(), {}
+    for service in rules.get("services", []):
+        target = service["target"]
+        if target in moved or target in (rules["common"], rules["system"]):
+            die("sync-rules.json 的 core.services 里 target 写的 %s 重复了，或者就是公共层、system 的模块" % target)
+        classes = expand(index, service["classes"])
+        for cls in sorted(classes):
+            if cls in common:
+                die("core.services 里的 %s 在公共层，各服务都带着它，不用再分给 %s" % (short(cls), target))
+            if cls not in system:
+                die("core.services 里的 %s 不同步（写在 skip 里），不能分给 %s" % (short(cls), target))
+            if cls in owner:
+                die("core.services 里的 %s 同时分给了 %s 和 %s" % (short(cls), owner[cls], target))
+            owner[cls] = target
+        moved[target] = classes
+    rest = system - set(owner)
+
+    def where(cls):
+        if cls in owner:
+            return "分给了 " + owner[cls]
+        return "留在 system" if cls in rest else "不同步"
+
+    problems = []
+    for target, classes in moved.items():
+        for cls in sorted(classes):
+            for dep in sorted(index.deps[cls]):
+                if dep not in common and dep not in classes:
+                    problems.append("  %s（%s）-> %s（%s）" % (short(cls), where(cls), short(dep), where(dep)))
+    for cls in sorted(rest):
+        for dep in sorted(index.deps[cls]):
+            if dep in owner:
+                problems.append("  %s（%s）-> %s（%s）" % (short(cls), where(cls), short(dep), where(dep)))
+    if problems:
+        lines = ["分给别的服务的类和留在 system 的类互相引用了，拆开以后两边不在一个进程里，编译不过："]
+        lines += problems
+        lines.append("处理办法：两边都要用的类加进 core.commonClasses；只有那个服务用的类一起写进它的 classes；"
+                     "是一次业务调用的话，先在 mugsun-boot 里把它抽成接口。")
+        die("\n".join(lines))
+    return moved, rest
+
+
 def short(fqn):
     return fqn[len(ROOT_PKG) + 1:] if fqn.startswith(ROOT_PKG + ".") else fqn
 
@@ -319,7 +365,8 @@ def split_factories(content, owner_of):
 
 
 def plan(rules, boot, ref):
-    """算出每个目标目录下应该有哪些文件。返回 ({目标: {相对路径: 内容}}, 索引, 划分结果, 存放位置)。"""
+    """算出每个目标目录下应该有哪些文件。返回 ({目标: {相对路径: 内容}}, 索引, 划分结果, 存放位置)。
+    划分结果是 (公共层的类, 留在 system 的类, 公共层的类是被谁带进来的, {目标模块: 分给它的类})。"""
     core = rules["core"]
     modules = rules.get("modules", [])
     extras = rules.get("extras", [])
@@ -331,22 +378,31 @@ def plan(rules, boot, ref):
     java_root = core["module"] + "/src/main/java"
     index = JavaIndex(files, java_root)
     common, system, parent = partition_core(index, core)
+    moved, system = split_services(index, core, common, system)
     targets = {"common": core["common"], "system": core["system"]}
+    owner = {}
+    for cls in common:
+        owner[cls] = targets["common"]
+    for cls in system:
+        owner[cls] = targets["system"]
+    for target, classes in moved.items():
+        for cls in classes:
+            owner[cls] = target
     for cls, path in index.paths.items():
-        rel = "java/" + path[len(java_root) + 1:]
-        if cls in common:
-            out[targets["common"]][rel] = files[path]
-        elif cls in system:
-            out[targets["system"]][rel] = files[path]
+        if cls in owner:
+            out[owner[cls]]["java/" + path[len(java_root) + 1:]] = files[path]
 
     # 单独拷贝的类：可以来自 core，也可以来自可选模块。它引用的类要么一起拷，要么目标模块里本来就有
-    # （目标是 system 时有公共层和 system 的类，是其它服务时只有公共层的类，网关不依赖公共层，什么都没有）。
+    # （目标是 system 时有公共层和 system 的类，是 core.services 里的服务时有公共层和分给它的类，
+    # 是其它服务时只有公共层的类，网关不依赖公共层，什么都没有）。
     service_targets = {m["target"] for m in modules}
     module_indexes = {}
     for extra in extras:
         source, to = extra["module"], extra["to"]
         if to == targets["system"]:
             available = common | system
+        elif to in moved:
+            available = common | moved[to]
         elif to == targets["common"] or to in service_targets:
             available = common
         else:
@@ -373,13 +429,6 @@ def plan(rules, boot, ref):
                 die("extras 里的 %s 在目标模块 %s 里已经有了，不用单独拷贝" % (short(cls), to))
             out[to][rel] = files[src_index.paths[cls]]
 
-    def owner_of(cls):
-        if cls in common:
-            return "common"
-        if cls in system:
-            return "system"
-        return None
-
     res_root = core["module"] + "/src/main/resources/"
     for path in sorted(files):
         if not path.startswith(res_root):
@@ -389,8 +438,8 @@ def plan(rules, boot, ref):
             if not fnmatch.fnmatch(rel, rule["match"]):
                 continue
             if rule["to"] == "split":
-                for owner, content in split_factories(files[path], owner_of).items():
-                    out[targets[owner]]["resources/" + rel] = content
+                for target, content in split_factories(files[path], owner.get).items():
+                    out[target]["resources/" + rel] = content
             elif rule["to"] != "skip":
                 out[targets[rule["to"]]]["resources/" + rule.get("as", rel)] = files[path]
             break
@@ -415,7 +464,7 @@ def plan(rules, boot, ref):
         out[target][MARKER] = MARKER_TEXT.encode("utf-8")
     layout = Layout()
     plan_files(rules, boot, ref, out, layout)
-    return out, index, (common, system, parent), layout
+    return out, index, (common, system, parent, moved), layout
 
 
 def existing(base):
@@ -485,12 +534,15 @@ def digest(planned, layout):
 
 
 def explain(index, parts, name):
-    common, system, parent = parts
+    common, system, parent, moved = parts
     matches = [c for c in index.paths if c == name or short(c) == name or c.endswith("." + name)]
     if not matches:
         die("找不到类 %s" % name)
     for cls in sorted(matches):
-        if cls in system:
+        service = [target for target, classes in moved.items() if cls in classes]
+        if service:
+            print("%s：在 %s 里，规则 core.services 指定" % (short(cls), service[0]))
+        elif cls in system:
             print("%s：在 system 服务里" % short(cls))
         elif cls not in common:
             print("%s：不同步（skip）" % short(cls))
@@ -505,8 +557,10 @@ def explain(index, parts, name):
 
 
 def report(index, parts):
-    common, system, _ = parts
-    for label, group in (("公共层", common), ("system", system)):
+    common, system, _, moved = parts
+    groups = [("公共层", common), ("system", system)]
+    groups += [(target.rpartition("/")[2], classes) for target, classes in moved.items()]
+    for label, group in groups:
         used = collections.Counter()
         for cls in group:
             for pkg in index.third_party(cls):
@@ -522,7 +576,7 @@ def main():
     parser.add_argument("--locked", action="store_true", help="用 boot-sync.lock.json 里记的提交，不看 --ref")
     parser.add_argument("--check", action="store_true", help="只比较不写文件，有差异时退出码 1")
     parser.add_argument("--explain", metavar="类名", help="说明某个类分到了哪里、为什么")
-    parser.add_argument("--report", action="store_true", help="列出公共层和 system 各自用到的第三方包")
+    parser.add_argument("--report", action="store_true", help="列出公共层和各服务各自用到的第三方包")
     args = parser.parse_args()
 
     boot = os.path.abspath(args.boot)

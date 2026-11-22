@@ -17,11 +17,12 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务，对应 `mugsun-boot-gis`，可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务，对应 `mugsun-boot-track`，可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务，对应 `mugsun-boot-ai`，可以不部署 |
+| `mugsun-cloud-ops/mugsun-cloud-log` | 8105 | 日志服务：六类日志的查询和处理接口，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心，Spring Boot Admin，WebFlux 栈，不依赖公共层，可以不部署 |
 
 服务名是 `mugsun-<名字>`，如 `mugsun-system`。
 
-`mugsun-cloud-ops` 下面放运维用的应用，一个应用一个子模块，对应 BladeX 的 `blade-ops`。它们不放业务代码，不依赖公共层。监控中心从 Nacos 找实例，直接请求每个实例的健康检查：健康检查不在 `/actuator/health` 的应用（现在只有网关），要在注册到 Nacos 的 `metadata` 里写 `management.context-path`，不然在监控页面上一直是不在线。
+`mugsun-cloud-ops` 下面放运维用的应用，一个应用一个子模块，对应 BladeX 的 `blade-ops`。监控中心不放业务代码，不依赖公共层；日志服务是从 core 里分出来的业务服务，写法和 `mugsun-cloud-service` 下面的服务一样，下面「服务的约定」对它都适用。监控中心从 Nacos 找实例，直接请求每个实例的健康检查：健康检查不在 `/actuator/health` 的应用（现在只有网关），要在注册到 Nacos 的 `metadata` 里写 `management.context-path`，不然在监控页面上一直是不在线。
 
 各服务 `/actuator` 下面的监控接口全部打开，谁能访问由公共层的 `MonitorAccessFilter`（`com.mugsun.cloud.common.monitor`）管：内网里直接连服务端口的全部能看，不用登录；经网关来的只有 `THROUGH_GATEWAY` 里那几个，并且照旧要过同步来的 `ActuatorAuthFilter`。要让一个监控接口经网关也能访问，把它加进 `THROUGH_GATEWAY`。`ActuatorAuthFilter` 不再由容器直接调用（`MonitorAccessConfiguration`），不要把它改回去。它靠请求带不带转发头来分辨是不是经网关来的，所以网关给每个转发的请求写转发头这件事（`ClientAddressFilter`）不能去掉。
 
@@ -112,6 +113,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器、拦截器和配置类：新服务带了它们保护或配置的功能，就让新服务也带上。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
 - 进不了公共层的类（它依赖的组件不是每个服务都带），用 `sync-rules.json` 的 `extras` 单独拷给需要的服务，不要在 `src/main` 里照着重写一份。例子：文件存储的配置类 `FileStorageTikaConfig` 单独拷给了 track。
 - PowerJob 执行器只在 system 上启动：同一个应用名下的执行器，调度中心派任务时不加区分。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
+- 从 core 里分出来的服务（现在是日志服务 `mugsun-log`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里，都是接口类。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 服务之间的调用

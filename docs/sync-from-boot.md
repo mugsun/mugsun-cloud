@@ -11,6 +11,7 @@
 | 来源（mugsun-boot-core 的 `src/main`） | 去向 |
 | --- | --- |
 | 划进公共层的 Java 类 | `mugsun-cloud-common/src/boot/java` |
+| 分给别的服务的 Java 类，现在只有日志服务的六个接口类 | 那个服务的 `src/boot/java`，如 `mugsun-cloud-ops/mugsun-cloud-log/src/boot/java` |
 | 其余的 Java 类 | `mugsun-cloud-service/mugsun-cloud-system/src/boot/java` |
 | `application.yml` | 公共层，改名为 `mugsun-boot-defaults.yml` |
 | `application-*.yml`、`logback-spring.xml` | 公共层 |
@@ -43,11 +44,13 @@
 | `commonControllers` | 允许进公共层的控制器。没列在这里的控制器一律留在 system |
 | `systemClasses` | 强制留在 system 的类。类名里可以用 `*`，如 `config.*SchemaRunner` |
 | `skip` | 不同步的类 |
+| `services` | 从 system 里分给别的服务的类，见下面的「从 core 里分出一个服务」 |
 
-划分分两步：
+划分分三步：
 
 1. 上面指定的类先进公共层。
 2. 公共层的类引用到的其他类也跟着进公共层，一直到没有新的类为止。引用关系按源码里的 `import` 和同包引用推断。
+3. `services` 里写的类分给各自的服务。
 
 剩下的类都在 system。
 
@@ -89,6 +92,38 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 `AiDateTimeDeserializer` 是 `AiSecret` 引用到的类，要一起拷。这三个类同时也随整个模块在 ai 服务里，两边的内容相同。
 
 列在 `extras` 里的类不能引用没有一起拷贝的类，否则脚本报错。
+
+## 从 core 里分出一个服务
+
+可选模块整个对应一个服务。core 里的一块功能要单独成一个服务时，没有现成的模块可以整个拷，用 `core` 下面的 `services` 写明把哪些类分过去：
+
+```json
+"services": [
+  {
+    "target": "mugsun-cloud-ops/mugsun-cloud-log",
+    "classes": ["log.controller.*", "monitor.controller.ApiLogController", "monitor.controller.ErrorLogController"]
+  }
+]
+```
+
+- `classes` 里的类从 system 里拿出来，放到 `target` 那个模块的 `src/boot` 下，system 里不再有。类名的写法和别的规则一样。
+- 分出去的是接口类（Controller）：对外的路径不变，网关按路径把请求转给新服务。
+- 分出去的类只能引用公共层的类和一起分出去的类，留在 system 的类也不能再引用它们：拆开以后两边不在一个进程里。脚本发现这样的引用就报错，列出谁引用了谁。处理办法有三种：
+  - 两边都要用的类（实体、Mapper、不依赖别的业务的小类）：加进 `commonClasses`。
+  - 只有新服务用的类：一起写进它的 `classes`。
+  - 是一次业务调用：先在 mugsun-boot 里把它抽成接口，再按 [AGENTS.md](../AGENTS.md) 的「服务之间的调用」接上。
+- `extras` 也可以往这样的服务里单独拷类，它能引用的是公共层的类和分给这个服务的类。
+
+现在这样分出去的只有日志服务（`mugsun-log`）：操作、登录、通用、数据变更、访问、错误六类日志的查询和处理接口。为了让这六个接口类在新服务里能编译，下面这些类进了公共层：
+
+| 进公共层的类 | 谁要用 |
+| --- | --- |
+| `log.mapper` 里的 `SysDataAuditMapper`、`SysLoginLogMapper`、`SysUsualLogMapper`，连带它们的实体 | 日志服务查，system 写 |
+| `monitor.ErrorLogRecorder`，连带 `ErrorLogService`、`SysErrorLog` 和它的 Mapper | 日志服务查；每个服务出错时自己记。进公共层以前只有 system 出错会记 |
+| `monitor.OperatorNameLookup`，连带 `system.service.UserService` | 日志服务把操作人的编号换成名字 |
+| `auth.LoginLockService`、`auth.lock` 包 | 登录日志页上显示账号锁没锁、解锁账号；system 登录时用 |
+
+日志不经过日志服务写入：各服务连的是同一个主库，产生日志的服务自己写，日志服务只读。
 
 ## 单独同步的文件
 
@@ -154,6 +189,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | 可选模块里实现 `TenantCredentialPurger` 的类，现在只有 AI 模块的 `AiSecretTenantPurger` | system 里对应的清理，现在是 `CloudAiSecretPurger`。模块增减了实现时，那个服务的 `TenantPurgerGuardTest` 会失败 |
 | 模块之间互相调用的接口 `ModuleInsightPort`、`TrackAskLlmGateway`、`GenAiDraftEnhancer`，和它们在单体版里的实现 | 调用方的 `RemoteInsightPort`、`RemoteTrackAskLlmGateway`、`RemoteGenAiDraftEnhancer`，和被调用方的 `LocalInsightEndpoint`、`TrackAskIntentEndpoint`、`GenDraftEndpoint` |
 | 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | system 的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
+| 日志的接口类增减了，或者改了类上的路径：`log.controller` 包里的，和 `monitor.controller` 里的 `ApiLogController`、`ErrorLogController` | `sync-rules.json` 的 `core.services`，和网关 `application.yml` 里 `mugsun-log` 那条路由。两边对不上时日志服务的 `LogRoutesTest` 不通过 |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 | `docker/full/boot.Dockerfile` 里钉的 mugsun-core 提交号 `MUGSUN_CORE_REF` 和基础镜像的摘要 | `deploy/docker/Dockerfile` 里同名的参数和基础镜像 |
 | `docker-compose.full.yml` 里钉的 mugsun-pc 提交号，PostgreSQL 和 Redis 的镜像 | `deploy/docker/docker-compose.yml` 里 `pc` 的构建来源和对应的镜像 |
@@ -201,6 +237,8 @@ python3 scripts/sync_from_boot.py --locked --check
 不带 `--locked` 时比较的是 mugsun-boot 的 HEAD，用来看这边是不是落后了。
 
 ## 拆出新服务时
+
+新服务的代码有两种来源。从 core 里分一部分接口类过去的，规则写在 `core.services` 里，见上面的「从 core 里分出一个服务」；下面「另外还要做这几件事」里的第 1、2、3、5、6、7、11 步对它同样适用，其中第 2 步的路由要把分过去的接口类的路径逐个写出来，并照日志服务的 `LogRoutesTest` 写一个测试，查路由和接口类对得上。新服务放在 `mugsun-cloud-ops` 下面时，照 `mugsun-cloud-log` 的写。
 
 mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项，模块的 `src/main` 会被整个拷到目标模块的 `src/boot` 下：
 
