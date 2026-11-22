@@ -41,8 +41,10 @@
 
 	<properties>
 		<java.version>21</java.version>
-		<!-- mugsun-core 从 0.3.0 起基于 Spring Boot 4（0.2.x 是 Spring Boot 3.5） -->
-		<mugsun.version>0.3.0-SNAPSHOT</mugsun.version>
+		<!-- mugsun-core 用 Maven Central 上的发布版，版本和 mugsun-boot 的父 pom 一致；从 0.3.0 起基于 Spring Boot 4（0.2.x 是 Spring Boot 3.5） -->
+		<mugsun.version>0.3.0</mugsun.version>
+		<!-- Spring AI 只有 ai 服务用，版本和 mugsun-boot 的父 pom 一致；能进来的包见下面 enforcer 规则的 includes -->
+		<spring-ai.version>2.0.3</spring-ai.version>
 		<!-- Spring Cloud 2025.1.x 对应 Spring Boot 4.0.x 和 4.1.x（2026.0.x 只认 Spring Boot 4.2.x，启动时会校验）；
 		     Spring Cloud Alibaba 2025.1.0.0 的 Nacos 组件自带 Nacos 客户端 3.1.1 -->
 		<spring-cloud.version>2025.1.5</spring-cloud.version>
@@ -189,6 +191,23 @@
 				<artifactId>GeographicLib-Java</artifactId>
 				<version>${geographiclib.version}</version>
 			</dependency>
+			<dependency>
+				<groupId>org.springframework.ai</groupId>
+				<artifactId>spring-ai-model</artifactId>
+				<version>${spring-ai.version}</version>
+				<exclusions>
+					<!-- 和 mugsun-boot 一样排除：这个注解包跟着 springdoc 走，不排除的话 Maven 会改用 Spring AI 声明的旧版本 -->
+					<exclusion>
+						<groupId>io.swagger.core.v3</groupId>
+						<artifactId>swagger-annotations-jakarta</artifactId>
+					</exclusion>
+				</exclusions>
+			</dependency>
+			<dependency>
+				<groupId>org.springframework.ai</groupId>
+				<artifactId>spring-ai-client-chat</artifactId>
+				<version>${spring-ai.version}</version>
+			</dependency>
 			<!-- 以下几个库定成单体版包里的版本，原因见上面属性的注释；检查办法见 docs/sync-from-boot.md 的「第三方库的版本」 -->
 			<dependency>
 				<groupId>org.apache.tika</groupId>
@@ -280,7 +299,9 @@
 					<skip>true</skip>
 				</configuration>
 			</plugin>
-			<!-- 与 mugsun-boot 同一条规则：内置 MCP Server 恢复鉴权之前，禁止引入 Spring AI 和 MCP SDK（含传递依赖） -->
+			<!-- 与 mugsun-boot 同一条规则：Spring AI 整组默认禁用，只放行 includes 里的四个基础包（模型接口、对话客户端和它俩依赖的公共包、模板包），
+			     它们不带自动装配、不开端点、不自己联网。MCP SDK、自动装配、starter 和各家模型的接入包仍然禁止（含传递依赖）。
+			     放行清单跟着 mugsun-boot 的父 pom 改，这边不单独加包 -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-enforcer-plugin</artifactId>
@@ -298,7 +319,13 @@
 										<exclude>org.springframework.ai</exclude>
 										<exclude>io.modelcontextprotocol*</exclude>
 									</excludes>
-									<message>禁止引入 Spring AI（org.springframework.ai:*）与 MCP SDK（io.modelcontextprotocol*），规则与 mugsun-boot 一致。</message>
+									<includes>
+										<include>org.springframework.ai:spring-ai-model</include>
+										<include>org.springframework.ai:spring-ai-client-chat</include>
+										<include>org.springframework.ai:spring-ai-commons</include>
+										<include>org.springframework.ai:spring-ai-template-st</include>
+									</includes>
+									<message>禁止引入 MCP SDK（io.modelcontextprotocol*）和放行清单以外的 Spring AI 包（MCP、自动装配、starter、各家模型的接入包），规则与 mugsun-boot 一致。</message>
 								</bannedDependencies>
 							</rules>
 							<fail>true</fail>

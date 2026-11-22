@@ -6,7 +6,7 @@
 
 mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.com/mugsun/mugsun-boot)，架构是网关加若干服务，Nacos 做注册中心。
 
-依赖 [mugsun-core](https://github.com/mugsun/mugsun-core) 的 `0.3.0-SNAPSHOT`（基于 Spring Boot 4），Maven Central 上没有，先在 `../mugsun-core` 执行 `mvn -B install -DskipTests`。
+依赖 [mugsun-core](https://github.com/mugsun/mugsun-core) 的 `0.3.0`（基于 Spring Boot 4），构建时从 Maven Central 下载，不用先安装。版本跟着 mugsun-boot 走：同步 mugsun-boot 时，根 pom 的 `mugsun.version` 改成和它的父 pom 一样。
 
 | 模块 | 端口 | 作用 |
 | --- | --- | --- |
@@ -173,7 +173,6 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 ## 构建和测试
 
 ```bash
-(cd ../mugsun-core && mvn -B install -DskipTests)    # core 0.3.0-SNAPSHOT 不在 Central
 ./mvnw -B verify                                     # 编译全部模块，跑本仓自己的测试
 python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
 python3 scripts/boot_cloud_diff.py --check           # 和单体版不一样的地方都记了，docs/boot-vs-cloud.md 是最新的

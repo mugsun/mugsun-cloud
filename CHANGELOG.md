@@ -11,8 +11,7 @@
   - Spring Cloud 2025.1.5，网关是 Spring Cloud Gateway 5.0.5
   - Spring Cloud Alibaba 2025.1.0.0，Nacos 客户端 3.1.1，服务端仍是 3.0.3
   - 监控中心的 Spring Boot Admin 4.1.5；JDK 仍是 21
-  - mugsun-core 换成 `0.3.0-SNAPSHOT`，构建前先重新安装它
-  - 镜像里的 mugsun-core 换了提交（`MUGSUN_CORE_REF`），镜像要重新构建
+  - mugsun-core 换成 `0.3.0`，镜像要重新构建
   - JSON 这一步仍用 Jackson 2，接口返回不变；网关单独引 `spring-boot-jackson2`
   - 已有配置项的名字都没变，Nacos 里的配置和环境变量不用改
   - 第三方库的版本重新和单体版的包对齐，改了三处：
@@ -219,7 +218,6 @@
   - 短信登录、第三方账号登录、两步验证、开放授权还没有测
 - 本地开发一条命令起整套：`./dev.sh up`，只需要 JDK 21 和 Docker
   - 依赖用 `deploy/dev/docker-compose.yml` 起：Nacos、PostgreSQL、Redis
-  - mugsun-core 的开发版本机没装过就自动下载源码安装
   - 服务之间调用的密钥自动生成，写在 `config/application-local.yml`
   - 先起 system，再同时起其余 13 个进程，最后经网关请求一次 system
   - 另有 `status`、`logs`、`restart`、`stop`、`deps`、`down`、`reset`
@@ -230,17 +228,28 @@
   - 实测经网关登录、改口令，12 个业务服务各调通一个接口
   - 只起必需的四个：`./dev.sh up system auth desk gateway`，约 1.3 GB
   - `deploy/dev/nacos.sh` 只管 Nacos 这一个容器，新增子命令 `env`
+- 后端多语言，随 mugsun-boot 同步过来：接口的提示语跟着请求的语言走
+  - 公共层引入 mugsun-core 的 `mugsun-starter-i18n`，每个服务都带
+  - 请求头 `Accept-Language` 是英文就回英文；没带或不认识的语言仍回中文
+  - core 的英文句子放在公共层，地图、埋点、AI 的放在各自的服务里
+  - 网关自己拒绝请求时的提示语还只有中文
+- AI 服务接入 Spring AI，随 mugsun-boot 同步过来
+  - 注入 `ChatClient.Builder` 就能调「大模型配置」里的模型
+  - 只引模型接口和对话客户端两个包（2.0.3），和单体版一样
+  - 父 pom 的禁用规则改成只放行四个基础包；MCP、starter 仍然禁止
 
 ### 变更
 
+- mugsun-core 改用 Maven Central 上的发布版 `0.3.0`，构建前不用再先安装
+  - 构建镜像时不再从 GitHub 取 mugsun-core 的源码来编译
+  - `./dev.sh` 去掉自动安装 mugsun-core 的一步，子命令 `core` 一并去掉
+  - 构建参数 `MUGSUN_CORE_REF`、环境变量 `MUGSUN_CORE_REPO` 不再使用
 - 分布式锁改用 mugsun-core 的 `mugsun-starter-lock`，随 mugsun-boot 同步过来
   - 公共层引入这个组件，各服务都能用 `@DistributedLock` 和 `LockTemplate`
   - 换了 6 处：租户账号配额、流程发起、通知重试、日志清理、待删文件清理、埋点定时任务
   - 锁在 Redis 里的键名没有变，新旧版本的实例可以同时运行
   - 持有期间自动续期，不再靠固定的过期时间；进程崩溃后最多 30 秒放开
-  - 镜像里的 mugsun-core 换了提交（`MUGSUN_CORE_REF`），镜像要重新构建
-  - 本机的 mugsun-core 也要换：`./dev.sh` 装的会自动换成新提交
-  - 自己手工装的 mugsun-core 要重装一次（`./dev.sh core`），否则找不到这个组件
+  - 这个组件在 mugsun-core `0.3.0` 里，镜像要重新构建
 
 ### 修复
 

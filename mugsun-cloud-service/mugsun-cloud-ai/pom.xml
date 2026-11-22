@@ -64,6 +64,16 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-webclient</artifactId>
 		</dependency>
+		<!-- Spring AI：只要模型接口和对话客户端，和单体版 mugsun-boot-ai 引的是同样两个包。不要加 starter、自动装配、MCP
+		     和各家模型的接入包：根 pom 的 enforcer 规则会拦 -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-model</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-client-chat</artifactId>
+		</dependency>
 		<!-- 单体版里 AI 模块经 mugsun-boot-core 带着流程引擎：审批流的 AI 预审监听器和实验室的演示数据用到它的类。
 		     公共层不带流程引擎，在这里单独引入，版本和审批流服务一样由 mugsun-bom 定 -->
 		<dependency>

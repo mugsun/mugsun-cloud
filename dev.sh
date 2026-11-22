@@ -9,15 +9,13 @@
 #   ./dev.sh stop <服务...>      停掉服务，比如要换到 IDE 里调试它
 #   ./dev.sh deps                只起依赖：Nacos、PostgreSQL、Redis。全部服务都在 IDE 里启动时用
 #   ./dev.sh build               重新打包
-#   ./dev.sh core                重新安装 mugsun-core
 #   ./dev.sh reset               停掉全部，并清空本地开发库
 #
 # 服务名：system auth gis track ai desk log report develop job resource flow gateway admin
 #
 # 需要 JDK 21 和 Docker。别的都有默认值，不用配：
 # - Nacos、PostgreSQL、Redis 用 deploy/dev/docker-compose.yml 起，端口只绑本机。端口上已经有一个在运行的，就直接用它。
-# - mugsun-core 的开发版不在 Maven Central 上，没装过就自动下载源码装到本机的 Maven 仓库，
-#   用的提交和 deploy/docker/Dockerfile 里的 MUGSUN_CORE_REF 相同。
+# - mugsun-core 用 Maven Central 上的发布版，打包时和其他依赖一起下载，不用先装。
 # - 服务之间互相调用用的密钥首次执行时随机生成，写在 config/application-local.yml 里（不进仓库）。
 # - 管理员账号 admin，首次建库时的初始口令是 123456，首次登录会要求修改。
 #   这个默认口令只在带 dev 启动时有效：生产环境不设 MUGSUN_INIT_PASSWORD 会拒绝启动。
@@ -29,7 +27,6 @@
 #   MUGSUN_DB_PORT        PostgreSQL 的端口，默认 5432
 #   MUGSUN_REDIS_PORT     Redis 的端口，默认 6379
 #   MUGSUN_DEV_WAIT       等一批服务启动最多等多少秒，默认 300
-#   MUGSUN_CORE_REPO      mugsun-core 的仓库地址，默认 https://github.com/mugsun/mugsun-core.git
 #
 # 进程号和日志放在 .dev/ 下（不进仓库）。兼容 macOS 自带的 bash 3.2。
 
@@ -56,7 +53,6 @@ REDIS_PORT="${MUGSUN_REDIS_PORT:-6379}"
 # 这一组只适合本机开发，生产不要照搬
 JAVA_OPTS="${MUGSUN_JAVA_OPTS:--Xms32m -Xmx512m -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30}"
 WAIT_SECONDS="${MUGSUN_DEV_WAIT:-300}"
-CORE_REPO="${MUGSUN_CORE_REPO:-https://github.com/mugsun/mugsun-core.git}"
 
 # 名字 模块目录 端口 健康检查地址 带不带 dev。顺序就是启动顺序：system 最先，库表由它来建。
 # 网关和监控中心没有分环境的配置，不带 dev。新加服务时在这里补一行
@@ -87,7 +83,7 @@ die() {
 }
 
 usage() {
-	sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+	sed -n '2,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # 服务表里某个服务的第几列
@@ -218,71 +214,6 @@ ensure_secret() {
 	say "已生成服务之间调用用的密钥，写在 ${LOCAL_CONFIG}"
 }
 
-# ---------- mugsun-core ----------
-
-core_version() {
-	sed -n 's:.*<mugsun\.version>\(.*\)</mugsun\.version>.*:\1:p' pom.xml | head -1
-}
-
-core_ref() {
-	sed -n 's/^ARG MUGSUN_CORE_REF=//p' deploy/docker/Dockerfile | head -1
-}
-
-# 本机 Maven 仓库的位置。改过 settings.xml 的人不在默认位置，所以问一次 Maven，记在 .dev/ 下
-local_repo() {
-	local path
-	if [ -f "${DEV_DIR}/m2-repo" ]; then
-		cat "${DEV_DIR}/m2-repo"
-		return 0
-	fi
-	path="$(./mvnw -q -B -ntp help:evaluate -Dexpression=settings.localRepository -DforceStdout 2> /dev/null | tail -1)"
-	case "${path}" in
-		/*) ;;
-		*) path="${HOME}/.m2/repository" ;;
-	esac
-	echo "${path}" > "${DEV_DIR}/m2-repo"
-	echo "${path}"
-}
-
-# 第一个参数是 force 时不管装没装过都重装
-ensure_core() {
-	local version ref dir marker src
-	version="$(core_version)"
-	case "${version}" in
-		*-SNAPSHOT) ;;
-		# 正式版在 Maven Central 上，Maven 自己会下载
-		*) return 0 ;;
-	esac
-	ref="$(core_ref)"
-	[ -n "${ref}" ] || die "deploy/docker/Dockerfile 里没有找到 MUGSUN_CORE_REF"
-	dir="$(local_repo)/com/mugsun/mugsun-bom/${version}"
-	# 本脚本装的会留下这个记号，里面是提交号。自己手工装的没有记号，脚本不去动它
-	marker="${dir}/.installed-by-dev-sh"
-	if [ "${1:-}" != force ] && [ -f "${dir}/mugsun-bom-${version}.pom" ]; then
-		if [ ! -f "${marker}" ] || [ "$(cat "${marker}")" = "${ref}" ]; then
-			return 0
-		fi
-		say "本机的 mugsun-core ${version} 是旧提交，换成现在要的 ${ref:0:7} ..."
-	else
-		say "安装 mugsun-core ${version}（提交 ${ref:0:7}）..."
-	fi
-	command -v git > /dev/null 2>&1 || die "没有找到 git，下载不了 mugsun-core 的源码"
-	src="${DEV_DIR}/mugsun-core"
-	if [ ! -d "${src}/.git" ]; then
-		git init -q "${src}" || die "建不了目录 ${src}"
-		git -C "${src}" remote add origin "${CORE_REPO}"
-	fi
-	git -C "${src}" remote set-url origin "${CORE_REPO}"
-	if ! git -C "${src}" fetch -q --depth 1 origin "${ref}" || ! git -C "${src}" checkout -q --detach FETCH_HEAD; then
-		die "下载 mugsun-core 失败：${CORE_REPO} 的提交 ${ref}"
-	fi
-	if ! ./mvnw -B -ntp -f "${src}/pom.xml" clean install -DskipTests > "${LOG_DIR}/core-install.log" 2>&1; then
-		grep -E '^\[ERROR\]' "${LOG_DIR}/core-install.log" | head -20 >&2
-		die "安装 mugsun-core 失败，完整日志在 .dev/logs/core-install.log"
-	fi
-	echo "${ref}" > "${marker}"
-}
-
 # ---------- 打包 ----------
 
 need_build() {
@@ -306,14 +237,13 @@ do_build() {
 	: > "${DEV_DIR}/build.stamp.new"
 	if ! ./mvnw -B -ntp clean package -DskipTests > "${LOG_DIR}/build.log" 2>&1; then
 		grep -E '^\[ERROR\]' "${LOG_DIR}/build.log" | head -20 >&2
-		die "打包失败，完整日志在 .dev/logs/build.log。报 com.mugsun 的类或方法找不到时，执行 ./dev.sh core 重装 mugsun-core 再试"
+		die "打包失败，完整日志在 .dev/logs/build.log"
 	fi
 	mv "${DEV_DIR}/build.stamp.new" "${DEV_DIR}/build.stamp"
 }
 
 # 上次打包以后代码改过才重新打包。正在运行的服务不受影响，重启后才用新包
 build_if_needed() {
-	ensure_core
 	if need_build; then
 		do_build
 	else
@@ -675,13 +605,7 @@ case "${command}" in
 	build)
 		need_java
 		prepare_dirs
-		ensure_core
 		do_build
-		;;
-	core)
-		need_java
-		prepare_dirs
-		ensure_core force
 		;;
 	reset) cmd_reset "$@" ;;
 	help | -h | --help)

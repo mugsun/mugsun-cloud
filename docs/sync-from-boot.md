@@ -212,7 +212,9 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | 取公告的两个接口 `AppNoticeReader`、`NoticeTitleFinder`，「谁在看」`NoticeViewer` 的字段，和返回对象 `AppNoticeSummaryVO`、`AppNoticeItemVO` 的字段 | `mugsun-cloud-desk-api` 的 `RemoteAppNoticeReader`、`RemoteNoticeTitleFinder`、`DeskApi`，和工作台服务的 `AppNoticeSummaryEndpoint`、`NoticeTitlesEndpoint`、`DeskRequests` |
 | 分给别的服务的类（`core.services` 里写的）里，接口类增减了，或者改了类上的路径 | `sync-rules.json` 的 `core.services`，和网关 `application.yml` 里那个服务的路由（`mugsun-log`、`mugsun-report` 这些）。两边对不上时那个服务的路由测试（如 `LogRoutesTest`）不通过 |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
-| `docker/full/boot.Dockerfile` 里钉的 mugsun-core 提交号 `MUGSUN_CORE_REF` 和基础镜像的摘要 | `deploy/docker/Dockerfile` 里同名的参数和基础镜像 |
+| 父 pom 的 `mugsun.version`（mugsun-core 的版本） | 父 pom 的 `mugsun.version`。两边写同一个发布版，都从 Maven Central 下载 |
+| 父 pom 里 Spring AI 的版本 `spring-ai.version`、依赖管理里的排除项、enforcer 规则放行的包 | 父 pom 里同名的属性、排除项和放行清单。放行清单只跟着单体版改，这边不单独加包 |
+| `docker/full/boot.Dockerfile` 里基础镜像的摘要 | `deploy/docker/Dockerfile` 里的基础镜像 |
 | `docker-compose.full.yml` 里钉的 mugsun-pc 提交号，PostgreSQL 和 Redis 的镜像 | `deploy/docker/docker-compose.yml` 里 `pc` 的构建来源和对应的镜像 |
 | `docker/full/init.Dockerfile` 的基础镜像和软件包版本 | `deploy/docker/init.Dockerfile` |
 | `docker/full/gen-secrets.sh` 生成哪些口令和密钥、`init show` 怎么判断 | `deploy/docker/gen-secrets.sh` |

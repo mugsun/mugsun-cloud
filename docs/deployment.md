@@ -1114,7 +1114,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 | PostgreSQL | `ghcr.io/mugsun/postgis-pgvector:16-3.4`，和单体版用的是同一个。按标签拉取，没有固定摘要；要固定就设 `MUGSUN_PG_IMAGE=<镜像>@sha256:<摘要>` |
 | Redis、Nacos、初始化容器用的 Alpine | 固定摘要 |
 
-- mugsun-core 在构建镜像时从 GitHub 取一个固定的提交来编译，不用事先在本机安装。
+- mugsun-core 用 Maven Central 上的发布版，构建镜像时和其他依赖一起下载，不用事先在本机安装。
 - 构建时要能访问 GitHub、Docker Hub、ghcr.io，以及 Maven 和 npm 的仓库。
 - 镜像大小：system 724 MB，track 687 MB，ai 642 MB，gis 603 MB，网关 501 MB，管理后台 121 MB。
 

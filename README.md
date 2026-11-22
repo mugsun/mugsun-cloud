@@ -88,7 +88,6 @@ git clone https://github.com/mugsun/mugsun-cloud.git && cd mugsun-cloud
 | 步骤 | 做了什么 |
 | --- | --- |
 | 依赖 | 用 `deploy/dev/docker-compose.yml` 起 Nacos、PostgreSQL 和 Redis，端口只绑本机。端口上已经有一个在运行的，就直接用它 |
-| mugsun-core | 它的开发版不在 Maven Central 上。本机没装过就下载源码装到本机的 Maven 仓库，用的提交和 `deploy/docker/Dockerfile` 里的 `MUGSUN_CORE_REF` 相同 |
 | 密钥 | 服务之间互相调用用的密钥首次执行时随机生成，写在 `config/application-local.yml` 里，这个文件不进仓库 |
 | 打包 | `./mvnw clean package -DskipTests`。上次打包以后代码没变就跳过 |
 | 启动 | 先启动 system 并等它起来：主库的库表由它来建，加密数据用的几把密钥也由它首次生成。然后同时启动其余 11 个业务服务、网关和监控中心，最后经网关请求一次 system |
@@ -147,10 +146,6 @@ git clone https://github.com/mugsun/mugsun-cloud.git && cd mugsun-cloud
 脚本做的事都可以手工做，用到的变量和部署时是同一批：
 
 ```bash
-# mugsun-core 的开发版不在 Maven Central，先装到本机
-git clone https://github.com/mugsun/mugsun-core.git
-(cd mugsun-core && mvn -B clean install -DskipTests)
-
 cd mugsun-cloud
 deploy/dev/nacos.sh up
 docker compose -f deploy/dev/docker-compose.yml up -d postgres redis
