@@ -31,6 +31,7 @@
 	<modules>
 		<module>mugsun-cloud-config</module>
 		<module>mugsun-cloud-common</module>
+		<module>mugsun-cloud-ops-api</module>
 		<module>mugsun-cloud-gateway</module>
 		<module>mugsun-cloud-service</module>
 		<module>mugsun-cloud-ops</module>
@@ -52,9 +53,9 @@
 		<jsoup.version>1.23.2</jsoup.version>
 		<jts.version>1.20.0</jts.version>
 		<geographiclib.version>2.1</geographiclib.version>
-		<!-- 单体版里 hutool-http 是短信组件 sms4j 间接带进来的，版本跟着 sms4j 走。track 服务不带 sms4j，在它的 pom 里单独引入，
-		     这里写的是单体版实际打进包里的版本。不放进下面的 dependencyManagement：那样会把 system 的版本也锁在这个号上，
-		     以后 mugsun-bom 升级 sms4j 时 system 就跟单体版不一致了 -->
+		<!-- 单体版里 hutool-http 和 hutool-json 是短信组件 sms4j 间接带进来的，版本跟着 sms4j 走。track 和 system 不带 sms4j，在各自的 pom 里单独引入，
+		     这里写的是单体版实际打进包里的版本。不放进下面的 dependencyManagement：那样会把文件和短信服务（它带着 sms4j）
+		     的版本也锁在这个号上，以后 mugsun-bom 升级 sms4j 时它就跟单体版不一致了 -->
 		<hutool-http.version>5.8.28</hutool-http.version>
 		<!-- 单体版的 AI 模块把 tika-core 和 tika-parsers-standard-package 定在这个版本（见 mugsun-boot-ai/pom.xml），
 		     打进单体版包里的就是它；文件存储组件 x-file-storage 自己带的 tika-core 是 2.4.1。ai 服务用这个版本；
@@ -121,6 +122,11 @@
 			<dependency>
 				<groupId>com.mugsun</groupId>
 				<artifactId>mugsun-cloud-common</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.mugsun</groupId>
+				<artifactId>mugsun-cloud-resource-api</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>

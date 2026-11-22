@@ -73,7 +73,7 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 { "module": "mugsun-boot-core", "classes": ["common.web.IpCidr"], "to": "mugsun-cloud-gateway" }
 ```
 
-服务也可以这样单独带一个类。`system.file.FileStorageTikaConfig` 是文件存储组件的配置，留在 system。track 也带文件存储，要用同一份配置；但这个类进不了公共层，因为公共层和 gis 不带文件存储组件。所以给 track 单独拷一份：
+服务也可以这样单独带一个类。`system.file.FileStorageTikaConfig` 是文件存储组件的配置，跟着文件存储分给了文件和短信服务。track 也带文件存储，要用同一份配置；但这个类进不了公共层，因为公共层和别的服务不带文件存储组件。所以给 track 单独拷一份：
 
 ```json
 { "module": "mugsun-boot-core", "classes": ["system.file.FileStorageTikaConfig"], "to": "mugsun-cloud-service/mugsun-cloud-track" }
@@ -125,6 +125,7 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 | 报表服务 `mugsun-report` | 报表的接口类、实体和 Mapper | 没有 |
 | 代码生成服务 `mugsun-develop` | `gen`、`online` 两个包（代码生成、数据建模、在线表单），和 `generator/` 下的代码模板 | `gen.RuntimeSql`（system 里好几处也用它拼 SQL）、`system.service.MenuService`（代码生成的方案要查上级菜单在不在） |
 | 定时任务服务 `mugsun-job` | `job` 包（三个任务处理器），定时任务和调度中心的接口类 `JobController`、`SysJobServerController`，连带 `JobServerRegistry`、`SysJobServer` 和它的 Mapper，还有按保留期清理日志的 `monitor.LogCleanJob`（清日志的处理器直接调它） | 没有 |
+| 文件和短信服务 `mugsun-resource` | `system.file` 包（上传规则、清理没传完的文件、文件类型识别的配置），文件、存储配置、短信配置、富文本图片、头像、反馈附件六个接口类，连带 `OssService`、`SmsService`、`AttachFileRecorder`、`AvatarUploadService`、`RichTextImageService`、`FileAccessService`，和存储配置、短信配置、短信验证码、分片上传四张表的实体和 Mapper | 附件表和反馈表的实体和 Mapper、`AttachService`、`AvatarBinder`、`UserAvatarWriter`（system 里改头像、查附件也要用）；短信的接口 `common.sms.SmsGateway` 本来就在公共层的包里 |
 
 日志服务为了让六个接口类在新服务里能编译，下面这些类进了公共层：
 
@@ -192,7 +193,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | `mugsun-boot-gis/pom.xml` 的依赖 | `mugsun-cloud-gis` 的 pom |
 | `mugsun-boot-track/pom.xml` 的依赖 | `mugsun-cloud-track` 的 pom |
 | `mugsun-boot-ai/pom.xml` 的依赖 | `mugsun-cloud-ai` 的 pom |
-| sms4j 间接带入的 `hutool-http` 的版本，mugsun-bom 升级 sms4j 时会变 | 父 pom 的 `hutool-http.version` |
+| sms4j 间接带入的 `hutool-http`、`hutool-json` 的版本，mugsun-bom 升级 sms4j 时会变 | 父 pom 的 `hutool-http.version` |
 | `mugsun-boot-ai/pom.xml` 里 tika 的版本 | 父 pom 的 `tika.version` |
 | 单体版包里 `commons-io`、`commons-collections4` 的版本，tika 的版本变了它们会跟着变 | 父 pom 的 `commons-io.version`、`commons-collections4.version` |
 | `OptionalModuleConfiguration` 里 GIS 模块状态的判断规则 | system 的 `CloudGisModuleStatus` |
@@ -221,7 +222,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | --- | --- | --- |
 | 单体版里的版本是另一个模块带来的，拆开后这个服务里没有那个模块 | AI 模块把 `tika-core` 定在 3.2.2，文件存储组件自己带的是 2.4.1 | 在父 pom 的 `dependencyManagement` 里定成单体版包里的版本 |
 | 引入的版本清单（BOM）改了业务代码也在用的库 | `spring-cloud-alibaba-dependencies` 会改 `guava` 和 `mybatis-spring-boot-starter` | 不引入这份清单，用到它的哪个组件就在父 pom 里单独写那个组件的版本 |
-| 库是另一个库间接带进来的，拆开后带它的那个库不在这个服务里 | track 用到的 `hutool-http` 在单体版里由短信组件带入 | 在服务的 pom 里显式引入，版本取单体版包里的 |
+| 库是另一个库间接带进来的，拆开后带它的那个库不在这个服务里 | track 和 system 用到的 `hutool-http`、system 用到的 `hutool-json` 在单体版里由短信组件带入，短信组件现在只在文件和短信服务里 | 在服务的 pom 里显式引入，版本取单体版包里的 |
 
 用 `scripts/compare_libs.py` 检查。它比较网关、各服务的包和单体版的包，列出版本不同的库：
 

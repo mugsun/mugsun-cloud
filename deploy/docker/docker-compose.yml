@@ -208,7 +208,6 @@ services:
     environment: *service-env
     volumes:
       - secrets-service:/secrets:ro
-      - files:/var/lib/mugsun/files
     depends_on:
       postgres:
         condition: service_healthy
@@ -248,7 +247,7 @@ services:
     environment: *service-env
     volumes:
       - secrets-service:/secrets:ro
-      # 埋点的会话回放、接口报文和 sourcemap 也存在文件存储里，和 system 共用一个卷，目录布局和单体版一样
+      # 埋点的会话回放、接口报文和 sourcemap 也存在文件存储里，和文件和短信服务共用一个卷，目录布局和单体版一样
       - files:/var/lib/mugsun/files
     depends_on:
       system:
@@ -326,6 +325,24 @@ services:
     environment: *service-env
     volumes:
       - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
+  resource:
+    # 文件和短信服务：文件上传下载、存储配置、头像、富文本图片、短信配置和发送。
+    # 它停了：文件传不了也下不了，头像和图片显示不出来，短信验证码、双因子短信、短信通知发不出去；账号密码登录不受影响
+    build:
+      <<: *build
+      target: resource
+    image: mugsun-cloud-resource:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+      # 上传的文件存在这个卷里，track 也挂着它。system 从分出这个服务起不再存文件，不挂
+      - files:/var/lib/mugsun/files
     depends_on:
       system:
         condition: service_healthy
@@ -459,6 +476,8 @@ services:
       develop:
         condition: service_healthy
       job:
+        condition: service_healthy
+      resource:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

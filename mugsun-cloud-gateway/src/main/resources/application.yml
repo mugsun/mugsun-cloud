@@ -121,6 +121,13 @@ spring:
               uri: lb://mugsun-job
               predicates:
                 - Path=/system/job/**,/system/job-server/**
+            # 文件和短信服务：文件上传下载、存储配置、短信配置、富文本图片、头像、反馈附件，路径要写在 mugsun-system 前面；
+            # /file/** 是本地存储直出的文件地址，不是接口类，文件在这个服务的存储目录里，所以也转给它。
+            # 两边对不对得上，由文件和短信服务的 ResourceRoutesTest 检查
+            - id: mugsun-resource
+              uri: lb://mugsun-resource
+              predicates:
+                - Path=/system/file/**,/system/oss/**,/system/sms/**,/system/richtext/image/**,/auth/avatar/**,/system/feedback/attachment/**,/file/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

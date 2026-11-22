@@ -17,6 +17,11 @@
 			<groupId>com.mugsun</groupId>
 			<artifactId>mugsun-cloud-common</artifactId>
 		</dependency>
+		<!-- 短信在文件和短信服务里。登录、双因子和短信通知还在这里，依赖它的 api 模块就能调过去 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-resource-api</artifactId>
+		</dependency>
 		<!-- 以下与 mugsun-boot-core 的依赖一致，是公共层用不到、只有 system 用的那些 -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -30,21 +35,30 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
+		<!-- 登录时用 hutool-http 从 User-Agent 解析浏览器和操作系统（AuthLoginService），消息通道的配置用 hutool-json
+		     解析（SysNotifyChannelController）。单体版里这两个都由短信组件 sms4j 间接带入，sms4j 跟着短信去了文件和短信服务，
+		     这里单独引入，版本和单体版包里的一样。排除它们自带的 hutool-core，理由和 track 的 pom 里写的一样 -->
 		<dependency>
-			<groupId>org.dromara.x-file-storage</groupId>
-			<artifactId>x-file-storage-spring</artifactId>
+			<groupId>cn.hutool</groupId>
+			<artifactId>hutool-http</artifactId>
+			<version>${hutool-http.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>cn.hutool</groupId>
+					<artifactId>hutool-core</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
-			<groupId>io.minio</groupId>
-			<artifactId>minio</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>com.aliyun.oss</groupId>
-			<artifactId>aliyun-sdk-oss</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.dromara.sms4j</groupId>
-			<artifactId>sms4j-spring-boot-starter</artifactId>
+			<groupId>cn.hutool</groupId>
+			<artifactId>hutool-json</artifactId>
+			<version>${hutool-http.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>cn.hutool</groupId>
+					<artifactId>hutool-core</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.dromara.warm</groupId>

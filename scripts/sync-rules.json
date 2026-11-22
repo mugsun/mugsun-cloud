@@ -54,7 +54,14 @@
       "gen.entity.GenColumn",
       "system.service.HandlerSelectService",
       "system.service.MenuService",
-      "gen.RuntimeSql"
+      "gen.RuntimeSql",
+      "system.entity.SysAttach",
+      "system.mapper.SysAttachMapper",
+      "system.service.AttachService",
+      "system.service.AvatarBinder",
+      "system.service.UserAvatarWriter",
+      "feedback.entity.SysFeedback",
+      "feedback.mapper.SysFeedbackMapper"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -97,6 +104,32 @@
           "system.entity.SysJobServer",
           "system.mapper.SysJobServerMapper",
           "monitor.LogCleanJob"
+        ]
+      },
+      {
+        "target": "mugsun-cloud-ops/mugsun-cloud-resource",
+        "classes": [
+          "system.file.**",
+          "system.controller.FileController",
+          "system.controller.SysOssController",
+          "system.controller.SysSmsController",
+          "system.controller.RichTextImageController",
+          "auth.AvatarUploadController",
+          "feedback.FeedbackAttachmentController",
+          "system.service.OssService",
+          "system.service.SmsService",
+          "system.service.AttachFileRecorder",
+          "system.service.AvatarUploadService",
+          "system.service.RichTextImageService",
+          "system.service.FileAccessService",
+          "system.entity.SysOss",
+          "system.mapper.SysOssMapper",
+          "system.entity.SysSms",
+          "system.mapper.SysSmsMapper",
+          "system.entity.SysSmsCode",
+          "system.mapper.SysSmsCodeMapper",
+          "system.entity.SysAttachPart",
+          "system.mapper.SysAttachPartMapper"
         ]
       }
     ],

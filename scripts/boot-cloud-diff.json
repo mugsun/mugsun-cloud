@@ -20,6 +20,14 @@
       "same": "密钥表在各服务共用的主库里，system 直接删，删除语句和单体版相同，仍然和删租户在同一个事务里，ai 服务没启动也照样清。单体版的可选模块以后新增别的清理实现时，`TenantPurgerGuardTest` 会失败，提醒在 system 里补上。",
       "tests": ["CloudAiSecretPurgerTest", "TenantPurgerGuardTest"]
     },
+    "com.mugsun.cloud.api.resource.RemoteSmsGateway": {
+      "title": "发短信、验短信验证码",
+      "how": "forward",
+      "related": ["com.mugsun.cloud.resource.SmsCodeEndpoint", "com.mugsun.cloud.resource.SmsTextEndpoint"],
+      "why": "单体版里登录、双因子和短信通知直接调同一个进程里的短信服务类。微服务版里短信在文件和短信服务，这几处还在 system。",
+      "same": "system 把每一次调用发给文件和短信服务的内部接口，那边执行的仍然是单体版的那个短信服务类；发不出去时（发得太频繁、通道没配、短信平台没发出去）给用户的话是同一句。手机号或验证码是空的直接算没通过，不发起调用。单体版没有的情况只有一种：文件和短信服务没在运行或者没调成。这时发短信和验验证码报「短信服务暂时不可用」，不当成发出去了，也不记成验证码错误；开发环境回显验证码按不回显算。",
+      "tests": ["RemoteSmsGatewayTest", "SmsCodeEndpointTest", "SmsTextEndpointTest"]
+    },
     "com.mugsun.cloud.develop.RemoteGenAiDraftEnhancer": {
       "title": "代码生成的「规则建模」请大模型出草稿",
       "how": "forward",
@@ -96,6 +104,8 @@
     "mugsun-cloud-ops/mugsun-cloud-log": "日志服务：六类日志的查询和处理。接口类是同步来的，手写的只有启动入口。",
     "mugsun-cloud-ops/mugsun-cloud-report": "报表服务：报表的定义和预览。接口类、实体和 Mapper 是同步来的，手写的只有启动入口。",
     "mugsun-cloud-ops/mugsun-cloud-develop": "代码生成服务：代码生成、数据建模和在线表单。业务类和代码模板是同步来的，手写的是启动入口和请 ai 服务出建模草稿的转发。",
-    "mugsun-cloud-ops/mugsun-cloud-job": "定时任务服务：定时任务和调度中心的管理接口、平台自带的任务处理器、按保留期清理日志。业务类是同步来的，手写的只有启动入口。"
+    "mugsun-cloud-ops/mugsun-cloud-job": "定时任务服务：定时任务和调度中心的管理接口、平台自带的任务处理器、按保留期清理日志。业务类是同步来的，手写的只有启动入口。",
+    "mugsun-cloud-ops/mugsun-cloud-resource": "文件和短信服务：文件上传下载、存储配置、头像、富文本图片、反馈附件、短信配置和发送。业务类是同步来的，手写的有启动入口和接收短信内部调用的一端。",
+    "mugsun-cloud-ops-api/mugsun-cloud-resource-api": "文件和短信服务给别的服务调用的那一层：把发短信、验短信验证码转给文件和短信服务的类，和两端约好的字段名。"
   }
 }

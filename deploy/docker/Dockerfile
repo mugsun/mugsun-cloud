@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
-# 网关、各服务和监控中心的镜像：一个文件，每个应用一个构建目标：gateway / system / gis / track / ai / log / report / develop / job / admin。
+# 网关、各服务和监控中心的镜像：一个文件，每个应用一个构建目标：gateway / system / gis / track / ai / log / report / develop / job / resource / admin。
 # 构建上下文是仓库根目录，例：
 #   docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
 # 整套一起起，用同目录的 docker-compose.yml。
@@ -25,6 +25,7 @@ WORKDIR /build
 COPY pom.xml ./
 COPY mugsun-cloud-config/ mugsun-cloud-config/
 COPY mugsun-cloud-common/ mugsun-cloud-common/
+COPY mugsun-cloud-ops-api/ mugsun-cloud-ops-api/
 COPY mugsun-cloud-gateway/ mugsun-cloud-gateway/
 COPY mugsun-cloud-service/ mugsun-cloud-service/
 COPY mugsun-cloud-ops/ mugsun-cloud-ops/
@@ -92,6 +93,11 @@ FROM runtime AS job
 COPY --from=build --chown=mugsun:mugsun /build/mugsun-cloud-ops/mugsun-cloud-job/target/mugsun-cloud-job.jar /app/app.jar
 ENV MUGSUN_HEALTH_PORT=8108 MUGSUN_HEALTH_PATH=/ping
 EXPOSE 8108
+
+FROM runtime AS resource
+COPY --from=build --chown=mugsun:mugsun /build/mugsun-cloud-ops/mugsun-cloud-resource/target/mugsun-cloud-resource.jar /app/app.jar
+ENV MUGSUN_HEALTH_PORT=8109 MUGSUN_HEALTH_PATH=/ping
+EXPOSE 8109
 
 FROM runtime AS admin
 COPY --from=build --chown=mugsun:mugsun /build/mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar /app/app.jar

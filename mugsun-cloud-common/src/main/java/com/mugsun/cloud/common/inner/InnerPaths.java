@@ -18,6 +18,12 @@ public final class InnerPaths {
 	/** ai 服务提供：用大模型把一句话的建表描述变成代码生成的草稿 */
 	public static final String AI_GEN_DRAFT = "/inner/ai/gen/draft";
 
+	/** 文件和短信服务提供：短信验证码的发送、回显和校验，给 system 里的登录用 */
+	public static final String RESOURCE_SMS_CODE = "/inner/resource/sms/code";
+
+	/** 文件和短信服务提供：发一条文本短信，给 system 里的双因子登录和短信通知用 */
+	public static final String RESOURCE_SMS_TEXT = "/inner/resource/sms/text";
+
 	private InnerPaths() {
 	}
 }

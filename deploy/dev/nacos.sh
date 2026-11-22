@@ -14,7 +14,7 @@ export MUGSUN_NACOS_PORT="${PORT}"
 # 客户端按「主端口 + 1000」找 gRPC 端口，所以不单独配
 export MUGSUN_NACOS_GRPC_PORT="$((PORT + 1000))"
 BASE="http://127.0.0.1:${PORT}/nacos"
-SERVICES="mugsun-gateway mugsun-system mugsun-gis mugsun-track mugsun-ai mugsun-log mugsun-report mugsun-develop mugsun-job"
+SERVICES="mugsun-gateway mugsun-system mugsun-gis mugsun-track mugsun-ai mugsun-log mugsun-report mugsun-develop mugsun-job mugsun-resource"
 
 random_hex() {
 	od -An -N "${1}" -tx1 /dev/urandom | tr -d ' \n'

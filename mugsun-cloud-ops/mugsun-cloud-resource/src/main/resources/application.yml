@@ -1,0 +1,50 @@
+# 文件和短信服务的配置。分成几段，写法和理由见 system 服务的 application.yml：
+# 第一段只负责导入 mugsun-boot 的默认配置、微服务版共用的改动和 Nacos 配置中心里的两份，第二段是这个服务自己的配置，
+# 最后三段是分环境的 Nacos 配置。
+spring:
+  config:
+    import:
+      - classpath:mugsun-boot-defaults.yml
+      - classpath:mugsun-cloud-defaults.yml
+      - optional:nacos:mugsun.yaml
+      - optional:nacos:mugsun-resource.yaml
+---
+server:
+  port: 8109
+spring:
+  application:
+    name: mugsun-resource
+mugsun:
+  cloud:
+    inner:
+      # 这个服务的内部接口是发短信和验短信验证码（SmsCodeEndpoint、SmsTextEndpoint）。发短信是在等短信平台返回，
+      # 一次零点几秒到几秒，等的时候不占数据库连接。所以上限定得比默认的 6 个大：定小了，一批短信一起发的时候
+      # 排在后面的会被回「忙」。
+      # 短信是平台级的功能，调用方不带具体的租户（发验证码时用户还没登录），名额也就不按租户分：两项配成一样
+      max-concurrent: 16
+      max-concurrent-per-tenant: 16
+---
+# 分环境的 Nacos 配置：带着对应的 profile 启动时才读，盖过第一段里不分环境的两份。三段的写法一样，只是名字里的环境不同
+spring:
+  config:
+    activate:
+      on-profile: dev
+    import:
+      - optional:nacos:mugsun-dev.yaml
+      - optional:nacos:mugsun-resource-dev.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:mugsun-test.yaml
+      - optional:nacos:mugsun-resource-test.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:mugsun-prod.yaml
+      - optional:nacos:mugsun-resource-prod.yaml

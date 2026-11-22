@@ -18,5 +18,6 @@
 		<module>mugsun-cloud-report</module>
 		<module>mugsun-cloud-develop</module>
 		<module>mugsun-cloud-job</module>
+		<module>mugsun-cloud-resource</module>
 	</modules>
 </project>

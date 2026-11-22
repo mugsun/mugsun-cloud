@@ -8,12 +8,12 @@
 
 | | 是什么 | 现在有多少 |
 | --- | --- | --- |
-| 一 | 同一件事，两边各有一个实现 | 7 处 |
+| 一 | 同一件事，两边各有一个实现 | 8 处 |
 | 二 | 业务上两边做法不同 | 2 处 |
 | 三 | 单体版有、这边不带的类 | 1 个 |
-| 四 | 只有微服务版才有的类 | 91 个 |
+| 四 | 只有微服务版才有的类 | 94 个 |
 
-微服务版手写的类一共 109 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
+微服务版手写的类一共 115 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
 
 ## 这一页怎么保持是对的
 
@@ -41,7 +41,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 2. 第一节、第二节的每一处都有测试，名字列在各自下面。
 3. 同一组请求分别发给单体版和微服务版，逐个对比返回的结果：**还没有做**，排在各模块拆完以后。
 
-## 一、同一件事，两边各有一个实现（7 处）
+## 一、同一件事，两边各有一个实现（8 处）
 
 单体版里各模块在同一个进程里，互相直接调用。微服务版里它们在不同的服务里，所以同一个接口这边另写了一个实现。接口本身在同步来的代码里，两边用的是同一个。做法有两种：
 
@@ -69,7 +69,18 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：密钥表在各服务共用的主库里，system 直接删，删除语句和单体版相同，仍然和删租户在同一个事务里，ai 服务没启动也照样清。单体版的可选模块以后新增别的清理实现时，`TenantPurgerGuardTest` 会失败，提醒在 system 里补上。
 - 测试：`CloudAiSecretPurgerTest`、`TenantPurgerGuardTest`
 
-### 3. 代码生成的「规则建模」请大模型出草稿
+### 3. 发短信、验短信验证码
+
+- 接口：`common.sms.SmsGateway`（同步在 mugsun-cloud-common）
+- 单体版的实现：`system.service.SmsService`（同步在 mugsun-cloud-resource）
+- 微服务版的实现：`api.resource.RemoteSmsGateway`（mugsun-cloud-resource-api）
+- 一起用到的手写类：`resource.SmsCodeEndpoint`（mugsun-cloud-resource）、`resource.SmsTextEndpoint`（mugsun-cloud-resource）
+- 为什么另写：单体版里登录、双因子和短信通知直接调同一个进程里的短信服务类。微服务版里短信在文件和短信服务，这几处还在 system。
+- 做法：转给对方服务
+- 怎么保证一样：system 把每一次调用发给文件和短信服务的内部接口，那边执行的仍然是单体版的那个短信服务类；发不出去时（发得太频繁、通道没配、短信平台没发出去）给用户的话是同一句。手机号或验证码是空的直接算没通过，不发起调用。单体版没有的情况只有一种：文件和短信服务没在运行或者没调成。这时发短信和验验证码报「短信服务暂时不可用」，不当成发出去了，也不记成验证码错误；开发环境回显验证码按不回显算。
+- 测试：`RemoteSmsGatewayTest`、`SmsCodeEndpointTest`、`SmsTextEndpointTest`
+
+### 4. 代码生成的「规则建模」请大模型出草稿
 
 - 接口：`gen.GenAiDraftEnhancer`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.GenAiDraftEnhancerImpl`（同步在 mugsun-cloud-ai）
@@ -80,7 +91,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：代码生成服务把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。
 - 测试：`RemoteGenAiDraftEnhancerTest`、`GenDraftEndpointTest`
 
-### 4. AI 模块在不在、开没开
+### 5. AI 模块在不在、开没开
 
 - 接口：`common.module.AiModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.AiModuleService`（同步在 mugsun-cloud-ai）
@@ -91,7 +102,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
 
-### 5. 地图模块在不在、开没开
+### 6. 地图模块在不在、开没开
 
 - 接口：`common.module.GisModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`gis.GisModuleService`（同步在 mugsun-cloud-gis）
@@ -102,7 +113,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
 
-### 6. 埋点模块在不在、开没开
+### 7. 埋点模块在不在、开没开
 
 - 接口：`common.module.TrackModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`track.TrackModuleService`（同步在 mugsun-cloud-track）
@@ -113,7 +124,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。
 - 测试：`ModuleStatusTest`
 
-### 7. 埋点「问数据」请大模型理解提问
+### 8. 埋点「问数据」请大模型理解提问
 
 - 接口：`common.module.TrackAskLlmGateway`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.TrackAskLlmGatewayImpl`（同步在 mugsun-cloud-ai）
@@ -154,7 +165,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 另外有两样也不同步：单体版的打包模块 `mugsun-boot-server`（只有 pom 和测试），和各模块的测试代码。业务测试在 mugsun-boot 里跑。
 
-## 四、只有微服务版才有的类（91 个）
+## 四、只有微服务版才有的类（94 个）
 
 单体版是一个进程，用不着这些。每个类后面的话是它类注释的第一句。
 
@@ -334,3 +345,18 @@ ai 服务的启动入口，和启动时的检查。
 
 - `job`
   - `JobApplication`：定时任务服务启动入口。
+
+### mugsun-cloud-resource（1 个）
+
+文件和短信服务：文件上传下载、存储配置、头像、富文本图片、反馈附件、短信配置和发送。业务类是同步来的，手写的有启动入口和接收短信内部调用的一端。
+
+- `resource`
+  - `ResourceApplication`：文件和短信服务启动入口。
+
+### mugsun-cloud-resource-api（2 个）
+
+文件和短信服务给别的服务调用的那一层：把发短信、验短信验证码转给文件和短信服务的类，和两端约好的字段名。
+
+- `api.resource`
+  - `ResourceApiAutoConfiguration`：依赖了这个模块的服务自动得到的 Bean：服务自己没有短信的实现时，用转给文件和短信服务的那一个。
+  - `SmsApi`：短信内部接口里两端约好的名字：请求和响应的字段、验证码接口的操作名。

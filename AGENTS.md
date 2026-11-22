@@ -12,6 +12,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | --- | --- | --- |
 | `mugsun-cloud-config` | 无 | 配置中心：带进 Nacos Config 组件，另有读整份配置的 `NacosConfigSource`。不带网页栈，网关和公共层都可以依赖 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层，Servlet 栈 |
+| `mugsun-cloud-ops-api/mugsun-cloud-resource-api` | 无 | 文件和短信服务给别的服务调用的那一层：依赖了它的服务，发短信、验短信验证码就转给文件和短信服务 |
 | `mugsun-cloud-gateway` | 8080 | 网关，WebFlux 栈，不依赖公共层 |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务，对应 `mugsun-boot-core` |
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务，对应 `mugsun-boot-gis`，可以不部署 |
@@ -21,11 +22,14 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-ops/mugsun-cloud-report` | 8106 | 报表服务：报表的定义和预览接口，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-develop` | 8107 | 代码生成服务：代码生成、数据建模和在线表单，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-job` | 8108 | 定时任务服务：定时任务和调度中心的管理接口、PowerJob 执行器和处理器、按保留期清理日志，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
+| `mugsun-cloud-ops/mugsun-cloud-resource` | 8109 | 文件和短信服务：文件上传下载、存储配置、头像、富文本图片、短信配置和发送，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层和 `mugsun-cloud-resource-api` |
 | `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心，Spring Boot Admin，WebFlux 栈，不依赖公共层，可以不部署 |
 
 服务名是 `mugsun-<名字>`，如 `mugsun-system`。
 
 `mugsun-cloud-ops` 下面放运维用的应用，一个应用一个子模块，对应 BladeX 的 `blade-ops`。监控中心不放业务代码，不依赖公共层；其余的（日志服务、报表服务这些）是从 core 里分出来的业务服务，写法和 `mugsun-cloud-service` 下面的服务一样，下面「服务的约定」对它都适用。监控中心从 Nacos 找实例，直接请求每个实例的健康检查：健康检查不在 `/actuator/health` 的应用（现在只有网关），要在注册到 Nacos 的 `metadata` 里写 `management.context-path`，不然在监控页面上一直是不在线。
+
+`mugsun-cloud-ops-api` 下面放「给别的服务调用的那一层」，一个服务一个子模块，对应 BladeX 的 `blade-ops-api`，现在有文件和短信服务的 `mugsun-cloud-resource-api`。别的服务要调某个服务时依赖它的这一层，不依赖那个服务本身。里面放三样：转发用的实现类（实现 mugsun-boot 里抽出来的接口，经 `InnerClient` 调过去）、两端约好的字段名和操作名、把实现类注册成 Bean 的自动配置。包名用 `com.mugsun.cloud.api.<服务名>`，不能放在各服务启动类扫描的包下面：自动配置要排在服务自己的类后面处理，才看得出这个服务里有没有本地的实现（提供方自己带着本地的实现，转发的那个在它那里不注册）。`mugsun-cloud-service` 下面的服务以后有了这样的一层，建在 `mugsun-cloud-service-api` 下面（对应 `blade-service-api`），现在还没有。
 
 各服务 `/actuator` 下面的监控接口全部打开，谁能访问由公共层的 `MonitorAccessFilter`（`com.mugsun.cloud.common.monitor`）管：内网里直接连服务端口的全部能看，不用登录；经网关来的只有 `THROUGH_GATEWAY` 里那几个，并且照旧要过同步来的 `ActuatorAuthFilter`。要让一个监控接口经网关也能访问，把它加进 `THROUGH_GATEWAY`。`ActuatorAuthFilter` 不再由容器直接调用（`MonitorAccessConfiguration`），不要把它改回去。它靠请求带不带转发头来分辨是不是经网关来的，所以网关给每个转发的请求写转发头这件事（`ClientAddressFilter`）不能去掉。
 
@@ -118,7 +122,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器、拦截器和配置类：新服务带了它们保护或配置的功能，就让新服务也带上。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
 - 进不了公共层的类（它依赖的组件不是每个服务都带），用 `sync-rules.json` 的 `extras` 单独拷给需要的服务，不要在 `src/main` 里照着重写一份。例子：文件存储的配置类 `FileStorageTikaConfig` 单独拷给了 track。
 - PowerJob 执行器只在定时任务服务（`mugsun-job`）上启动：同一个应用名下的执行器，调度中心派任务时不加区分，所以处理器和执行器要在同一个服务里。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
-- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`、定时任务服务 `mugsun-job`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
+- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`、定时任务服务 `mugsun-job`、文件和短信服务 `mugsun-resource`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 服务之间的调用
@@ -126,14 +130,14 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 代码在 `mugsun-cloud-common/src/main/java/com/mugsun/cloud/common/inner`。部署要求见 [docs/deployment.md](./docs/deployment.md) 的第 4 节。
 
 - 提供接口：实现 `InnerEndpoint` 并注册成 Bean，路径登记在 `InnerPaths`。不要写成 Controller：`/inner` 下有 Controller 时服务拒绝启动。
-- 发起调用：用 `InnerClient`，对方的服务名从 `ServiceNames` 取。对方要去调大模型的用 `callSlow`。`reachable` 用来在调用之前判断对方在不在。
+- 发起调用：用 `InnerClient`。对方是 gis、track、ai 时服务名从 `ServiceNames` 取；对方是从 core 里分出来的服务时，转发的类放在它的 api 模块里（见上面的 `mugsun-cloud-ops-api`），服务名由 api 模块自己读配置。对方要去调大模型的用 `callSlow`。`reachable` 用来在调用之前判断对方在不在。
 - 带过去的身份只有租户，没有用户，也不转发用户的登录令牌。所以只有在单体版里本来就只看租户、不看用户的调用才能这样转；用户有没有权限做这件事，由发起调用的一方在调用之前判断。接口的实现里不能用 `StpUtil` 和 `@DataScope`。
 - 请求和响应都用共享密钥签名，协议在 `InnerProtocol`，校验在 `InnerRequestFilter`。改这两个类等于改鉴权，属于敏感改动。
-- 对方没有部署时，效果要和单体版没装那个模块时一样；对方在但调用失败时，要和单体版里那个模块出错时一样。现有的三处可以参考：ai 的 `RemoteInsightPort`、track 的 `RemoteTrackAskLlmGateway`、代码生成服务的 `RemoteGenAiDraftEnhancer`。
+- 对方没有部署时，效果要和单体版没装那个模块时一样；对方在但调用失败时，要和单体版里那个模块出错时一样。现有的三处可以参考：ai 的 `RemoteInsightPort`、track 的 `RemoteTrackAskLlmGateway`、代码生成服务的 `RemoteGenAiDraftEnhancer`。对方不是可选的、没有它这件事就做不成的（比如发短信），不能悄悄当成做完了，要报「暂时不可用」，参考 `mugsun-cloud-resource-api` 的 `RemoteSmsGateway`。
 - 调用方只看得到注册中心里有没有对方的实例，分不出它是没有部署，还是部署了、此刻不在（正在重启，或者挂了）。这时给用户的话要在两种情况下都是真的，不要说「没有部署」。
 - 给用户看的提示里不带地址、服务名和状态码，具体原因只记日志。日志里不记密钥和签名。
 - 对方连得上、但是不回话或者忙不过来时有三道保护，都在公共层，默认开着：调用方的熔断（`InnerBreakers`，按实例、接口、租户分开记），被调用方每个接口同时处理的上限（`InnerGate`，整个接口一个上限、同一个租户一个上限，满了回「忙」），按调用方的等待时间给查询设时限（`InnerQueryTimeout`）。效果和配置项见 [docs/deployment.md](./docs/deployment.md) 第 4 节的「对方出了问题时的三道保护」。写接口和发起调用时要配合的是下面几条。
-- 内部接口处理期间一直占着一个名额，一个接口默认只有 6 个（`mugsun.cloud.inner.max-concurrent`），其中同一个租户最多占 5 个（`max-concurrent-per-tenant`，不配时按总数留出四分之一给别的租户）。接口里只查库和计算，不要在里面等别的服务、等锁、睡眠。要等大模型这类慢东西的，在那个服务的 `application.yml` 里把上限配大并写明原因，参考 ai 服务；配大之前先确认等的时候不占数据库连接（不在事务里）。
+- 内部接口处理期间一直占着一个名额，一个接口默认只有 6 个（`mugsun.cloud.inner.max-concurrent`），其中同一个租户最多占 5 个（`max-concurrent-per-tenant`，不配时按总数留出四分之一给别的租户）。接口里只查库和计算，不要在里面等别的服务、等锁、睡眠。要等大模型、短信平台这类慢东西的，在那个服务的 `application.yml` 里把上限配大并写明原因，参考 ai 服务和文件和短信服务；配大之前先确认等的时候不占数据库连接（不在事务里）。
 - 接口的实现经 MyBatis（Mapper、`Db`）查库，这样的语句自动带时限：调用方不等了，语句被取消。用 `JdbcTemplate` 或者直接用 JDBC 发的语句不带，调用方不等了它还在跑；接口里另开线程去查的也不带。现有的一处是 track 的统计接口（查询写在 mugsun-boot 里），记在 README 的「目前的限制」里。
 - 业务上的「不行」在接口里抛 `ServiceException`：调用方收到的是同一句话，不算调用失败。别的异常会变成 500，调用方按失败记，同一个租户接连 3 次就熔断 10 秒。所以「参数不对」「模块没启用」这类正常的拒绝不要用别的异常表示。
 - 调用方要分清 `InnerCallException` 的几种原因：`absent()` 为真是对方不在；`BUSY`（对方满了）和 `BREAKER_OPEN`（熔断中）这两种，对方肯定没有执行。给用户的话，`BUSY` 说「正忙，请稍后再试」，其余的失败说「暂时不可用」，参考 `RemoteInsightPort`。不要在调用方再套一层重试：`InnerClient` 已经会换实例，熔断中再试只是多报一次失败，其它的失败对方可能已经执行过了。
