@@ -37,6 +37,15 @@ spring:
       ui:
         title: Mugsun 监控中心
         brand: <span>Mugsun 监控中心</span>
+      notify:
+        dingtalk:
+          # 实例上线、掉线的时候往钉钉群里发一条消息，默认不发。要发的话三项都要配：开关写 true；
+          # 地址是群机器人的 Webhook；密钥是机器人安全设置里选「加签」得到的那一串（只支持加签这一种）。
+          # 也可以写进 Nacos 的 mugsun-admin.yaml
+          enabled: ${MUGSUN_MONITOR_DINGTALK:false}
+          webhook-url: ${MUGSUN_MONITOR_DINGTALK_WEBHOOK:}
+          secret: ${MUGSUN_MONITOR_DINGTALK_SECRET:}
+          message: "【Mugsun 监控中心】#{instance.registration.name}（#{instance.registration.serviceUrl}）的状态变成了 #{event.statusInfo.status}"
   security:
     user:
       # 监控页面的登录账号。默认值是公开的，正式环境要改：用这两个环境变量，或者写进 Nacos 的 mugsun-admin.yaml

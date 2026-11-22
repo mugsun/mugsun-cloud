@@ -1362,6 +1362,18 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 
 服务怎么分辨请求是不是经网关来的：网关转发的每个请求都带转发头（`X-Forwarded-Proto` 等），客户端自己带的会被网关删掉重写；一个转发头都不带的请求，按直接连上来的处理。不用这个网关、在服务前面换了别的代理时，那个代理也要给每个请求写转发头，不然经它来的请求会被当成内网直连。
 
+### 实例上线、掉线时发钉钉消息
+
+默认不发。要发的话配下面三个环境变量，或者在 Nacos 的 `mugsun-admin.yaml` 里写 `spring.boot.admin.notify.dingtalk` 下面的 `enabled`、`webhook-url`、`secret`：
+
+| 变量 | 说明 |
+| --- | --- |
+| `MUGSUN_MONITOR_DINGTALK` | 写 `true` 打开 |
+| `MUGSUN_MONITOR_DINGTALK_WEBHOOK` | 钉钉群机器人的 Webhook 地址 |
+| `MUGSUN_MONITOR_DINGTALK_SECRET` | 机器人安全设置里选「加签」得到的密钥。只支持加签这一种 |
+
+实例第一次上线不发，之后状态每变一次发一条。用的是 Spring Boot Admin 自带的通知，没有拿真的钉钉群试过。
+
 ### 验证到什么程度
 
 这一节还没有在整套环境里跑过。验证过的只有：监控中心自己能启动、不登录进不去、登录以后进得去；服务按上面那张表分辨请求的那段逻辑（单元测试）。页面上各实例是不是都在线、详细信息显示得对不对、从 Nacos 改账号管不管用，还没有测。
