@@ -24,6 +24,9 @@ public final class InnerPaths {
 	/** 文件和短信服务提供：发一条文本短信，给 system 里的双因子登录和短信通知用 */
 	public static final String RESOURCE_SMS_TEXT = "/inner/resource/sms/text";
 
+	/** 审批流服务提供：一个用户的待办列表，给 system 里的手机端首页用 */
+	public static final String FLOW_APP_TODOS = "/inner/flow/app/todos";
+
 	private InnerPaths() {
 	}
 }

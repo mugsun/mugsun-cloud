@@ -14,5 +14,6 @@
 	<description>mugsun-cloud-ops 里的服务给别的服务调用的那一层，一个服务一个子模块：别的服务依赖这里的子模块就能调它，不用依赖那个服务本身</description>
 	<modules>
 		<module>mugsun-cloud-resource-api</module>
+		<module>mugsun-cloud-flow-api</module>
 	</modules>
 </project>

@@ -126,6 +126,7 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 | 代码生成服务 `mugsun-develop` | `gen`、`online` 两个包（代码生成、数据建模、在线表单），和 `generator/` 下的代码模板 | `gen.RuntimeSql`（system 里好几处也用它拼 SQL）、`system.service.MenuService`（代码生成的方案要查上级菜单在不在） |
 | 定时任务服务 `mugsun-job` | `job` 包（三个任务处理器），定时任务和调度中心的接口类 `JobController`、`SysJobServerController`，连带 `JobServerRegistry`、`SysJobServer` 和它的 Mapper，还有按保留期清理日志的 `monitor.LogCleanJob`（清日志的处理器直接调它） | 没有 |
 | 文件和短信服务 `mugsun-resource` | `system.file` 包（上传规则、清理没传完的文件、文件类型识别的配置），文件、存储配置、短信配置、富文本图片、头像、反馈附件六个接口类，连带 `OssService`、`SmsService`、`AttachFileRecorder`、`AvatarUploadService`、`RichTextImageService`、`FileAccessService`，和存储配置、短信配置、短信验证码、分片上传四张表的实体和 Mapper | 附件表和反馈表的实体和 Mapper、`AttachService`、`AvatarBinder`、`UserAvatarWriter`（system 里改头像、查附件也要用）；短信的接口 `common.sms.SmsGateway` 本来就在公共层的包里 |
+| 审批流服务 `mugsun-flow` | 审批流的接口类 `FlowController` 和它的异常处理 `FlowExceptionAdvice`，连带 `FlowService`、`FlowGraphService`、`MugsunFlowListener`、`MugsunPermissionHandler`；手机端待办的 `AppTodoController`、`AppTodoService` 和只有它们用的三个返回对象；`flow/` 下的流程定义文件 | `system.service.UserSelectOptions`（system 的用户接口也用它选人）、`app.AppTodoReader` 和 `app.dto.AppTodoItemVO`（system 里的手机端首页经它们取待办） |
 
 日志服务为了让六个接口类在新服务里能编译，下面这些类进了公共层：
 
@@ -201,7 +202,8 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | AI 模块里 `AiModuleStatus` 的实现和 `mugsun.ai.enabled` 的规则 | system 的 `CloudAiModuleStatus` |
 | 可选模块里实现 `TenantCredentialPurger` 的类，现在只有 AI 模块的 `AiSecretTenantPurger` | system 里对应的清理，现在是 `CloudAiSecretPurger`。模块增减了实现时，那个服务的 `TenantPurgerGuardTest` 会失败 |
 | 模块之间互相调用的接口 `ModuleInsightPort`、`TrackAskLlmGateway`、`GenAiDraftEnhancer`，和它们在单体版里的实现 | 调用方的 `RemoteInsightPort`、`RemoteTrackAskLlmGateway`、`RemoteGenAiDraftEnhancer`，和被调用方的 `LocalInsightEndpoint`、`TrackAskIntentEndpoint`、`GenDraftEndpoint` |
-| 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | system 的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
+| 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | 审批流服务的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
+| 手机端取待办的接口 `AppTodoReader`，和返回对象 `AppTodoItemVO` 的字段 | `mugsun-cloud-flow-api` 的 `RemoteAppTodoReader`、`FlowApi`，和审批流服务的 `AppTodoEndpoint` |
 | 分给别的服务的类（`core.services` 里写的）里，接口类增减了，或者改了类上的路径 | `sync-rules.json` 的 `core.services`，和网关 `application.yml` 里那个服务的路由（`mugsun-log`、`mugsun-report` 这些）。两边对不上时那个服务的路由测试（如 `LogRoutesTest`）不通过 |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 | `docker/full/boot.Dockerfile` 里钉的 mugsun-core 提交号 `MUGSUN_CORE_REF` 和基础镜像的摘要 | `deploy/docker/Dockerfile` 里同名的参数和基础镜像 |
@@ -277,7 +279,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 7. 打包后跑 `python3 scripts/compare_libs.py`，新服务包里第三方库的版本要和单体版一致。不一致时的处理见上面的「第三方库的版本」。
 8. 找出模块之间靠接口互相调用的地方：单体版里一个模块提供实现，另一个模块或 core 注入使用。拆开后使用方的进程里没有那个实现，要在使用方写一个走内部接口的实现，在提供方写对应的 `InnerEndpoint`。AI 问图层和埋点「问数据」就是这样接上的。对方没部署、调不通时的表现，要和单体版没装那个模块时一样。
 9. 找出模块替 system 做的事：模块里实现了 core 的扩展接口、由 system 的代码来调用的类，拆出去以后 system 里就没有了，而且不会报错。删租户时清 AI 密钥的 `TenantCredentialPurger` 是一例，要在 system 里补一个。
-10. 找出按类名存在库里、运行时再按类名去找的类。审批流节点上记的监听器类名是一例：AI 预审节点的监听器随模块去了 ai 服务，system 里找不到它，流程引擎不报错，直接跳过。这类功能拆开后要么接上，要么明确拦下，不能让它悄悄失效。
+10. 找出按类名存在库里、运行时再按类名去找的类。审批流节点上记的监听器类名是一例：AI 预审节点的监听器随模块去了 ai 服务，跑审批流的服务里找不到它，流程引擎不报错，直接跳过。这类功能拆开后要么接上，要么明确拦下，不能让它悄悄失效。
 11. 在 `deploy/docker` 里补上新服务，然后跑一遍 `deploy/docker/smoke.sh`：
     - `Dockerfile` 加一个构建目标。
     - `docker-compose.yml` 加一个服务，照 `gis` 的写，并写进 `ready` 的 `depends_on`。

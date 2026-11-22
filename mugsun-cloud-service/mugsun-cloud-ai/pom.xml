@@ -68,7 +68,7 @@
 			<artifactId>spring-boot-starter-webflux</artifactId>
 		</dependency>
 		<!-- 单体版里 AI 模块经 mugsun-boot-core 带着流程引擎：审批流的 AI 预审监听器和实验室的演示数据用到它的类。
-		     公共层不带流程引擎，在这里单独引入，版本和 system 一样由 mugsun-bom 定 -->
+		     公共层不带流程引擎，在这里单独引入，版本和审批流服务一样由 mugsun-bom 定 -->
 		<dependency>
 			<groupId>org.dromara.warm</groupId>
 			<artifactId>warm-flow-mybatis-sb3-starter</artifactId>

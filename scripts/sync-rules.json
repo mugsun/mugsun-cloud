@@ -61,7 +61,10 @@
       "system.service.AvatarBinder",
       "system.service.UserAvatarWriter",
       "feedback.entity.SysFeedback",
-      "feedback.mapper.SysFeedbackMapper"
+      "feedback.mapper.SysFeedbackMapper",
+      "system.service.UserSelectOptions",
+      "app.AppTodoReader",
+      "app.dto.AppTodoItemVO"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -131,6 +134,22 @@
           "system.entity.SysAttachPart",
           "system.mapper.SysAttachPartMapper"
         ]
+      },
+      {
+        "target": "mugsun-cloud-ops/mugsun-cloud-flow",
+        "classes": [
+          "system.controller.FlowController",
+          "system.controller.FlowExceptionAdvice",
+          "system.service.FlowService",
+          "system.service.FlowGraphService",
+          "system.service.MugsunFlowListener",
+          "system.service.MugsunPermissionHandler",
+          "app.AppTodoController",
+          "app.AppTodoService",
+          "app.dto.AppTodoDetailVO",
+          "app.dto.AppFieldVO",
+          "app.dto.AppHandleDTO"
+        ]
       }
     ],
     "resources": [
@@ -139,6 +158,7 @@
       { "match": "logback-spring.xml", "to": "common" },
       { "match": "META-INF/spring.factories", "to": "split" },
       { "match": "generator/*", "to": "mugsun-cloud-ops/mugsun-cloud-develop" },
+      { "match": "flow/*.json", "to": "mugsun-cloud-ops/mugsun-cloud-flow" },
       { "match": "*", "to": "system" }
     ]
   },

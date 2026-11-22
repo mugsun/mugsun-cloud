@@ -169,6 +169,14 @@
   - 新增 `mugsun-cloud-ops-api`：服务给别的服务调用的那一层，对应 blade-ops-api
   - 发短信从此要配内部调用的密钥 `MUGSUN_INNER_SECRET`，没配时短信发不出去
   - 只编译过，文件和短信服务还没有实际启动过
+- 审批流服务 `mugsun-cloud-ops/mugsun-cloud-flow`：端口 8110，对应 BladeX 的
+  blade-flow
+  - 流程设计、发起、待办、办理和手机端待办的接口从 system 搬到这里，路径不变
+  - 流程引擎 warm-flow 只在这个服务里，system 不再带
+  - 新增 `mugsun-cloud-flow-api`：手机端首页留在 system，经它到这个服务取待办
+  - 它没在运行时审批相关的页面用不了，手机端首页提示待办暂时取不到
+  - AI 预审节点仍然不能用，拦它的两个类跟着流程引擎搬到这个服务
+  - 只编译过，审批流服务还没有实际启动过
 
 ### 修复
 

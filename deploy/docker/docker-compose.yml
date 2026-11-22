@@ -349,6 +349,22 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  flow:
+    # 审批流服务：流程设计、发起、待办、办理，手机端的待办。
+    # 它停了：审批相关的页面用不了，手机端首页提示待办暂时取不到；管理后台工作台上的待办数直接查库，不受影响
+    build:
+      <<: *build
+      target: flow
+    image: mugsun-cloud-flow:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   gateway:
     build:
       <<: *build
@@ -478,6 +494,8 @@ services:
       job:
         condition: service_healthy
       resource:
+        condition: service_healthy
+      flow:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

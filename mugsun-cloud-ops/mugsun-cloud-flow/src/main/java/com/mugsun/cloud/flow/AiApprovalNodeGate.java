@@ -1,4 +1,4 @@
-package com.mugsun.cloud.system.ai;
+package com.mugsun.cloud.flow;
 
 import com.mugsun.boot.common.constant.FlowConstants;
 import com.mugsun.boot.system.service.MugsunFlowListener;
@@ -23,7 +23,7 @@ import java.util.List;
  * 审批流要走到 AI 预审节点时，在写库之前把这次操作拦下。
  *
  * <p>AI 预审节点靠一个监听器工作：流程定义里存的是它的类名 {@link FlowConstants#AI_APPROVAL_LISTENER}，节点的任务建出来之后，
- * 流程引擎按类名找到它，由它调用 AI 应用，再决定通过、退回还是转人工。这个类在 AI 模块里，微服务版的 system 没有它。
+ * 流程引擎按类名找到它，由它调用 AI 应用，再决定通过、退回还是转人工。这个类在 AI 模块里，微服务版的审批流服务没有它。
  * 流程引擎找不到监听器的类时不报错，直接跳过：节点就成了一个办理人是发起人的普通任务，发起人自己点一下就过了，
  * 预审等于没有。
  *
@@ -42,7 +42,7 @@ import java.util.List;
  * 引擎取全局监听器失败时不报错，只是当作没有，所以启动完成前要确认引擎拿到的确实是这个类，不是就拒绝启动。
  *
  * <p>要让 AI 预审节点在微服务版里真正能用，得改 mugsun-boot：把监听器里操作流程的部分和调用 AI 的部分拆开，
- * 前一半留在 system，后一半放到 ai 服务。在那之前，带这种节点的流程在微服务版里走不到也走不过这个节点。
+ * 前一半留在审批流服务，后一半放到 ai 服务。在那之前，带这种节点的流程在微服务版里走不到也走不过这个节点。
  */
 @Component
 @Primary

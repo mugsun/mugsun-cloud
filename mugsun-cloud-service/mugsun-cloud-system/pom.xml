@@ -22,6 +22,11 @@
 			<groupId>com.mugsun</groupId>
 			<artifactId>mugsun-cloud-resource-api</artifactId>
 		</dependency>
+		<!-- 审批流在审批流服务里，流程引擎也只在那边。手机端首页还在这里，它要显示待办，依赖审批流的 api 模块就能取到 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-flow-api</artifactId>
+		</dependency>
 		<!-- 以下与 mugsun-boot-core 的依赖一致，是公共层用不到、只有 system 用的那些 -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -59,14 +64,6 @@
 					<artifactId>hutool-core</artifactId>
 				</exclusion>
 			</exclusions>
-		</dependency>
-		<dependency>
-			<groupId>org.dromara.warm</groupId>
-			<artifactId>warm-flow-mybatis-sb3-starter</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.dromara.warm</groupId>
-			<artifactId>warm-flow-plugin-modes-sb</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>com.yomahub</groupId>

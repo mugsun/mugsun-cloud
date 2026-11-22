@@ -120,7 +120,7 @@ public class MachineNumberIdGenerators implements MyBatisFlexCustomizer {
 	}
 
 	/**
-	 * Warm-Flow。它不在公共层的依赖里（只有 system 和 ai 带着），所以用反射；这里写死的类名和方法名，
+	 * Warm-Flow。它不在公共层的依赖里（只有审批流服务和 ai 服务带着），所以用反射；这里写死的类名和方法名，
 	 * 在 system 服务的单测（WarmFlowMachineNumberTest）里对着真的库验过。
 	 *
 	 * <p>Warm-Flow 第一次生成主键时，如果有人用 {@code IdUtils.setInstanceNative} 交给过它一个生成器就用那个，

@@ -18,7 +18,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * <p>{@code com.mugsun.boot.ai} 和 boot 一样不走根扫描：由 {@code AiAutoConfiguration} 在 {@code mugsun.ai.enabled}
  * 为开时装配，开关的规则和单体版相同。
  *
- * <p>这个服务带着流程引擎的库，但不执行审批流：审批流在 system 里跑。带它是因为 AI 模块里的预审监听器和实验室的演示数据
+ * <p>这个服务带着流程引擎的库，但不执行审批流：审批流在审批流服务里跑。带它是因为 AI 模块里的预审监听器和实验室的演示数据
  * 用到了它的类，说明见 pom.xml。
  */
 @SpringBootApplication

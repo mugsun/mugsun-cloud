@@ -128,6 +128,12 @@ spring:
               uri: lb://mugsun-resource
               predicates:
                 - Path=/system/file/**,/system/oss/**,/system/sms/**,/system/richtext/image/**,/auth/avatar/**,/system/feedback/attachment/**,/file/**
+            # 审批流服务：流程设计、发起、待办、办理（/system/flow）和手机端的待办（/app/todos），路径要写在 mugsun-system 前面；
+            # 手机端别的接口（/app 下其它路径）还在 system。两边对不对得上，由审批流服务的 FlowRoutesTest 检查
+            - id: mugsun-flow
+              uri: lb://mugsun-flow
+              predicates:
+                - Path=/system/flow/**,/app/todos/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

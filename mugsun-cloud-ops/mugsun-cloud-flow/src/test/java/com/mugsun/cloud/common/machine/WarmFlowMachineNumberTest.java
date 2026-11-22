@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Warm-Flow 流程引擎的主键有没有用上机器号。
  *
- * <p>放在 system 服务里测：公共层没有 Warm-Flow 这个依赖，那边是用反射接的（MachineNumberIdGenerators.WarmFlowIds），
+ * <p>放在审批流服务里测：公共层没有 Warm-Flow 这个依赖，那边是用反射接的（MachineNumberIdGenerators.WarmFlowIds），
  * 这里对着真的库验一遍类名、方法名和主键里各段的位置。Warm-Flow 升级后这些对不上了，这个测试会失败。
  * 包名和公共层的相同，为的是用得到包内可见的方法。
  */

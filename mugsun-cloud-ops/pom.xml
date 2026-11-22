@@ -19,5 +19,6 @@
 		<module>mugsun-cloud-develop</module>
 		<module>mugsun-cloud-job</module>
 		<module>mugsun-cloud-resource</module>
+		<module>mugsun-cloud-flow</module>
 	</modules>
 </project>

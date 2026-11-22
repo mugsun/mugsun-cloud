@@ -869,7 +869,7 @@ WebSocket 连接都在 system 上。track 发告警时，站内信写进主库�
 
 单体版的流程设计里可以放 AI 预审节点：流程走到这一步时先由 AI 应用审一遍，再往下走。微服务版暂时不支持这种节点。
 
-原因：这种节点靠 AI 模块里的一个监听器执行。监听器在 ai 服务里，审批流在 system 里跑。流程引擎找不到监听器时不报错，直接跳过，这个节点就成了一条发起人自己能点通过的待办，预审等于没做。所以 system 把它拦下来：
+原因：这种节点靠 AI 模块里的一个监听器执行。监听器在 ai 服务里，审批流在审批流服务里跑。流程引擎找不到监听器时不报错，直接跳过，这个节点就成了一条发起人自己能点通过的待办，预审等于没做。所以审批流服务把它拦下来：
 
 - 发起、通过、驳回、撤回，只要下一步会走到 AI 预审节点，操作被拒绝，库里什么都不写。
 - 单子已经停在 AI 预审节点上的，不能通过，可以驳回到前面的节点，也可以作废。单体版里这样的单子可以人工点通过，微服务版不行。
@@ -918,9 +918,9 @@ order by t.instance_id;
 - 发布带这种节点的流程不会被拦，拦的是走到它的那一步。
 - 这种节点和票签、会签节点挨着时有一个缺口：一票定了结果（票签的票数提前够了，或者会签时有人驳回）、而下一步正好是这种节点时，操作被拦下，但其他还没表态的人的待办这时已经被引擎清掉了。单子留在最后操作的人手里，要作废后重新发起。
 - 实验开关 `mugsun.lab.seed-fronttest=true` 会让 ai 服务在启动时发布两个带这种节点的演示流程（`ai-preaudit` 和 `ai-foreach-preaudit`），它们在微服务版里发起不了。这个开关不要在生产环境打开。
-- 被拦下的操作在 system 的日志里有一条 WARN：`拦下一次要走到 AI 预审节点的操作`，或者 `拦下一次在 AI 预审节点上的办理`。
+- 被拦下的操作在审批流服务的日志里有一条 WARN：`拦下一次要走到 AI 预审节点的操作`，或者 `拦下一次在 AI 预审节点上的办理`。
 - 日志里出现 ERROR `AI 预审节点的任务被建出来了，写库之前的拦截没有生效` 时，说明有操作绕过了上面的拦截，对应的单子要人工核对。
-- system 启动时会检查拦截有没有装到流程引擎上，没装上就拒绝启动。
+- 审批流服务启动时会检查拦截有没有装到流程引擎上，没装上就拒绝启动。
 
 ## 16. 用 Docker Compose 起全套
 
@@ -1116,7 +1116,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 
 ### 只用镜像
 
-每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`job`、`resource`、`admin`：
+每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`job`、`resource`、`flow`、`admin`：
 
 ```bash
 docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
@@ -1415,6 +1415,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 | 代码生成服务 | `blade-ops/blade-develop` | `mugsun-cloud-ops/mugsun-cloud-develop`，`mugsun-develop`，8107 | 代码生成、数据建模、代码生成用的数据源和方案、在线表单：`/system/gen/**`、`/system/gen-datasource/**`、`/system/gen-scheme/**`、`/system/online-form/**` | 这几组路径经网关返回 503，管理后台的代码生成、在线表单页面打不开，别的功能不受影响 | 只编译过，`DevelopRoutesTest` 核对了网关的路由；没有实际启动过 |
 | 定时任务服务 | `blade-ops/blade-job` | `mugsun-cloud-ops/mugsun-cloud-job`，`mugsun-job`，8108 | 定时任务和调度中心的管理接口：`/system/job/**`、`/system/job-server/**`；PowerJob 执行器和三个处理器；按保留期清理日志 | 这两组路径经网关返回 503，定时任务、调度中心两个页面打不开；调度中心派的任务没有执行器接；到期的日志不会被清理，直到它再启动 | 只编译过，`JobRoutesTest` 核对了网关的路由；没有实际启动过，也没有接过真的调度中心 |
 | 文件和短信服务 | `blade-ops/blade-resource` | `mugsun-cloud-ops/mugsun-cloud-resource`，`mugsun-resource`，8109 | 文件上传下载 `/system/file/**`、存储配置 `/system/oss/**`、短信配置 `/system/sms/**`、富文本图片 `/system/richtext/image/**`、头像 `/auth/avatar/**`、反馈附件 `/system/feedback/attachment/**`、本地存储直出的 `/file/**`；发验证码、验验证码、发通知短信（内部接口） | 这几组路径经网关返回 503：文件传不了也下不了，头像和图片显示不出来；短信验证码、双因子短信、短信通知发不出去，页面上提示短信服务暂时不可用；账号密码登录不受影响 | 只编译过，`ResourceRoutesTest` 核对了网关的路由，短信的内部调用两端各有单元测试；没有实际启动过，没有真的传过文件、发过短信 |
+| 审批流服务 | `blade-ops/blade-flow` | `mugsun-cloud-ops/mugsun-cloud-flow`，`mugsun-flow`，8110 | 流程定义和设计、发起、待办、办理、流转记录 `/system/flow/**`，手机端的待办 `/app/todos/**`；按用户取待办列表（内部接口，手机端首页用） | 这两组路径经网关返回 503：流程设计、发起、办理都用不了；手机端首页提示待办暂时取不到（首页要显示待办数）；管理后台工作台上的待办数直接查库，不受影响 | 只编译过，`FlowRoutesTest` 核对了网关的路由，取待办的内部调用两端各有单元测试；没有实际启动过，没有真的发起、办理过流程 |
 
 和 BladeX 不一样的地方：
 
@@ -1422,3 +1423,4 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 - 代码生成：BladeX 的 blade-develop 里是它自己的代码生成器（模型、模型字段、生成配置、数据源）。这边拆出来的是单体版的代码生成、数据建模和在线表单，代码没有改，生成代码用的模板也跟着搬到了这个服务。BladeX 还给别的服务留了一个查数据源的接口（`IDatasourceClient`），它自己没有地方调，这边也还没有服务要用，先不建。
 - 定时任务：BladeX 的 blade-job 是任务和调度中心的管理接口加一个示例处理器，这边也是这样分的，另外多带了清日志、清缓存两个处理器和按保留期清理日志的定时任务（清日志的处理器要直接调它，所以跟着过来）。PowerJob 执行器原来只在 system 上启动，现在只在这个服务上启动，见第 13 节。
 - 文件和短信：BladeX 的 blade-resource 管对象存储、附件和短信，另有 blade-resource-api 给别的服务调用（登录服务用它发短信验证码）。这边也是这样分的：服务是 `mugsun-cloud-resource`，给别的服务调用的那一层是 `mugsun-cloud-ops-api/mugsun-cloud-resource-api`。不一样的地方：BladeX 的服务之间用 Feign 调用，这边用带签名的内部接口（第 4 节）；BladeX 把「上传文件」也做成了给别的服务调用的接口，这边别的服务目前只需要调短信，文件的那一个没有做；头像、富文本图片、反馈附件 BladeX 没有单独的接口，这边它们要读写文件存储，跟着存储过来。
+- 审批流：BladeX 的 blade-flow 用 Flowable 引擎，另有 blade-flow-api 给别的服务调用（工作台里的请假用它发起流程、完成任务）。这边也是这样分的：服务是 `mugsun-cloud-flow`，给别的服务调用的那一层是 `mugsun-cloud-ops-api/mugsun-cloud-flow-api`。不一样的地方：引擎是单体版用的 warm-flow；发起和办理都在审批流服务自己的接口里（请假的示例也在），没有别的服务要发起流程，所以 flow-api 里目前只有「按用户取待办」一个调用，以后有服务要发起流程时加在那里；BladeX 的流程表在单独的一个库里，这边和其它服务用同一个库。

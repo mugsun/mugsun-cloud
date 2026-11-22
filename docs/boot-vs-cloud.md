@@ -8,12 +8,12 @@
 
 | | 是什么 | 现在有多少 |
 | --- | --- | --- |
-| 一 | 同一件事，两边各有一个实现 | 8 处 |
+| 一 | 同一件事，两边各有一个实现 | 9 处 |
 | 二 | 业务上两边做法不同 | 2 处 |
 | 三 | 单体版有、这边不带的类 | 1 个 |
-| 四 | 只有微服务版才有的类 | 94 个 |
+| 四 | 只有微服务版才有的类 | 97 个 |
 
-微服务版手写的类一共 115 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
+微服务版手写的类一共 120 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
 
 ## 这一页怎么保持是对的
 
@@ -41,7 +41,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 2. 第一节、第二节的每一处都有测试，名字列在各自下面。
 3. 同一组请求分别发给单体版和微服务版，逐个对比返回的结果：**还没有做**，排在各模块拆完以后。
 
-## 一、同一件事，两边各有一个实现（8 处）
+## 一、同一件事，两边各有一个实现（9 处）
 
 单体版里各模块在同一个进程里，互相直接调用。微服务版里它们在不同的服务里，所以同一个接口这边另写了一个实现。接口本身在同步来的代码里，两边用的是同一个。做法有两种：
 
@@ -80,7 +80,18 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：system 把每一次调用发给文件和短信服务的内部接口，那边执行的仍然是单体版的那个短信服务类；发不出去时（发得太频繁、通道没配、短信平台没发出去）给用户的话是同一句。手机号或验证码是空的直接算没通过，不发起调用。单体版没有的情况只有一种：文件和短信服务没在运行或者没调成。这时发短信和验验证码报「短信服务暂时不可用」，不当成发出去了，也不记成验证码错误；开发环境回显验证码按不回显算。
 - 测试：`RemoteSmsGatewayTest`、`SmsCodeEndpointTest`、`SmsTextEndpointTest`
 
-### 4. 代码生成的「规则建模」请大模型出草稿
+### 4. 手机端首页取待办
+
+- 接口：`app.AppTodoReader`（同步在 mugsun-cloud-common）
+- 单体版的实现：`app.AppTodoService`（同步在 mugsun-cloud-flow）
+- 微服务版的实现：`api.flow.RemoteAppTodoReader`（mugsun-cloud-flow-api）
+- 一起用到的手写类：`flow.AppTodoEndpoint`（mugsun-cloud-flow）
+- 为什么另写：单体版里手机端首页直接调同一个进程里的待办服务类，显示待办数和前几条待办。微服务版里审批流是单独的服务，手机端首页还在 system。
+- 做法：转给对方服务
+- 怎么保证一样：system 把当前登录用户的编号发给审批流服务的内部接口，那边执行的仍然是单体版的那个待办服务类，查的是同一个租户，结果和手机端待办列表一致。单体版没有的情况只有一种：审批流服务没在运行或者没调成。这时首页报「待办暂时取不到」，不显示成 0 条待办。
+- 测试：`RemoteAppTodoReaderTest`、`AppTodoEndpointTest`
+
+### 5. 代码生成的「规则建模」请大模型出草稿
 
 - 接口：`gen.GenAiDraftEnhancer`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.GenAiDraftEnhancerImpl`（同步在 mugsun-cloud-ai）
@@ -91,7 +102,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：代码生成服务把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。
 - 测试：`RemoteGenAiDraftEnhancerTest`、`GenDraftEndpointTest`
 
-### 5. AI 模块在不在、开没开
+### 6. AI 模块在不在、开没开
 
 - 接口：`common.module.AiModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.AiModuleService`（同步在 mugsun-cloud-ai）
@@ -102,7 +113,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
 
-### 6. 地图模块在不在、开没开
+### 7. 地图模块在不在、开没开
 
 - 接口：`common.module.GisModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`gis.GisModuleService`（同步在 mugsun-cloud-gis）
@@ -113,7 +124,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
 
-### 7. 埋点模块在不在、开没开
+### 8. 埋点模块在不在、开没开
 
 - 接口：`common.module.TrackModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`track.TrackModuleService`（同步在 mugsun-cloud-track）
@@ -124,7 +135,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。
 - 测试：`ModuleStatusTest`
 
-### 8. 埋点「问数据」请大模型理解提问
+### 9. 埋点「问数据」请大模型理解提问
 
 - 接口：`common.module.TrackAskLlmGateway`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.TrackAskLlmGatewayImpl`（同步在 mugsun-cloud-ai）
@@ -143,9 +154,9 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 - 单体版：审批流里可以放 AI 预审节点：由 AI 模块里的监听器调用 AI 应用，决定通过、退回还是转人工。
 - 微服务版：这个节点不能用。流程要走到它时被拦下并提示；单体版里留下来、已经停在这个节点上的任务只能退回或作废，不能通过。
-- 为什么不一样：那个监听器在 AI 模块里，微服务版的 system 服务里没有它。流程引擎找不到监听器时不报错、直接跳过，节点会变成发起人自己点一下就过的普通任务，预审等于没有，所以拦下。要让它在微服务版里真正能用，得先改 mugsun-boot：把监听器里操作流程的部分和调用 AI 的部分拆开，前一半留在 system，后一半放到 ai 服务。
-- 微服务版的类：`system.ai.AiApprovalNodeGate`（mugsun-cloud-system）、`system.ai.AiApprovalNodeGuard`（mugsun-cloud-system）
-- 单体版相关的类：`ai.flow.AiApprovalNodeListener`（同步在 mugsun-cloud-ai）、`system.service.MugsunFlowListener`（同步在 mugsun-cloud-system）
+- 为什么不一样：那个监听器在 AI 模块里，微服务版的审批流服务里没有它。流程引擎找不到监听器时不报错、直接跳过，节点会变成发起人自己点一下就过的普通任务，预审等于没有，所以拦下。要让它在微服务版里真正能用，得先改 mugsun-boot：把监听器里操作流程的部分和调用 AI 的部分拆开，前一半留在审批流服务，后一半放到 ai 服务。
+- 微服务版的类：`flow.AiApprovalNodeGate`（mugsun-cloud-flow）、`flow.AiApprovalNodeGuard`（mugsun-cloud-flow）
+- 单体版相关的类：`ai.flow.AiApprovalNodeListener`（同步在 mugsun-cloud-ai）、`system.service.MugsunFlowListener`（同步在 mugsun-cloud-flow）
 - 测试：`AiApprovalNodeGateTest`、`AiApprovalNodeGuardTest`
 
 ### 2. 监控接口谁能访问
@@ -165,7 +176,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 另外有两样也不同步：单体版的打包模块 `mugsun-boot-server`（只有 pom 和测试），和各模块的测试代码。业务测试在 mugsun-boot 里跑。
 
-## 四、只有微服务版才有的类（94 个）
+## 四、只有微服务版才有的类（97 个）
 
 单体版是一个进程，用不着这些。每个类后面的话是它类注释的第一句。
 
@@ -353,6 +364,13 @@ ai 服务的启动入口，和启动时的检查。
 - `resource`
   - `ResourceApplication`：文件和短信服务启动入口。
 
+### mugsun-cloud-flow（1 个）
+
+审批流服务：流程定义和设计、发起、待办、办理、流转记录，手机端的待办。业务类是同步来的，手写的有启动入口、接收取待办内部调用的一端、拦 AI 预审节点的两个类。
+
+- `flow`
+  - `FlowApplication`：审批流服务启动入口。
+
 ### mugsun-cloud-resource-api（2 个）
 
 文件和短信服务给别的服务调用的那一层：把发短信、验短信验证码转给文件和短信服务的类，和两端约好的字段名。
@@ -360,3 +378,11 @@ ai 服务的启动入口，和启动时的检查。
 - `api.resource`
   - `ResourceApiAutoConfiguration`：依赖了这个模块的服务自动得到的 Bean：服务自己没有短信的实现时，用转给文件和短信服务的那一个。
   - `SmsApi`：短信内部接口里两端约好的名字：请求和响应的字段、验证码接口的操作名。
+
+### mugsun-cloud-flow-api（2 个）
+
+审批流服务给别的服务调用的那一层：把取待办转给审批流服务的类，和两端约好的字段名。
+
+- `api.flow`
+  - `FlowApi`：审批流内部接口里两端约好的名字：请求和响应的字段。
+  - `FlowApiAutoConfiguration`：依赖了这个模块的服务自动得到的 Bean：服务自己没有取待办的实现时，用转给审批流服务的那一个。

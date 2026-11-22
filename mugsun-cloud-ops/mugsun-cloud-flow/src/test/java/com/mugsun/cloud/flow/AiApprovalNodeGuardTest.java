@@ -1,4 +1,4 @@
-package com.mugsun.cloud.system.ai;
+package com.mugsun.cloud.flow;
 
 import com.mugsun.boot.common.constant.FlowConstants;
 import com.mugsun.core.tool.exception.ServiceException;

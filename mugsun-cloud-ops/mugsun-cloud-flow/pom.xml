@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud-ops</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-flow</artifactId>
+	<name>mugsun-cloud-flow</name>
+	<description>审批流服务：流程定义和设计、发起、待办、办理、流转记录，手机端的待办（从 mugsun-boot-core 里分出来的类）</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-common</artifactId>
+		</dependency>
+		<!-- 取待办的内部接口两端约好的字段名在这个模块里。它带的转发类在这个服务里不注册：这里有取待办的本地实现 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-flow-api</artifactId>
+		</dependency>
+		<!-- 流程引擎，从 system 挪到了这里，版本跟着 mugsun-bom 走。ai 服务另带着一份：AI 预审的监听器和演示数据要用它的类 -->
+		<dependency>
+			<groupId>org.dromara.warm</groupId>
+			<artifactId>warm-flow-mybatis-sb3-starter</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.dromara.warm</groupId>
+			<artifactId>warm-flow-plugin-modes-sb</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>mugsun-cloud-flow</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<skip>false</skip>
+					<mainClass>com.mugsun.cloud.flow.FlowApplication</mainClass>
+					<!-- 和 java -jar 一致：以仓库根目录为工作目录，读 ./config/application-local.yml -->
+					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+					<profiles>
+						<profile>dev</profile>
+					</profiles>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

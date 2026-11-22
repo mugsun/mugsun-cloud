@@ -130,6 +130,11 @@
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>
+				<groupId>com.mugsun</groupId>
+				<artifactId>mugsun-cloud-flow-api</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
 				<groupId>com.bucket4j</groupId>
 				<artifactId>bucket4j_jdk17-core</artifactId>
 				<version>${bucket4j.version}</version>
