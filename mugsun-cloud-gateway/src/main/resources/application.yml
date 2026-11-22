@@ -103,6 +103,12 @@ spring:
               uri: lb://mugsun-log
               predicates:
                 - Path=/system/oper-log/**,/system/login-log/**,/system/usual-log/**,/system/data-audit/**,/system/api-log/**,/system/error-log/**
+            # 报表服务：报表的定义和预览接口。和上面的日志服务一样，路径要写在 mugsun-system 前面；
+            # 两边对不对得上，由报表服务的 ReportRoutesTest 检查
+            - id: mugsun-report
+              uri: lb://mugsun-report
+              predicates:
+                - Path=/system/report/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

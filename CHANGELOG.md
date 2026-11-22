@@ -146,6 +146,9 @@
 - 清单 `docs/boot-vs-cloud.md`：单体版和微服务版代码不一样的地方
   - 由 `scripts/boot_cloud_diff.py` 生成，`--check` 在漏记或过期时不通过
   - 现在有：同一个接口两边各有一个实现的 7 处，业务做法不同的 2 处
+- 报表服务 `mugsun-cloud-ops/mugsun-cloud-report`：端口 8106，对应 BladeX 的 blade-report
+  - 报表的定义和预览接口从 system 搬到这里，路径不变，网关按路径转发
+  - 只编译过，报表服务还没有实际启动过
   - 只验证了它自己能启动和登录，各实例显示得对不对还没有在整套环境里测
 
 ### 修复

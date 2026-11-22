@@ -93,6 +93,7 @@
     "mugsun-cloud-service/mugsun-cloud-track": "track 服务的启动入口，和启动时的检查。",
     "mugsun-cloud-service/mugsun-cloud-ai": "ai 服务的启动入口，和启动时的检查。",
     "mugsun-cloud-ops/mugsun-cloud-admin": "监控中心：一个页面看网关和各服务的每个实例在不在线。",
-    "mugsun-cloud-ops/mugsun-cloud-log": "日志服务：六类日志的查询和处理。接口类是同步来的，手写的只有启动入口。"
+    "mugsun-cloud-ops/mugsun-cloud-log": "日志服务：六类日志的查询和处理。接口类是同步来的，手写的只有启动入口。",
+    "mugsun-cloud-ops/mugsun-cloud-report": "报表服务：报表的定义和预览。接口类、实体和 Mapper 是同步来的，手写的只有启动入口。"
   }
 }

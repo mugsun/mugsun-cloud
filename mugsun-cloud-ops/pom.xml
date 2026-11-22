@@ -15,5 +15,6 @@
 	<modules>
 		<module>mugsun-cloud-admin</module>
 		<module>mugsun-cloud-log</module>
+		<module>mugsun-cloud-report</module>
 	</modules>
 </project>

@@ -1,11 +1,11 @@
-# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个业务服务、日志服务、管理后台、监控中心。
+# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个业务服务、从 system 里分出来的几个服务（日志、报表等）、管理后台、监控中心。
 #
 #   docker compose -f deploy/docker/docker-compose.yml up -d --build
 #   浏览器打开 http://localhost:8188 ，账号 admin，口令（不写进日志）：
 #   docker compose -f deploy/docker/docker-compose.yml run --rm init show
 #
 # 只需要 Docker（Compose v2.17 以上），镜像都在 Docker 里从源码构建。做法和 mugsun-boot 的 docker-compose.full.yml 一致，
-# 区别是后端从一个进程换成了网关加四个业务服务和一个日志服务，另加一个注册中心。
+# 区别是后端从一个进程换成了网关加几个服务，另加一个注册中心。
 #
 # 默认就是安全的配置，除了监控中心的登录账号（见最后一条），不带任何弱口令：
 #   - 首次启动由 init 生成全部口令和密钥，按使用方拆进六个密钥卷，每个容器只挂自己的那一个，重启不变（见 gen-secrets.sh）；
@@ -35,7 +35,7 @@
 # 不要单删密钥卷而保留 pg-data：库口令只在首次初始化时写入，新生成的口令会对不上。
 name: mugsun-cloud
 
-# 四个业务服务和日志服务共用的构建参数和环境变量。口令和密钥不在这里，在 MUGSUN_ENV_FILE 指的文件里，由镜像的入口脚本读入。
+# 各服务共用的构建参数和环境变量。口令和密钥不在这里，在 MUGSUN_ENV_FILE 指的文件里，由镜像的入口脚本读入。
 x-build: &build
   context: ../..
   dockerfile: deploy/docker/Dockerfile
@@ -286,6 +286,21 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  report:
+    # 报表服务：报表的定义和预览接口。它停了只是管理后台的报表页面打不开
+    build:
+      <<: *build
+      target: report
+    image: mugsun-cloud-report:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   gateway:
     build:
       <<: *build
@@ -407,6 +422,8 @@ services:
       ai:
         condition: service_healthy
       log:
+        condition: service_healthy
+      report:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

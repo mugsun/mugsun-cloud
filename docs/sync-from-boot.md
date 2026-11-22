@@ -189,7 +189,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | 可选模块里实现 `TenantCredentialPurger` 的类，现在只有 AI 模块的 `AiSecretTenantPurger` | system 里对应的清理，现在是 `CloudAiSecretPurger`。模块增减了实现时，那个服务的 `TenantPurgerGuardTest` 会失败 |
 | 模块之间互相调用的接口 `ModuleInsightPort`、`TrackAskLlmGateway`、`GenAiDraftEnhancer`，和它们在单体版里的实现 | 调用方的 `RemoteInsightPort`、`RemoteTrackAskLlmGateway`、`RemoteGenAiDraftEnhancer`，和被调用方的 `LocalInsightEndpoint`、`TrackAskIntentEndpoint`、`GenDraftEndpoint` |
 | 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | system 的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
-| 日志的接口类增减了，或者改了类上的路径：`log.controller` 包里的，和 `monitor.controller` 里的 `ApiLogController`、`ErrorLogController` | `sync-rules.json` 的 `core.services`，和网关 `application.yml` 里 `mugsun-log` 那条路由。两边对不上时日志服务的 `LogRoutesTest` 不通过 |
+| 分给别的服务的类（`core.services` 里写的）里，接口类增减了，或者改了类上的路径 | `sync-rules.json` 的 `core.services`，和网关 `application.yml` 里那个服务的路由（`mugsun-log`、`mugsun-report` 这些）。两边对不上时那个服务的路由测试（如 `LogRoutesTest`）不通过 |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 | `docker/full/boot.Dockerfile` 里钉的 mugsun-core 提交号 `MUGSUN_CORE_REF` 和基础镜像的摘要 | `deploy/docker/Dockerfile` 里同名的参数和基础镜像 |
 | `docker-compose.full.yml` 里钉的 mugsun-pc 提交号，PostgreSQL 和 Redis 的镜像 | `deploy/docker/docker-compose.yml` 里 `pc` 的构建来源和对应的镜像 |
