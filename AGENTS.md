@@ -45,6 +45,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 同步的用法和划分规则见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。那里列了几处脚本管不到、要手工跟着 mugsun-boot 改的地方。
 
+两边代码不一样的地方列在 [docs/boot-vs-cloud.md](./docs/boot-vs-cloud.md)：同一个接口两边各有一个实现的、业务上做法不同的、只有这边才有的类。这一页由 `scripts/boot_cloud_diff.py` 生成，不要手改。在 `src/main` 里新写、删掉了类，或者改了类注释的第一句，都要重新生成。新写的类实现了同步来的接口时，先在 `scripts/boot-cloud-diff.json` 的 `seams` 里写明为什么另写、怎么保证和单体版一样、哪个测试守着；新写的类改变了业务的做法时，在 `differs` 里加一条。
+
 ## 配置中心的约定
 
 网关和各服务启动时用 Nacos Config 从 Nacos 读配置项，运行中跟着改动刷新。怎么用、实测过什么，见 [docs/deployment.md](./docs/deployment.md) 第 17 节。
@@ -162,6 +164,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 (cd ../mugsun-core && mvn -B install -DskipTests)    # core 0.2.0-SNAPSHOT 不在 Central
 ./mvnw -B verify                                     # 编译全部模块，跑本仓自己的测试
 python3 scripts/sync_from_boot.py --locked --check   # src/boot 没有被手改
+python3 scripts/boot_cloud_diff.py --check           # 和单体版不一样的地方都记了，docs/boot-vs-cloud.md 是最新的
 python3 scripts/compare_libs.py                      # 第三方库的版本和单体版的包一致，改了 pom 或同步之后跑
 deploy/docker/smoke.sh                               # 从零起整套容器逐项检查，改了 deploy/docker、网关的路由或同步进新接口之后跑
 ```
@@ -182,7 +185,7 @@ deploy/docker/smoke.sh                               # 从零起整套容器逐�
 约定和 mugsun-boot 相同，细则见那边的 `AGENTS.md` 和 `.github/COMMIT_CONVENTION.md`。要点：
 
 - Conventional Commits，主题中文，不超过 50 字，不用 emoji。一个提交只做一件事。
-- 直接在 `main` 上提交和推送，不另建分支。推之前 `./mvnw -B verify` 和 `sync_from_boot.py --locked --check` 都要通过。
+- 直接在 `main` 上提交和推送，不另建分支。推之前 `./mvnw -B verify`、`sync_from_boot.py --locked --check` 和 `boot_cloud_diff.py --check` 都要通过。
 - scope 用模块名：`gateway`、`common`、`config`、`system`、`gis`、`track`、`ai`、`sync`、`deploy`、`build`。
 - 同步 mugsun-boot 代码单独做一个提交，类型用 `chore(sync)`，正文写 mugsun-boot 的提交号。
 - `CHANGELOG.md` 写在 `## [Unreleased]` 下，每行不超过 80 字。

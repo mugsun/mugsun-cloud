@@ -170,7 +170,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 
 ## 要手工跟着改的地方
 
-下面几处脚本管不到。mugsun-boot 改了左边，这边要手工改右边。
+下面几处脚本管不到。mugsun-boot 改了左边，这边要手工改右边。两边代码不一样的地方另有一份完整的清单（哪个类对哪个类、为什么、哪个测试守着），见 [单体版和微服务版不一样的地方](./boot-vs-cloud.md)。
 
 | mugsun-boot 里的 | mugsun-cloud 里对应的 |
 | --- | --- |

@@ -1,6 +1,6 @@
 # mugsun-cloud
 
-[更新日志](./CHANGELOG.md) | [从 mugsun-boot 同步代码](./docs/sync-from-boot.md) | [部署注意事项](./docs/deployment.md)
+[更新日志](./CHANGELOG.md) | [从 mugsun-boot 同步代码](./docs/sync-from-boot.md) | [部署注意事项](./docs/deployment.md) | [和单体版不一样的地方](./docs/boot-vs-cloud.md)
 
 mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://github.com/mugsun/mugsun-boot) 是同一份，这个仓库把它拆成几个服务，前面加一个网关。
 

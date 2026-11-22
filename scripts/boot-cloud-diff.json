@@ -1,0 +1,98 @@
+{
+  "seams": {
+    "com.mugsun.cloud.ai.RemoteInsightPort": {
+      "title": "AI 向地图、埋点要库里的真实数字",
+      "how": "forward",
+      "related": [
+        "com.mugsun.cloud.ai.RemoteInsightPorts",
+        "com.mugsun.cloud.common.insight.LocalInsightEndpoint",
+        "com.mugsun.cloud.gis.GisInsightEndpoint",
+        "com.mugsun.cloud.track.TrackInsightEndpoint"
+      ],
+      "why": "「AI 问图层」「AI 解读埋点数据」要先取到图层、埋点的真实数字。单体版里 AI、地图、埋点在一个进程里，AI 直接调地图、埋点模块的实现；微服务版里它们是三个服务，ai 服务里没有那两个实现。",
+      "same": "ai 服务把请求发给 gis、track 服务的内部接口，取数的仍然是单体版的那两个实现，一行没动。对方服务不在线时告诉用户现在查不了，效果和单体版没装那个模块时一样。",
+      "tests": ["RemoteInsightPortsTest", "LocalInsightEndpointTest", "GisInsightEndpointTest", "TrackInsightEndpointTest"]
+    },
+    "com.mugsun.cloud.system.ai.CloudAiSecretPurger": {
+      "title": "删租户时清掉它的 AI 密钥",
+      "how": "rewrite",
+      "why": "单体版删租户时，在同一个事务里调用各模块的清理实现，AI 密钥由 AI 模块的实现清。微服务版里删租户在 system 服务，AI 模块在 ai 服务，system 里没有那个实现，不补的话租户删掉以后密钥还留在库里。",
+      "same": "密钥表在各服务共用的主库里，system 直接删，删除语句和单体版相同，仍然和删租户在同一个事务里，ai 服务没启动也照样清。单体版的可选模块以后新增别的清理实现时，`TenantPurgerGuardTest` 会失败，提醒在 system 里补上。",
+      "tests": ["CloudAiSecretPurgerTest", "TenantPurgerGuardTest"]
+    },
+    "com.mugsun.cloud.system.ai.RemoteGenAiDraftEnhancer": {
+      "title": "代码生成的「规则建模」请大模型出草稿",
+      "how": "forward",
+      "related": ["com.mugsun.cloud.ai.GenDraftEndpoint"],
+      "why": "单体版里代码生成直接调 AI 模块的实现，让大模型出建模草稿。微服务版里代码生成在 system 服务，大模型在 ai 服务。",
+      "same": "system 把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。",
+      "tests": ["RemoteGenAiDraftEnhancerTest", "GenDraftEndpointTest"]
+    },
+    "com.mugsun.cloud.system.module.CloudAiModuleStatus": {
+      "title": "AI 模块在不在、开没开",
+      "how": "rewrite",
+      "related": ["com.mugsun.cloud.system.module.ServicePresence"],
+      "why": "菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，system 里没有那个实现。",
+      "same": "「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。",
+      "tests": ["ModuleStatusTest"]
+    },
+    "com.mugsun.cloud.system.module.CloudGisModuleStatus": {
+      "title": "地图模块在不在、开没开",
+      "how": "rewrite",
+      "related": ["com.mugsun.cloud.system.module.ServicePresence"],
+      "why": "菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，system 里没有那个实现。",
+      "same": "「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。",
+      "tests": ["ModuleStatusTest"]
+    },
+    "com.mugsun.cloud.system.module.CloudTrackModuleStatus": {
+      "title": "埋点模块在不在、开没开",
+      "how": "rewrite",
+      "related": ["com.mugsun.cloud.system.module.ServicePresence"],
+      "why": "菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，system 里没有那个实现。",
+      "same": "「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。",
+      "tests": ["ModuleStatusTest"]
+    },
+    "com.mugsun.cloud.track.RemoteTrackAskLlmGateway": {
+      "title": "埋点「问数据」请大模型理解提问",
+      "how": "forward",
+      "related": ["com.mugsun.cloud.ai.TrackAskIntentEndpoint"],
+      "why": "单体版里埋点的「问数据」直接调 AI 模块的实现，让大模型把提问解析成意图。微服务版里埋点在 track 服务，大模型在 ai 服务。",
+      "same": "track 把提问发给 ai 服务的内部接口，解析的仍然是单体版的那个实现。三种情况和单体版一一对应：ai 服务没部署，直接用规则解析、不提示；ai 服务在但没调成，用规则解析并提示模型调用失败；调成了，意图和参数原样用。数字仍然全部来自 track 自己的埋点分析。",
+      "tests": ["RemoteTrackAskLlmGatewayTest", "TrackAskIntentEndpointTest"]
+    }
+  },
+  "differs": [
+    {
+      "title": "审批流里的 AI 预审节点",
+      "boot_side": "审批流里可以放 AI 预审节点：由 AI 模块里的监听器调用 AI 应用，决定通过、退回还是转人工。",
+      "cloud_side": "这个节点不能用。流程要走到它时被拦下并提示；单体版里留下来、已经停在这个节点上的任务只能退回或作废，不能通过。",
+      "why": "那个监听器在 AI 模块里，微服务版的 system 服务里没有它。流程引擎找不到监听器时不报错、直接跳过，节点会变成发起人自己点一下就过的普通任务，预审等于没有，所以拦下。要让它在微服务版里真正能用，得先改 mugsun-boot：把监听器里操作流程的部分和调用 AI 的部分拆开，前一半留在 system，后一半放到 ai 服务。",
+      "cloud": ["com.mugsun.cloud.system.ai.AiApprovalNodeGate", "com.mugsun.cloud.system.ai.AiApprovalNodeGuard"],
+      "boot": ["com.mugsun.boot.ai.flow.AiApprovalNodeListener", "com.mugsun.boot.system.service.MugsunFlowListener"],
+      "tests": ["AiApprovalNodeGateTest", "AiApprovalNodeGuardTest"]
+    },
+    {
+      "title": "监控接口谁能访问",
+      "boot_side": "只开放健康检查、基本信息、指标这几个监控接口，哪些要登录、要什么权限由 `ActuatorAuthFilter` 判断。",
+      "cloud_side": "监控接口全部打开。内网里直接连服务端口的（监控中心）不用登录、全部能看；经网关来的和单体版一样，还是那几个接口，仍然由 `ActuatorAuthFilter` 判断。",
+      "why": "监控中心要直接读每个实例的内存、线程、日志级别。照的是 BladeX 的做法。",
+      "cloud": ["com.mugsun.cloud.common.monitor.MonitorAccessFilter", "com.mugsun.cloud.common.monitor.MonitorAccessConfiguration"],
+      "boot": ["com.mugsun.boot.monitor.ActuatorAuthFilter"],
+      "tests": ["MonitorAccessFilterTest"]
+    }
+  ],
+  "skipped": {
+    "MugsunApplication": "单体版的启动入口，一个进程装下所有模块。这边每个服务有自己的启动入口（如 `SystemApplication`）。单体版改了它上面的注解，这边各服务的启动入口要手工跟着改。"
+  },
+  "modules": {
+    "mugsun-cloud-config": "配置中心的接入（从 Nacos 读动态路由、灰度规则这类整份的配置），和日志打码（日志写出去之前把凭证换成星号）。网关和各服务都带着它。",
+    "mugsun-cloud-common": "各服务都带的公共层里手写的部分：服务之间的内部调用、灰度标记、机器号、几个实例之间同步内存里的状态、启动和停止的顺序。",
+    "mugsun-cloud-gateway": "网关：所有请求的入口。转发、限流、黑白名单、灰度发布、动态路由、访问日志都在这里。",
+    "mugsun-cloud-service/mugsun-cloud-system": "system 服务的启动入口。",
+    "mugsun-cloud-service/mugsun-cloud-gis": "gis 服务的启动入口，和启动时的检查。",
+    "mugsun-cloud-service/mugsun-cloud-track": "track 服务的启动入口，和启动时的检查。",
+    "mugsun-cloud-service/mugsun-cloud-ai": "ai 服务的启动入口，和启动时的检查。",
+    "mugsun-cloud-ops/mugsun-cloud-admin": "监控中心：一个页面看网关和各服务的每个实例在不在线。",
+    "mugsun-cloud-ops/mugsun-cloud-log": "日志服务：六类日志的查询和处理。接口类是同步来的，手写的只有启动入口。"
+  }
+}
