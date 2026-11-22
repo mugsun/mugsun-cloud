@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.gateway.lane.LaneConfiguration;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.route.DynamicRouteConfiguration;
 import com.mugsun.cloud.gateway.support.FakeEnvironment;
@@ -56,7 +57,7 @@ class GatewayBlankSettingsTest extends GatewayTestBase {
 	void theSwitchesWereFoundInTheConfigurationFile() {
 		assertThat(GatewaySwitches.declared().keySet()).contains(GatewaySwitches.TRUSTED_PROXIES,
 			"MUGSUN_GATEWAY_ACCESS_LOG", "MUGSUN_GATEWAY_SLOW_MILLIS", "MUGSUN_GATEWAY_DENY_IPS",
-			"MUGSUN_GATEWAY_RATE_LIMIT", "MUGSUN_GATEWAY_DYNAMIC_ROUTES");
+			"MUGSUN_GATEWAY_RATE_LIMIT", "MUGSUN_GATEWAY_DYNAMIC_ROUTES", "MUGSUN_GATEWAY_LANES");
 		assertThat(context.getEnvironment().getProperty("MUGSUN_GATEWAY_ACCESS_LOG")).isEmpty();
 	}
 
@@ -66,6 +67,8 @@ class GatewayBlankSettingsTest extends GatewayTestBase {
 		assertThat(properties.getSlowMillis()).isEqualTo(3000);
 		assertThat(properties.isDynamicRoutes()).isFalse();
 		assertThat(context.getBeanNamesForType(DynamicRouteConfiguration.class)).isEmpty();
+		assertThat(properties.isLanes()).isFalse();
+		assertThat(context.getBeanNamesForType(LaneConfiguration.RulesFromNacos.class)).isEmpty();
 	}
 
 	@Test

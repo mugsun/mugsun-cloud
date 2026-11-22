@@ -126,3 +126,10 @@ mugsun:
     # 放路由的那份配置的 Data ID 和分组；分组留空表示和服务注册用同一个（MUGSUN_NACOS_GROUP）
     dynamic-routes-data-id: mugsun-gateway-routes.yaml
     dynamic-routes-group:
+    # 灰度规则：从 Nacos 的一份配置里读「哪些请求走灰度」（按客户端地址、按域名、按比例），改了马上生效，不用重启网关。
+    # 默认不启用（写 true 启用）：没有任何请求走灰度。不管启不启用，带着灰度标记（MUGSUN_LANE）启动的实例都收不到没有标记的请求。
+    # 规则怎么写、写错了会怎样、一次灰度发布怎么做，见 docs/deployment.md「灰度发布」
+    lanes: ${MUGSUN_GATEWAY_LANES:false}
+    # 放灰度规则的那份配置的 Data ID 和分组；分组留空表示和服务注册用同一个（MUGSUN_NACOS_GROUP）
+    lanes-data-id: mugsun-gateway-lanes.yaml
+    lanes-group:

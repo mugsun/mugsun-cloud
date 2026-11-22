@@ -3,9 +3,10 @@ package com.mugsun.cloud.gateway;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader.Outcome;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader.Status;
-import com.mugsun.cloud.gateway.route.NacosRouteSource;
+import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -14,6 +15,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.cloud.gateway.event.FilterArgsEvent;
 import org.springframework.cloud.gateway.event.PredicateArgsEvent;
 import org.springframework.cloud.gateway.route.Route;
@@ -165,6 +168,34 @@ class GatewayDynamicRoutesTest extends GatewayTestBase {
 		assertThat(loader.load("# 只是加了一行注释\n" + REPORT).status()).isEqualTo(Status.UNCHANGED);
 
 		assertThat(forwarded("/report/daily")).isEqualTo("/daily");
+	}
+
+	/**
+	 * 改配置的人靠日志里有没有新的一行「动态路由……」判断改动送到没有。收到一份不一样的配置，路由不用换也要记一行：
+	 * 最常见的是写错了一份没被采用，再改回原样，这时不记的话最后一行还是那条警告。
+	 * 同一份接连送来两次（启动时读一次，监听又送一次）只记一次。
+	 */
+	@Test
+	@ExtendWith(OutputCaptureExtension.class)
+	void everyDifferentContentIsLoggedOnceEvenWhenTheRoutesStayTheSame(CapturedOutput output) {
+		use(REPORT, "report");
+		String broken = withFilter("AddRequestHeader=X-A, b");
+
+		assertThat(loader.load(broken).status()).isEqualTo(Status.REJECTED);
+		assertThat(loader.load(broken).status()).isEqualTo(Status.REJECTED);
+		assertThat(loader.load(REPORT).status()).isEqualTo(Status.UNCHANGED);
+		assertThat(loader.load(REPORT).status()).isEqualTo(Status.UNCHANGED);
+		assertThat(loader.load("# 只是加了一行注释\n" + REPORT).status()).isEqualTo(Status.UNCHANGED);
+
+		List<String> lines = output.getOut().lines().filter(line -> line.contains("动态路由"))
+			.map(line -> line.substring(line.indexOf("动态路由"))).toList();
+		// 每个用例开头那一下清空记不记，要看上一个用例留下了什么：从换上 report 的那一行看起
+		String unchanged = "动态路由不用换：新收到的配置和现在的一样，现在 1 条";
+		assertThat(lines.subList(lines.indexOf("动态路由已更新，现在 1 条：report"), lines.size())).satisfiesExactly(
+			line -> assertThat(line).isEqualTo("动态路由已更新，现在 1 条：report"),
+			line -> assertThat(line).startsWith("动态路由没有更新，继续用原来的 1 条。原因：路由 bad 用了动态路由里不能用的过滤器"),
+			line -> assertThat(line).isEqualTo(unchanged),
+			line -> assertThat(line).isEqualTo(unchanged));
 	}
 
 	static Stream<Arguments> unacceptable() {
@@ -348,7 +379,7 @@ class GatewayDynamicRoutesTest extends GatewayTestBase {
 			.filter(bean -> bean.getClass().getSimpleName().equals("WebServerStartStopLifecycle"))
 			.mapToInt(SmartLifecycle::getPhase)
 			.findFirst().orElseThrow();
-		NacosRouteSource source = new NacosRouteSource("routes.yaml", "DEFAULT_GROUP", () -> null, loader);
+		NacosConfigSource source = new NacosConfigSource(() -> null, List.of());
 
 		assertThat(source.getPhase()).isLessThan(webServerPhase);
 	}
@@ -356,7 +387,8 @@ class GatewayDynamicRoutesTest extends GatewayTestBase {
 	/** 没有启用 Nacos 时不去连它 */
 	@Test
 	void nothingReadsFromNacosWhenNacosIsOff() {
-		assertThat(context.getBeansOfType(NacosRouteSource.class)).isEmpty();
+		assertThat(context.getBeansOfType(NacosConfigSource.class)).isEmpty();
+		assertThat(context.getBeansOfType(NacosConfigSource.Watch.class)).isEmpty();
 	}
 
 	@TestConfiguration(proxyBeanMethods = false)

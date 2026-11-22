@@ -2,6 +2,7 @@ package com.mugsun.cloud.gateway.filter;
 
 import com.mugsun.cloud.gateway.error.GatewayRejectedException;
 import com.mugsun.cloud.gateway.filter.AccessLogFilter.End;
+import com.mugsun.cloud.gateway.lane.LaneNames;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLogMode;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
@@ -10,6 +11,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.cloud.client.DefaultServiceInstance;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.loadbalancer.DefaultResponse;
+import org.springframework.cloud.client.loadbalancer.EmptyResponse;
+import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -18,6 +24,7 @@ import reactor.core.publisher.Mono;
 
 import java.io.IOException;
 import java.net.ConnectException;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -88,14 +95,45 @@ class AccessLogFilterTest {
 	@Test
 	void lineHasTheSameFieldsEveryTime() {
 		assertThat(AccessLogFilter.line("203.0.113.7", "GET", "/system/user/list", 200, 41, "38", "mugsun-system",
-			"10.0.0.12:8101", End.OK, "abc"))
+			"10.0.0.12:8101", null, End.OK, "abc"))
 			.isEqualTo("ip=203.0.113.7 method=GET uri=/system/user/list status=200 ms=41 ttfb=38 route=mugsun-system"
-				+ " to=10.0.0.12:8101 end=ok trace=abc");
-		assertThat(AccessLogFilter.line("", "GET", "/x", 499, 5, "-", null, null, End.CLOSED, "abc"))
-			.isEqualTo("ip=- method=GET uri=/x status=499 ms=5 ttfb=- route=- to=- end=closed trace=abc");
+				+ " to=10.0.0.12:8101 lane=- end=ok trace=abc");
+		assertThat(AccessLogFilter.line("", "GET", "/x", 499, 5, "-", null, null, null, End.CLOSED, "abc"))
+			.isEqualTo("ip=- method=GET uri=/x status=499 ms=5 ttfb=- route=- to=- lane=- end=closed trace=abc");
 		assertThat(AccessLogFilter.line("10.0.0.1", "POST", "/dead", 502, 3001, "3001", "dead", "10.0.0.9:80",
-			End.ERROR, "abc"))
-			.endsWith(" end=error trace=abc");
+			"canary>base", End.ERROR, "abc"))
+			.endsWith(" to=10.0.0.9:80 lane=canary>base end=error trace=abc");
+	}
+
+	/** 灰度字段：没有标记是空的；带着标记、选中的却是正式实例时要看得出来 */
+	@Test
+	void laneFieldTellsWhetherAGreyInstanceServedTheRequest() {
+		MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get("/x"));
+		assertThat(AccessLogFilter.laneOf(exchange)).isNull();
+
+		// 带着标记，还没有选实例（比如注册中心里没有能发的实例）
+		exchange.getAttributes().put(LaneNames.LANE_ATTR, "canary");
+		assertThat(AccessLogFilter.laneOf(exchange)).isEqualTo("canary");
+
+		// 负载均衡留下的是「一个实例都没选中」：照样记得下来，也不能当成转给了正式实例
+		exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_LOADBALANCER_RESPONSE_ATTR, new EmptyResponse());
+		assertThat(AccessLogFilter.laneOf(exchange)).isEqualTo("canary");
+
+		exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_LOADBALANCER_RESPONSE_ATTR,
+			new DefaultResponse(instance(Map.of("lane", "canary"))));
+		assertThat(AccessLogFilter.laneOf(exchange)).isEqualTo("canary");
+
+		exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_LOADBALANCER_RESPONSE_ATTR,
+			new DefaultResponse(instance(Map.of())));
+		assertThat(AccessLogFilter.laneOf(exchange)).isEqualTo("canary>base");
+
+		// 没有标记的请求转给正式实例：就是空的，不写 base
+		exchange.getAttributes().remove(LaneNames.LANE_ATTR);
+		assertThat(AccessLogFilter.laneOf(exchange)).isNull();
+	}
+
+	private static ServiceInstance instance(Map<String, String> metadata) {
+		return new DefaultServiceInstance("gis-1", "mugsun-gis", "10.0.0.12", 8102, false, metadata);
 	}
 
 	@Test

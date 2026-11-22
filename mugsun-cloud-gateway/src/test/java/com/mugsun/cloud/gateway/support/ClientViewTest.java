@@ -150,4 +150,16 @@ class ClientViewTest {
 		assertThat(ClientView.resolve(null, GATEWAY_URI, headers("X-Forwarded-For", "1.1.1.1"), PROXIES).clientIp())
 			.isEmpty();
 	}
+
+	/** 把请求归到「同一个客户端」名下用的键：IPv4 是地址本身，IPv6 是它所在的 /64 */
+	@Test
+	void bucketKeyIsTheAddressOrTheSlash64() {
+		assertThat(ClientView.bucketKey("192.0.2.1")).isEqualTo("192.0.2.1");
+		assertThat(ClientView.bucketKey("2001:db8:1:2:abcd::9")).isEqualTo("2001:db8:1:2:0:0:0:0/64");
+		assertThat(ClientView.bucketKey("2001:db8:1:2::1")).isEqualTo(ClientView.bucketKey("2001:db8:1:2:ffff:ffff:ffff:ffff"));
+		assertThat(ClientView.bucketKey("2001:db8:1:3::1")).isNotEqualTo(ClientView.bucketKey("2001:db8:1:2::1"));
+		assertThat(ClientView.bucketKey("::1")).isEqualTo("0:0:0:0:0:0:0:0/64");
+		assertThat(ClientView.bucketKey("")).isEmpty();
+		assertThat(ClientView.bucketKey(null)).isEmpty();
+	}
 }

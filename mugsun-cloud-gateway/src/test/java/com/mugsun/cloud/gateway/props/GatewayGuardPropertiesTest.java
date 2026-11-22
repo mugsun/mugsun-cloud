@@ -37,6 +37,11 @@ class GatewayGuardPropertiesTest {
 		assertThat(properties.getAccessLog()).isEqualTo(GatewayGuardProperties.AccessLogMode.ALL);
 		assertThat(properties.getSlowMillis()).isEqualTo(3000);
 		assertThat(properties.isDynamicRoutes()).isFalse();
+		assertThat(properties.getDynamicRoutesDataId()).isEqualTo("mugsun-gateway-routes.yaml");
+		assertThat(properties.getDynamicRoutesGroup()).isEmpty();
+		assertThat(properties.isLanes()).isFalse();
+		assertThat(properties.getLanesDataId()).isEqualTo("mugsun-gateway-lanes.yaml");
+		assertThat(properties.getLanesGroup()).isEmpty();
 	}
 
 	@Test
@@ -44,11 +49,17 @@ class GatewayGuardPropertiesTest {
 		GatewayGuardProperties properties = bind(Map.of(
 			"mugsun.gateway.access-log", "problems",
 			"mugsun.gateway.slow-millis", "1500",
-			"mugsun.gateway.dynamic-routes", "true"));
+			"mugsun.gateway.dynamic-routes", "true",
+			"mugsun.gateway.lanes", "true",
+			"mugsun.gateway.lanes-data-id", "lanes-of-test.yaml",
+			"mugsun.gateway.lanes-group", "TEST_GROUP"));
 
 		assertThat(properties.getAccessLog()).isEqualTo(GatewayGuardProperties.AccessLogMode.PROBLEMS);
 		assertThat(properties.getSlowMillis()).isEqualTo(1500);
 		assertThat(properties.isDynamicRoutes()).isTrue();
+		assertThat(properties.isLanes()).isTrue();
+		assertThat(properties.getLanesDataId()).isEqualTo("lanes-of-test.yaml");
+		assertThat(properties.getLanesGroup()).isEqualTo("TEST_GROUP");
 	}
 
 	/** 0 是一个有意义的值（不按耗时区分），不能被当成没配而换回默认值 */
@@ -64,11 +75,15 @@ class GatewayGuardPropertiesTest {
 		GatewayGuardProperties properties = bind(Map.of(
 			"mugsun.gateway.access-log", "",
 			"mugsun.gateway.slow-millis", "",
-			"mugsun.gateway.dynamic-routes", ""));
+			"mugsun.gateway.dynamic-routes", "",
+			"mugsun.gateway.lanes", "",
+			"mugsun.gateway.lanes-group", ""));
 
 		assertThat(properties.getAccessLog()).isEqualTo(GatewayGuardProperties.AccessLogMode.ALL);
 		assertThat(properties.getSlowMillis()).isEqualTo(3000);
 		assertThat(properties.isDynamicRoutes()).isFalse();
+		assertThat(properties.isLanes()).isFalse();
+		assertThat(properties.getLanesGroup()).isEmpty();
 	}
 
 	/** 留空当成没配，写错仍然不接受：网关启动时会停下来，错误信息里有这一项的名字 */
@@ -76,7 +91,8 @@ class GatewayGuardPropertiesTest {
 	@CsvSource({
 		"mugsun.gateway.access-log, sometimes",
 		"mugsun.gateway.slow-millis, 3s",
-		"mugsun.gateway.dynamic-routes, maybe"})
+		"mugsun.gateway.dynamic-routes, maybe",
+		"mugsun.gateway.lanes, maybe"})
 	void wrongValuesAreRefused(String name, String value) {
 		assertThatThrownBy(() -> bind(Map.of(name, value)))
 			.isInstanceOf(BindException.class)

@@ -68,7 +68,7 @@ public final class IpRanges {
 	}
 
 	/** 名单里的一条：单个地址、CIDR，或者旧的通配写法（{@code 10.1.*}）。写错了返回 null */
-	static IpCidr range(String item) {
+	public static IpCidr range(String item) {
 		// 通配写法由 IpCidr 自己一段一段检查，不经过 JDK
 		if (item.indexOf('*') < 0) {
 			int slash = item.indexOf('/');

@@ -50,17 +50,22 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 按客户端地址限制转发（黑名单、白名单、不对外开放的路径）由 `ClientAccessFilter` 管。名单这类配置写错时要拒绝启动，不要忽略写错的条目：地址名单用 `IpRanges.parse` 读，`IpCidr.parseList` 会忽略写错的条目，这里不用它。
 - 把一段文字认成地址或地址段，一律经 `IpRanges`（`bytes`、`range`、`parse`），不要直接调 `IpCidr.parse`、`parseList`、`toBytes`，也不要调 `InetAddress.getByName`。`10.0.0.300` 这种像地址又不是地址的写法，JDK 会当成主机名去查 DNS；在什么名字都解析得出地址的网络里（比如出网经过 fake-ip 代理），它会变成一个不相干的地址。`IpCidr.contains`、`anyContains` 只传 `ClientView` 算出来的地址。测试里的 `FakeIpDns` 让这类名字都解析得出地址，查没查 DNS 测得出来。
 - 限流由 `RateLimitFilter` 管，规则和计数在 `ratelimit` 包。计数放在网关实例自己的内存里（Bucket4j 的令牌桶，放在有上限的 Caffeine 缓存里），是有意不用 Redis 的：拒绝一个请求不该再产生一次网络读写，网关也因此不用拿 Redis 的口令。不要换成 Sentinel 或网关自带的 `RequestRateLimiter`；按用户、按租户一个不差的限额在服务里做。
-- 限流按什么给客户端分桶只在 `RateLimitFilter.clientKey` 一处定（IPv4 单个地址，IPv6 按 /64）。被拒绝的请求不要逐条记警告：访问日志里已经有一行，警告由 `RejectionReport` 限着条数记。限额的写法、默认值有变化时同步改 `docs/deployment.md` 第 10 节「限流」。
+- 按什么给客户端分桶只在 `ClientView.bucketKey` 一处定（IPv4 单个地址，IPv6 按 /64），限流和灰度的按比例分流共用。被拒绝的请求不要逐条记警告：访问日志里已经有一行，警告由 `RejectionReport` 限着条数记。限额的写法、默认值有变化时同步改 `docs/deployment.md` 第 10 节「限流」。
 - 按路径拦请求时，用 `RequestPaths.of(exchange)` 把客户端发来的路径和路由改写以后的路径都查一遍，比较用 `PathGuard` 或 `PathPrefixes`。不要自己拿 `startsWith` 比：把路径编码、改大小写、加分号参数就绕过去了。这类过滤器的顺序要排在 `RouteToRequestUrlFilter` 后面。
 - 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
 - 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。
-- 读 Nacos 里的路由配置只由 `NacosRouteSource` 做，改动靠监听送来。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由清掉。
+- 读 Nacos 里的配置（动态路由、灰度规则）只由 `NacosConfigSource` 做，几份配置共用一条到 Nacos 的连接，改动靠监听送来。再要读一份时加一个 `NacosConfigSource.Watch` 的 Bean，不要另开连接。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由和规则清掉。
+- 接收这些配置的一方（`DynamicRouteLoader.load`、`LaneRuleBook.load`），每收到一份和上一次不一样的全文都要记一行日志，以 `Watch.what()` 开头：换上了、清空了、不合格没有用，或者算出来和现在的一样不用换。运维靠日志里有没有新的这一行判断改动送到没有，少记一种他就会去查权限。同一份全文接连送来两次（启动时读一次，监听又送一次）只记一次。
+- 灰度发布的代码在 `lane` 包。请求的灰度标记只由 `LaneFilter` 按 `LaneRuleBook` 里的规则定，放在 exchange 的属性 `LaneNames.LANE_ATTR` 里；传给服务的 `X-Mugsun-Lane` 只由 `LaneHeaderFilter` 写，客户端带来的一律删掉。挑实例只在 `LaneInstanceSupplier` 一处做：没有标记的请求只给正式实例；有标记的先给同标记的实例，没有就给正式实例。这两条一直生效，开关 `mugsun.gateway.lanes` 只管读不读 Nacos 里的规则。改这几处等于改网关的转发头和转发去向，属于敏感改动。
+- 灰度规则只经 `LaneRuleBook.load` 换上：整份检查，有一处不合格就保留原来的。报错和日志里只写标记的名字和是第几条，不带配置里的地址和域名。写法有疑问的一律算错，不悄悄忽略，也不猜：不认识的配置项、没加引号被 YAML 读成数字或真假值的名字（`0105` 会读成 69）都拒收。悄悄忽略的结果是该进灰度的请求没进，而且没有任何提示。
+- 按比例分流的算法在 `LaneRules.bucket`：标记的名字和客户端的分桶键一起算 SHA-256，取前 8 个字节对一万取余。不要改它：改了以后，正在灰度里的客户端会整个换一批。`LaneRulesTest` 里钉着几个算好的数，算法动了它会不通过。
+- 灰度标记的名字规则、请求头和元数据的键，网关的 `LaneNames` 和公共层的 `Lanes` 里各有一份（网关不依赖公共层），要一起改，`LaneNamesTest.sameConventionsAsTheServices` 会对两边。规则里的地址段和别的名单一样经 `IpRanges.range` 读。
 - 网关自己的配置项都在 `GatewayGuardProperties`（前缀 `mugsun.gateway`），只有一层，不要分组（不要加嵌套的对象）。给配置项给值的环境变量，名字就是配置项的名字换成大写加下划线：`mugsun.gateway.rate-limit-paths` 对应 `MUGSUN_GATEWAY_RATE_LIMIT_PATHS`。Spring Boot 会按名字把环境变量对到配置项上；分了组以后，和组同名的变量会被拿去给整组赋值，变量在、值是空的时候网关启动不了。变量留空等于没配，按默认值：不是文字的配置项，setter 的参数用 `Long`、`Boolean`，不用 `long`、`boolean`。
 - 配置项从环境变量来的情况，要用真正的环境变量测（测试里的 `FakeEnvironment`）。写在 `@SpringBootTest(properties = …)` 里的值不算环境变量，上面那种问题测不出来。`GatewayBlankSettingsTest` 把所有开关留空启动网关，`GatewayEnvironmentSettingsTest` 给所有开关配上值；加了开关，在后一个里补上它的值和效果。
 - 网关不解析登录令牌，登录校验和权限判断在服务里做。
 - 需要 mugsun-boot 里的类时，在 `sync-rules.json` 的 `extras` 里单独拷贝，不要让网关依赖公共层。
 
-网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发，`GatewayRateLimitTest` 测限流，`GatewayDynamicRoutesTest` 测动态路由。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
+网关的行为都要有测试。`GatewayForwardingTest` 测网关直接面向客户端的情况，`GatewayBehindProxyTest` 测前面有可信代理的情况，`GatewayAccessLogTest` 测请求编号和访问日志，`GatewayClientAccessTest` 测按客户端地址限制转发，`GatewayRateLimitTest` 测限流，`GatewayDynamicRoutesTest` 测动态路由，`GatewayLaneTest` 测灰度发布。它们都用 `GatewayTestBase` 里的假后端，不需要 Nacos、数据库和 Redis。
 
 - 测试里访问网关用 `GatewayTestBase.client()`，不继承它的用 `GatewayClients.onPort(端口)`，不要自己 `WebTestClient.bindToServer()`。后者只断言状态码和响应头时不读响应体，没读的那部分占着的缓冲区没有人释放；`GatewayClients` 收到响应就把响应体整个读完。
 - `BufferLeakGuard` 对网关的每个测试类都生效：有缓冲区没释放就被回收时，测试不通过。它报错时先分清是哪一种：测试里有响应没读完，还是网关的代码读了请求体、响应体没有释放。后一种在线上是内存只涨不落，要改网关的代码，不要为了让测试通过去动这道检查。
@@ -103,6 +108,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 业务上的「不行」在接口里抛 `ServiceException`：调用方收到的是同一句话，不算调用失败。别的异常会变成 500，调用方按失败记，同一个租户接连 3 次就熔断 10 秒。所以「参数不对」「模块没启用」这类正常的拒绝不要用别的异常表示。
 - 调用方要分清 `InnerCallException` 的几种原因：`absent()` 为真是对方不在；`BUSY`（对方满了）和 `BREAKER_OPEN`（熔断中）这两种，对方肯定没有执行。给用户的话，`BUSY` 说「正忙，请稍后再试」，其余的失败说「暂时不可用」，参考 `RemoteInsightPort`。不要在调用方再套一层重试：`InnerClient` 已经会换实例，熔断中再试只是多报一次失败，其它的失败对方可能已经执行过了。
 - 调用方报来的等待时间（`X-Mugsun-Inner-Wait`）不参与签名，只是提示：验签通过以后才读，并且限制在 1 秒到 `long-read-timeout` 之间。不要拿它做别的判断；也不要把它加进签名，加了以后新旧版本的服务在滚动发布期间互相调不通。「忙」的回答是签了名的，调用方不采信没签名的「忙」。
+- 灰度标记（`X-Mugsun-Lane`）和等待时间一样不参与签名，只是提示：`InnerRequestFilter` 验签通过以后才读，处理完清掉。它只影响这次处理里再去调别的服务时挑哪个实例，不要拿它做权限或数据上的判断，也不要把它加进签名。当前请求的标记放在 `LaneContext`（日志的 MDC 里也有，键是 `lane`）：经网关来的请求由公共层的 `LaneFilter` 放进去，内部调用由 `InnerRequestFilter` 放进去，别处不要写它。
+- `InnerClient` 发起调用时带的是当前请求的灰度标记；没有请求可跟时（定时任务、自己起的线程）带这个实例自己的标记（`InstanceLane`，来自 `MUGSUN_LANE`）。挑实例的两条规则在 `Lanes.candidates`，和网关的 `LaneInstanceSupplier` 是同一个意思，要一起改：没有标记只找正式实例，有标记先找同标记的、没有再找正式实例。另开线程处理请求时标记不会跟过去，要跟就自己传。
 - 内部接口要有测试，都不需要 Nacos 和 Redis：验签的规则、等待时间在 `InnerRequestFilterTest`，同时处理的上限和名额怎么在租户之间分在 `InnerGateTest`，熔断在 `InnerBreakersTest`，查询时限在 `InnerQueryTimeoutTest`，调用方怎么处理各种回答在 `InnerClientTest`，两头接起来的情况在 `InnerLoopbackTest`。这几道保护在真实的故障里管不管用，单元测试看不出来：改了它们以后，要起整套服务，把对方冻住、把表锁住、让请求一起来（一个租户的，和几个租户一起的），实际测一遍等多久、占多少连接。
 
 ## 部署文件的约定

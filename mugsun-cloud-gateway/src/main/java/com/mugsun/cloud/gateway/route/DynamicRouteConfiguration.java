@@ -2,8 +2,8 @@ package com.mugsun.cloud.gateway.route;
 
 import com.alibaba.cloud.nacos.ConditionalOnNacosDiscoveryEnabled;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
-import com.alibaba.nacos.api.NacosFactory;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
+import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -46,13 +46,13 @@ public class DynamicRouteConfiguration {
 		return new DynamicRouteLoader(locator, gatewayProperties, predicates, filters, quiet, applicationName, publisher);
 	}
 
-	/** 用服务注册的那套 Nacos 地址、账号和命名空间去读配置，不另设一套 */
+	/** 动态路由写在 Nacos 的哪一份配置里。去读的是 {@link NacosConfigSource}，和网关要读的别的配置共用一条连接 */
 	@Bean
 	@ConditionalOnNacosDiscoveryEnabled
-	NacosRouteSource nacosRouteSource(GatewayGuardProperties properties, NacosDiscoveryProperties nacos,
+	NacosConfigSource.Watch dynamicRoutesWatch(GatewayGuardProperties properties, NacosDiscoveryProperties nacos,
 			DynamicRouteLoader loader) {
 		String group = properties.getDynamicRoutesGroup();
-		return new NacosRouteSource(properties.getDynamicRoutesDataId(), group.isBlank() ? nacos.getGroup() : group,
-			() -> NacosFactory.createConfigService(nacos.getNacosProperties()), loader);
+		return new NacosConfigSource.Watch("动态路由", "先只用 application.yml 里的路由", properties.getDynamicRoutesDataId(),
+			group.isBlank() ? nacos.getGroup() : group, loader::load);
 	}
 }

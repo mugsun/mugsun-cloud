@@ -1,6 +1,7 @@
 package com.mugsun.cloud.gateway.filter;
 
 import com.mugsun.cloud.gateway.error.GatewayErrorHandler;
+import com.mugsun.cloud.gateway.lane.LaneNames;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLogMode;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
@@ -8,6 +9,8 @@ import com.mugsun.cloud.gateway.support.TraceIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.loadbalancer.Response;
 import org.springframework.cloud.gateway.route.Route;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.core.Ordered;
@@ -28,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * 访问日志：每个请求结束时记一行，写明谁访问了什么、网关转给了哪个服务的哪个实例、结果和耗时。日志名是 {@code ACCESS}。
  *
  * <pre>
- * ip=203.0.113.7 method=GET uri=/system/user/list status=200 ms=41 ttfb=38 route=mugsun-system to=10.0.0.12:8081 end=ok trace=5f0c...
+ * ip=203.0.113.7 method=GET uri=/system/user/list status=200 ms=41 ttfb=38 route=mugsun-system to=10.0.0.12:8081 lane=- end=ok trace=5f0c...
  * </pre>
  *
  * <ul>
@@ -38,6 +41,8 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>{@code ms}：从收到请求到请求结束（响应写完或者连接断开）的毫秒数</li>
  *   <li>{@code ttfb}：从收到请求到开始回应的毫秒数，还没回应客户端就断开时是 {@code -}</li>
  *   <li>{@code route}：命中的路由；{@code to}：转给了哪个实例（地址:端口）。没有转发时是 {@code -}</li>
+ *   <li>{@code lane}：灰度标记。{@code -} 没有标记，转给的是正式实例；{@code canary} 转给了这个标记的灰度实例；
+ *       {@code canary>base} 带着标记，但转给的是正式实例（这个服务没有这个标记的实例，或者灰度实例没连上换过来的）</li>
  *   <li>{@code end}：{@code ok} 正常结束，{@code error} 转发出错，{@code closed} 客户端先断开了</li>
  *   <li>{@code trace}：请求编号，和服务日志里的是同一个，见 {@link TraceIdFilter}</li>
  * </ul>
@@ -134,7 +139,7 @@ public class AccessLogFilter implements WebFilter, Ordered {
 				return;
 			}
 			String line = line(clientViewResolver.resolve(request).clientIp(), request.getMethod().name(), path, status,
-				total, ttfb, routeOf(exchange), targetOf(exchange), end, TraceIds.of(exchange));
+				total, ttfb, routeOf(exchange), targetOf(exchange), laneOf(exchange), end, TraceIds.of(exchange));
 			if (warn) {
 				ACCESS.warn(line);
 			} else {
@@ -174,10 +179,11 @@ public class AccessLogFilter implements WebFilter, Ordered {
 	}
 
 	static String line(String ip, String method, String path, int status, long totalMillis, String ttfb, String route,
-			String target, End end, String traceId) {
+			String target, String lane, End end, String traceId) {
 		return "ip=" + clean(ip, MAX_FIELD) + " method=" + clean(method, MAX_FIELD) + " uri=" + clean(path, MAX_PATH)
 			+ " status=" + status + " ms=" + totalMillis + " ttfb=" + ttfb + " route=" + clean(route, MAX_FIELD)
-			+ " to=" + clean(target, MAX_FIELD) + " end=" + end.label + " trace=" + clean(traceId, MAX_FIELD);
+			+ " to=" + clean(target, MAX_FIELD) + " lane=" + clean(lane, MAX_FIELD) + " end=" + end.label
+			+ " trace=" + clean(traceId, MAX_FIELD);
 	}
 
 	/**
@@ -227,6 +233,20 @@ public class AccessLogFilter implements WebFilter, Ordered {
 		// 主机名里有下划线等字符时 URI 解析不出主机名，取整段地址；地址里写了账号密码的话去掉，不进日志
 		String authority = target.getRawAuthority();
 		return authority == null ? null : authority.substring(authority.lastIndexOf('@') + 1);
+	}
+
+	/**
+	 * 这次请求的灰度标记。带着标记、最后选中的却是正式实例时，在后面加上 {@code >base}：
+	 * 只看标记会以为这个请求是灰度实例处理的。
+	 */
+	static String laneOf(ServerWebExchange exchange) {
+		String lane = exchange.getAttribute(LaneNames.LANE_ATTR);
+		if (lane == null) {
+			return null;
+		}
+		Response<ServiceInstance> chosen = exchange.getAttribute(ServerWebExchangeUtils.GATEWAY_LOADBALANCER_RESPONSE_ATTR);
+		boolean toBase = chosen != null && chosen.hasServer() && LaneNames.of(chosen.getServer()) == null;
+		return toBase ? lane + ">" + LaneNames.BASE : lane;
 	}
 
 	private static boolean proxiedAsWebSocket(ServerWebExchange exchange) {

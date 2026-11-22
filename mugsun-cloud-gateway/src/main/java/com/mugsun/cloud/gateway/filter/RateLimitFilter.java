@@ -25,9 +25,6 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.LongSupplier;
 
@@ -114,7 +111,8 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
 		if (rule == null || rule.unlimited()) {
 			return chain.filter(exchange);
 		}
-		String client = clientKey(clientIp);
+		// IPv4 按单个地址数，IPv6 按 /64 数；算不出地址的请求（空串）共用一个桶
+		String client = ClientView.bucketKey(clientIp);
 		long waitNanos = limiter.tryAcquire(rule, client);
 		if (waitNanos == 0) {
 			return chain.filter(exchange);
@@ -124,23 +122,6 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
 		HttpHeaders headers = new HttpHeaders();
 		headers.set(HttpHeaders.RETRY_AFTER, Long.toString((waitNanos + NANOS_PER_SECOND - 1) / NANOS_PER_SECOND));
 		return Mono.error(new GatewayRejectedException(HttpStatus.TOO_MANY_REQUESTS, MESSAGE, headers));
-	}
-
-	/**
-	 * 按什么给客户端分桶：IPv4 按单个地址；IPv6 按 /64——一个 IPv6 用户通常拿到一整个 /64，按单个地址算的话换个地址就绕过去了。
-	 * 算不出地址的请求（空串）共用一个桶。
-	 */
-	static String clientKey(String clientIp) {
-		byte[] bytes = IpRanges.bytes(clientIp);
-		if (bytes == null || bytes.length != 16) {
-			return clientIp == null ? "" : clientIp;
-		}
-		Arrays.fill(bytes, 8, 16, (byte) 0);
-		try {
-			return InetAddress.getByAddress(bytes).getHostAddress() + "/64";
-		} catch (UnknownHostException e) {
-			return clientIp;
-		}
 	}
 
 	private String describe(ServerWebExchange exchange) {

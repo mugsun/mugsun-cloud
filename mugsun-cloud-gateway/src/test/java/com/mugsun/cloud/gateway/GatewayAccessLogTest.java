@@ -124,7 +124,7 @@ class GatewayAccessLogTest extends GatewayTestBase {
 		assertThat(accessLine(output, "log-check-1"))
 			.contains(" INFO ")
 			.contains("ip=127.0.0.1 method=GET uri=/system/user/list status=200 ms=")
-			.contains(" route=backend to=127.0.0.1:" + backendPort() + " end=ok trace=log-check-1");
+			.contains(" route=backend to=127.0.0.1:" + backendPort() + " lane=- end=ok trace=log-check-1");
 		assertThat(output.getAll()).doesNotContain("secret-value-1");
 	}
 
@@ -159,7 +159,7 @@ class GatewayAccessLogTest extends GatewayTestBase {
 		assertThat(accessLine(output, "log-check-4"))
 			.contains(" WARN ")
 			.contains(" status=503 ")
-			.contains(" route=unregistered to=- end=error ");
+			.contains(" route=unregistered to=- lane=- end=error ");
 	}
 
 	@Test
@@ -169,7 +169,7 @@ class GatewayAccessLogTest extends GatewayTestBase {
 		assertThat(accessLine(output, "log-check-5"))
 			.contains(" INFO ")
 			.contains(" uri=/inner/message/send status=404 ")
-			.contains(" route=backend to=- end=ok ");
+			.contains(" route=backend to=- lane=- end=ok ");
 	}
 
 	@Test

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mugsun.boot.tenant.TenantContext;
 import com.mugsun.cloud.common.inner.InnerCallException.Kind;
+import com.mugsun.cloud.common.lane.InstanceLane;
+import com.mugsun.cloud.common.lane.LaneContext;
 import com.mugsun.core.tool.exception.ServiceException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -255,6 +257,27 @@ class InnerLoopbackTest {
 		assertThat(secondsLeft.get(1)).isBetween(29, 30);
 	}
 
+	/** 灰度标记过了真的 HTTP 客户端仍然到得了：对方执行期间，当前请求的标记就是调用方的那一个；调用方没有标记时对方也没有 */
+	@Test
+	void laneReachesTheOtherSide() {
+		List<String> lanesInside = new CopyOnWriteArrayList<>();
+		behaviour = call -> {
+			lanesInside.add(String.valueOf(LaneContext.current()));
+			return Map.of();
+		};
+		InnerClient client = client(SECRET);
+
+		TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		LaneContext.set("canary");
+		try {
+			TenantContext.execute("000000", () -> client.call(TARGET, PATH, Map.of()));
+		} finally {
+			LaneContext.clear();
+		}
+
+		assertThat(lanesInside).containsExactly("null", "canary");
+	}
+
 	// ---------- 辅助 ----------
 
 	private static void await(CountDownLatch latch) {
@@ -281,7 +304,7 @@ class InnerLoopbackTest {
 	}
 
 	private InnerClient client(InnerProperties properties) {
-		return new InnerClient(properties, discovery, mapper, "mugsun-ai");
+		return new InnerClient(properties, discovery, mapper, "mugsun-ai", new InstanceLane(""));
 	}
 
 	private static DefaultServiceInstance instance(int port) {

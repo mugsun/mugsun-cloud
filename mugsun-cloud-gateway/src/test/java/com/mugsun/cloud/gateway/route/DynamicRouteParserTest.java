@@ -84,6 +84,9 @@ class DynamicRouteParserTest {
 		"- id: a\n  uri: lb://a\n",
 		"just some text",
 		"routes:\n  - id: a\n    uri: lb://a\nspring:\n  application:\n    name: x\n",
+		// 多写的那一项的值是布尔或数字时也要发现
+		"routes:\n  - id: a\n    uri: lb://a\nenabled: true\n",
+		"version: 2\n",
 		"routes:\n  a:\n    id: a\n    uri: lb://a\n"})
 	void onlyAListUnderRoutesIsAccepted(String content) {
 		assertThatThrownBy(() -> DynamicRouteParser.parse(content))
@@ -161,15 +164,10 @@ class DynamicRouteParserTest {
 			.hasMessageStartingWith("不是合法的 YAML");
 	}
 
+	/** 名字写进报错以前先整理过，整理的规矩在 ConfigTextTest 里测 */
 	@Test
-	void namesAndTextsAreMadeSafeForTheLog() {
+	void namesInMessagesAreMadeSafeForTheLog() {
 		assertThat(InvalidRoutesException.name("Path")).isEqualTo("Path");
 		assertThat(InvalidRoutesException.name("a\nb c")).isEqualTo("a?b?c");
-		assertThat(InvalidRoutesException.name(null)).isEqualTo("（没写）");
-		assertThat(InvalidRoutesException.name("x".repeat(200))).hasSize(83).endsWith("...");
-		assertThat(InvalidRoutesException.text("first line\nsecond line")).isEqualTo("first line");
-		assertThat(InvalidRoutesException.text("a\tb")).isEqualTo("a b");
-		assertThat(InvalidRoutesException.text(null)).isEqualTo("（没有说明）");
-		assertThat(InvalidRoutesException.text("y".repeat(500))).hasSize(203).endsWith("...");
 	}
 }

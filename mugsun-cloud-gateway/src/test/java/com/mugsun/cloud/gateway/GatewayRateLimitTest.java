@@ -169,7 +169,7 @@ class GatewayRateLimitTest extends GatewayTestBase {
 			.get().asString()
 			.contains(" INFO ")
 			.contains("ip=192.0.2.70 method=GET uri=/system/user/list status=429 ")
-			.contains(" route=backend to=- end=ok "));
+			.contains(" route=backend to=- lane=- end=ok "));
 	}
 
 	private void pass(String clientIp, String rawPath, int times) {

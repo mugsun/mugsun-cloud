@@ -6,6 +6,7 @@ import org.springframework.http.HttpHeaders;
 import java.net.InetAddress;
 import java.net.URI;
 import java.net.UnknownHostException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -84,6 +85,24 @@ public record ClientView(String clientIp, String scheme, String host, int port) 
 			return InetAddress.getByAddress(bytes).getHostAddress();
 		} catch (UnknownHostException e) {
 			return null;
+		}
+	}
+
+	/**
+	 * 按客户端地址把请求归到「同一个客户端」名下时用的键（限流数请求、灰度按比例分流都用它）：IPv4 按单个地址；
+	 * IPv6 按 /64——一个 IPv6 用户通常拿到一整个 /64，设备还会在里面定期换地址，按单个地址算的话换个地址就成了另一个客户端。
+	 * 算不出地址时是空串。
+	 */
+	public static String bucketKey(String clientIp) {
+		byte[] bytes = IpRanges.bytes(clientIp);
+		if (bytes == null || bytes.length != 16) {
+			return clientIp == null ? "" : clientIp;
+		}
+		Arrays.fill(bytes, 8, 16, (byte) 0);
+		try {
+			return InetAddress.getByAddress(bytes).getHostAddress() + "/64";
+		} catch (UnknownHostException e) {
+			return clientIp;
 		}
 	}
 

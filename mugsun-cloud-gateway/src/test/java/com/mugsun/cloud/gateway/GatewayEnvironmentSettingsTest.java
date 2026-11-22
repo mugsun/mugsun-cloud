@@ -1,9 +1,11 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.gateway.lane.LaneConfiguration;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.route.DynamicRouteConfiguration;
 import com.mugsun.cloud.gateway.support.FakeEnvironment;
 import com.mugsun.cloud.gateway.support.GatewaySwitches;
+import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,7 +47,8 @@ class GatewayEnvironmentSettingsTest extends GatewayTestBase {
 			Map.entry("MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS", "198.51.100.0/24"),
 			Map.entry("MUGSUN_GATEWAY_ACCESS_LOG", "problems"),
 			Map.entry("MUGSUN_GATEWAY_SLOW_MILLIS", "1500"),
-			Map.entry("MUGSUN_GATEWAY_DYNAMIC_ROUTES", "true"));
+			Map.entry("MUGSUN_GATEWAY_DYNAMIC_ROUTES", "true"),
+			Map.entry("MUGSUN_GATEWAY_LANES", "true"));
 
 		@Override
 		protected Map<String, String> variables() {
@@ -79,6 +82,10 @@ class GatewayEnvironmentSettingsTest extends GatewayTestBase {
 		assertThat(properties.getSlowMillis()).isEqualTo(1500);
 		assertThat(properties.isDynamicRoutes()).isTrue();
 		assertThat(context.getBeanNamesForType(DynamicRouteConfiguration.class)).hasSize(1);
+		assertThat(properties.isLanes()).isTrue();
+		assertThat(context.getBeanNamesForType(LaneConfiguration.RulesFromNacos.class)).hasSize(1);
+		// 这里没有连 Nacos：两个开关都开着，也没有「去 Nacos 读哪一份配置」
+		assertThat(context.getBeanNamesForType(NacosConfigSource.Watch.class)).isEmpty();
 	}
 
 	@Test

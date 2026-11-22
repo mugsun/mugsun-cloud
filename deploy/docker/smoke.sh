@@ -196,8 +196,8 @@ trusted=$("${DC[@]}" exec -T gateway printenv MUGSUN_OPENAPI_TRUSTED_PROXIES)
 
 # ---- 网关的开关：网关认的每一个，编排都传进了容器；传进去的在起作用 ----
 # 编排只把写在 environment 里的变量传进容器，漏传的开关写进 .env 也不生效，而且没有任何提示。
-# 故意不传的写在 not_passed 里：动态路由要网关接入 Nacos 的账号能读配置，这份编排没有给这个权限
-not_passed="MUGSUN_GATEWAY_DYNAMIC_ROUTES"
+# 故意不传的写在 not_passed 里：动态路由和灰度规则都要网关接入 Nacos 的账号能读配置，这份编排没有给这个权限
+not_passed="MUGSUN_GATEWAY_DYNAMIC_ROUTES MUGSUN_GATEWAY_LANES"
 # 只认写成 ${MUGSUN_GATEWAY_...} 的：注释里也会提到这个前缀
 declared=$(grep -oE '\$\{MUGSUN_GATEWAY_[A-Z0-9_]+' ../../mugsun-cloud-gateway/src/main/resources/application.yml \
 	| cut -c3- | sort -u) \

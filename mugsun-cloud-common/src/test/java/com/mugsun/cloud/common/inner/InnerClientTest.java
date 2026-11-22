@@ -772,7 +772,7 @@ class InnerClientTest {
 			sent.add(request);
 			return responder.reply(request);
 		};
-		return new InnerClient(properties, discovery, mapper, SELF, transport, () -> NOW, ticker::get);
+		return new InnerClient(properties, discovery, mapper, SELF, null, transport, () -> NOW, ticker::get);
 	}
 
 	private void oneInstance() {

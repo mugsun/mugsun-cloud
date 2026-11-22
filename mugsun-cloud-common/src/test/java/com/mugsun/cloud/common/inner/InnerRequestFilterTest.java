@@ -7,6 +7,8 @@ import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mugsun.boot.tenant.TenantContext;
+import com.mugsun.cloud.common.lane.LaneContext;
+import com.mugsun.cloud.common.lane.Lanes;
 import com.mugsun.core.tool.exception.ServiceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -79,6 +81,7 @@ class InnerRequestFilterTest {
 	void clearTenant() {
 		TenantContext.clear();
 		InnerDeadline.clear();
+		LaneContext.clear();
 		background.shutdownNow();
 	}
 
@@ -858,6 +861,80 @@ class InnerRequestFilterTest {
 		assertThat(elapsedMillis).isBetween(900L, 30_000L);
 		release.countDown();
 		held.get(5, TimeUnit.SECONDS);
+	}
+
+	// ---------- 灰度标记 ----------
+
+	/** 调用方带来的灰度标记在接口执行期间是当前请求的标记：接口里再去调别的服务，按它找实例。执行完清掉 */
+	@Test
+	void callersLaneIsCurrentWhileTheEndpointRunsAndClearedAfterwards() throws Exception {
+		List<String> lanesInside = new ArrayList<>();
+		behaviour = call -> {
+			lanesInside.add(String.valueOf(LaneContext.current()));
+			return Map.of();
+		};
+		MockHttpServletRequest request = signed(PATH, "000000", BODY);
+		request.addHeader(Lanes.HEADER, "canary");
+
+		MockHttpServletResponse response = run(filter(), request);
+
+		assertThat(response.getStatus()).isEqualTo(200);
+		assertThat(lanesInside).containsExactly("canary");
+		assertThat(LaneContext.current()).isNull();
+	}
+
+	/** 没带标记、带的写法不对、带的是 base：都按没有标记执行。线程上留着的上一个请求的标记也不沿用 */
+	@Test
+	void missingOrUnusableLaneMeansNoLane() throws Exception {
+		List<String> lanesInside = new ArrayList<>();
+		behaviour = call -> {
+			lanesInside.add(String.valueOf(LaneContext.current()));
+			return Map.of();
+		};
+		InnerRequestFilter filter = filter();
+		List<String> values = new ArrayList<>(List.of("", "base", "Canary", "can ary", "abcdefghijklmnopqrstuvwxyz0123456"));
+		values.add(null);
+
+		for (String value : values) {
+			MockHttpServletRequest request = signed(PATH, "000000", BODY);
+			if (value != null) {
+				request.addHeader(Lanes.HEADER, value);
+			}
+			LaneContext.set("stale");
+
+			assertThat(run(filter, request).getStatus()).isEqualTo(200);
+			assertThat(LaneContext.current()).as("执行完要清掉").isNull();
+		}
+
+		assertThat(lanesInside).hasSize(values.size()).containsOnly("null");
+	}
+
+	@Test
+	void laneIsClearedWhenTheEndpointFails() throws Exception {
+		behaviour = call -> {
+			throw new IllegalStateException("boom");
+		};
+		MockHttpServletRequest request = signed(PATH, "000000", BODY);
+		request.addHeader(Lanes.HEADER, "canary");
+
+		MockHttpServletResponse response = run(filter(), request);
+
+		assertThat(response.getStatus()).isEqualTo(500);
+		assertThat(LaneContext.current()).isNull();
+	}
+
+	/** 灰度标记不在签名里，所以只有验签通过的请求带的才算数：没通过的，标记不读，也不会留在线程上 */
+	@Test
+	void laneOfACallThatFailsTheSignatureCheckIsNeverRead() throws Exception {
+		MockHttpServletRequest request = request(PATH, CALLER, "000000", Long.toString(NOW), nonce(), BODY, SELF,
+			wrongSecret());
+		request.addHeader(Lanes.HEADER, "canary");
+
+		MockHttpServletResponse response = run(filter(), request);
+
+		assertThat(response.getStatus()).isEqualTo(401);
+		assertThat(calls).isEmpty();
+		assertThat(LaneContext.current()).isNull();
 	}
 
 	// ---------- 启动时的检查 ----------

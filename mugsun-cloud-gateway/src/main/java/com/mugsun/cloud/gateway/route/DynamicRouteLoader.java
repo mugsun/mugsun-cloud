@@ -20,6 +20,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -38,6 +39,9 @@ import java.util.stream.Collectors;
  * 按地址限制要用 mugsun.gateway.allow-ips 那一组配置；Weight 靠事件登记权重，路由删掉以后权重还留着。</li>
  * </ul>
  * 转换用的是一个不发事件的 ConfigurationService：一份配置不管最后收不收，都不会在别处留下痕迹。
+ *
+ * <p>每收到一份和上一次不一样的配置就记一行日志，都以「动态路由」开头：换上了、清空了、不合格没有用，
+ * 或者算出来的路由和现在的一样、不用换。改完 Nacos 里的配置，看网关日志里有没有新的这一行，就知道改动到没到、收没收。
  */
 public class DynamicRouteLoader {
 
@@ -80,6 +84,12 @@ public class DynamicRouteLoader {
 	private List<RouteDefinition> current = List.of();
 
 	/**
+	 * 上一次送来的全文，不管当时收没收。同一份接连送来两次（启动时读一次，监听又送一次），第二次的结果和第一次没有区别，
+	 * 不再记一遍日志；只在 load 里读写
+	 */
+	private String lastContent;
+
+	/**
 	 * @param quietConfigurationService 没有事件发布器的 ConfigurationService（自己 new 的、没有注册成 bean 的就是）
 	 * @param selfService               网关自己在注册中心里的名字，动态路由不能转给它
 	 */
@@ -101,17 +111,25 @@ public class DynamicRouteLoader {
 	 * @param content 配置的全文；null 或空白表示一条动态路由也不要
 	 */
 	public synchronized Outcome load(String content) {
+		boolean repeated = Objects.equals(content, lastContent);
+		lastContent = content;
 		List<RouteDefinition> definitions;
 		List<Route> routes;
 		try {
 			definitions = DynamicRouteParser.parse(content);
 			check(definitions);
 			if (definitions.equals(current)) {
+				if (!repeated) {
+					// 改了注释、换了写法，或者把写错的改回了原样：路由不用换，但要让改配置的人看到这次改动送到了
+					log.info("动态路由不用换：新收到的配置和现在的一样，现在 {} 条", current.size());
+				}
 				return new Outcome(Status.UNCHANGED, current.size(), null);
 			}
 			routes = convert(definitions);
 		} catch (InvalidRoutesException e) {
-			log.warn("动态路由没有更新，继续用原来的 {} 条。原因：{}", current.size(), e.getMessage());
+			if (!repeated) {
+				log.warn("动态路由没有更新，继续用原来的 {} 条。原因：{}", current.size(), e.getMessage());
+			}
 			return new Outcome(Status.REJECTED, current.size(), e.getMessage());
 		}
 		locator.replace(routes);

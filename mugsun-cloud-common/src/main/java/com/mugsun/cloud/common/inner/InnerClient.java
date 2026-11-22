@@ -10,6 +10,9 @@ import com.fasterxml.jackson.databind.node.NullNode;
 import com.mugsun.boot.common.constant.MonitorConstants;
 import com.mugsun.boot.tenant.TenantContext;
 import com.mugsun.cloud.common.inner.InnerCallException.Kind;
+import com.mugsun.cloud.common.lane.InstanceLane;
+import com.mugsun.cloud.common.lane.LaneContext;
+import com.mugsun.cloud.common.lane.Lanes;
 import com.mugsun.core.tool.exception.ServiceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,6 +64,10 @@ import java.util.regex.Pattern;
  *
  * <p>同一个租户调同一个实例的同一个接口接连失败几次以后，一段时间内不再调它，直接报失败（熔断，见 {@link InnerBreakers}）：
  * 对方连得上却不回话的时候，用户不用每次都等到超时。各个租户分开记，一个租户自己的故障不连累别的租户。
+ *
+ * <p>当前请求带着灰度标记时（见 {@link Lanes}），先找对方同一个标记的实例，并把标记接着带过去；对方没有这个标记的实例，
+ * 或者试的那一个不行，就找正式实例。没有标记的请求只找正式实例。请求自己没带标记、而这个实例是灰度实例时
+ * （它自己的定时任务，或者有人不经网关直接访问它），按这个实例的标记算。
  */
 @Component
 public class InnerClient {
@@ -87,6 +94,9 @@ public class InnerClient {
 
 	private final String self;
 
+	/** 这个实例自己的灰度标记，正式实例是 null */
+	private final String instanceLane;
+
 	private final Transport transport;
 
 	private final LongSupplier clock;
@@ -100,21 +110,18 @@ public class InnerClient {
 
 	@Autowired
 	public InnerClient(InnerProperties properties, DiscoveryClient discoveryClient, ObjectMapper objectMapper,
-					   @Value("${spring.application.name}") String self) {
-		this(properties, discoveryClient, objectMapper, self, new HttpTransport(properties), System::currentTimeMillis);
-	}
-
-	InnerClient(InnerProperties properties, DiscoveryClient discoveryClient, ObjectMapper objectMapper, String self,
-				Transport transport, LongSupplier clock) {
-		this(properties, discoveryClient, objectMapper, self, transport, clock, () -> System.nanoTime() / 1_000_000);
+					   @Value("${spring.application.name}") String self, InstanceLane instanceLane) {
+		this(properties, discoveryClient, objectMapper, self, instanceLane.name(), new HttpTransport(properties),
+			System::currentTimeMillis, () -> System.nanoTime() / 1_000_000);
 	}
 
 	/**
-	 * @param clock  系统时间（毫秒），写进请求的时间戳
-	 * @param ticker 只增不减的毫秒数，熔断计时用
+	 * @param instanceLane 这个实例自己的灰度标记，正式实例传 null
+	 * @param clock        系统时间（毫秒），写进请求的时间戳
+	 * @param ticker       只增不减的毫秒数，熔断计时用
 	 */
 	InnerClient(InnerProperties properties, DiscoveryClient discoveryClient, ObjectMapper objectMapper, String self,
-				Transport transport, LongSupplier clock, LongSupplier ticker) {
+				String instanceLane, Transport transport, LongSupplier clock, LongSupplier ticker) {
 		this.properties = properties;
 		this.discoveryClient = discoveryClient;
 		this.objectMapper = objectMapper;
@@ -122,6 +129,7 @@ public class InnerClient {
 			.with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
 			.without(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES);
 		this.self = self;
+		this.instanceLane = instanceLane;
 		this.transport = transport;
 		this.clock = clock;
 		this.breakers = new InnerBreakers(properties.getBreakerFailures(), properties.getBreakerPause().toMillis(), ticker);
@@ -133,11 +141,13 @@ public class InnerClient {
 	 *
 	 * <p>对方在注册中心里、只是本服务没配密钥时，结果也是不能调，另外在日志里提示一次：
 	 * 用到对方的功能这时会悄悄退回没有对方时的做法，不提示的话部署的人很难发现是少配了密钥。
+	 *
+	 * <p>有没有实例按当前请求能找的算：对方只有灰度实例时，没有灰度标记的请求得到的是不能调。
 	 */
 	public boolean reachable(String serviceId) {
 		boolean present;
 		try {
-			present = !discoveryClient.getInstances(serviceId).isEmpty();
+			present = !Lanes.candidates(discoveryClient.getInstances(serviceId), currentLane()).isEmpty();
 		} catch (RuntimeException e) {
 			log.warn("向注册中心查询服务 {} 失败，按没有实例处理：{}", serviceId, e.toString());
 			return false;
@@ -182,18 +192,24 @@ public class InnerClient {
 			throw new InnerCallException(Kind.NOT_CONFIGURED, "没有配置 mugsun.cloud.inner.secret，内部调用停用");
 		}
 		String tenant = currentTenant();
+		String lane = currentLane();
 		byte[] payload = serialize(body);
-		List<ServiceInstance> instances = instancesOf(serviceId);
-		if (instances.isEmpty()) {
-			throw new InnerCallException(Kind.NO_INSTANCE, "注册中心里没有 " + serviceId + " 的实例");
+		List<ServiceInstance> registered = registered(serviceId);
+		Lanes.Candidates found = Lanes.candidates(registered, lane);
+		if (found.isEmpty()) {
+			throw new InnerCallException(Kind.NO_INSTANCE, registered.isEmpty()
+				? "注册中心里没有 " + serviceId + " 的实例"
+				: "注册中心里 " + serviceId + " 的 " + registered.size() + " 个实例都是灰度实例，这次请求"
+				+ (lane == null ? "没有灰度标记" : "的标记是 " + lane) + "，不能发给它们");
 		}
+		List<ServiceInstance> instances = inOrder(found);
+		// 排在前面的这么多个是先找的那一组，后面的是退回去找的正式实例
+		int preferred = found.preferred().size();
 		IOException lastConnectFailure = null;
 		boolean busy = false;
 		int sent = 0;
-		for (ServiceInstance instance : instances) {
-			if (sent == MAX_INSTANCES) {
-				break;
-			}
+		for (int i = 0; i < instances.size() && sent < MAX_INSTANCES; i++) {
+			ServiceInstance instance = instances.get(i);
 			URI uri = instance.getUri().resolve(path);
 			InnerBreakers.Ticket ticket = breakers.enter(serviceId, uri.getAuthority(), path, tenant);
 			if (ticket == null) {
@@ -203,7 +219,7 @@ public class InnerClient {
 			sent++;
 			// 凭单在进下面的 catch 之前就已经交回；exchange 里没标记过结果的都按失败记
 			try (ticket) {
-				return exchange(uri, serviceId, path, tenant, payload, readTimeout, ticket);
+				return exchange(uri, serviceId, path, tenant, lane, payload, readTimeout, ticket);
 			} catch (ConnectException | HttpConnectTimeoutException e) {
 				lastConnectFailure = e;
 				log.warn("连不上 {} 的实例 {}：{}", serviceId, uri.getAuthority(), e.toString());
@@ -217,6 +233,11 @@ public class InnerClient {
 				// 对方说忙，这次没有执行，可以放心换一个实例
 				busy = true;
 			}
+			// 试的这个不行。它是同标记的灰度实例、后面又有正式实例时，剩下的灰度实例不试了，接着试正式实例：
+			// 灰度实例跑的是同一个新版本，一个出了毛病，另一个多半也一样
+			if (i < preferred && preferred < instances.size()) {
+				i = preferred - 1;
+			}
 		}
 		if (sent == 0) {
 			throw new InnerCallException(Kind.BREAKER_OPEN, "前几次调用 " + serviceId + " 的 " + path
@@ -228,7 +249,7 @@ public class InnerClient {
 		throw new InnerCallException(Kind.FAILED, "连不上 " + serviceId, lastConnectFailure);
 	}
 
-	private JsonNode exchange(URI uri, String serviceId, String path, String tenant, byte[] payload,
+	private JsonNode exchange(URI uri, String serviceId, String path, String tenant, String lane, byte[] payload,
 							  Duration readTimeout, InnerBreakers.Ticket ticket) throws IOException {
 		// 每次发送都用新的时间和随机串：换实例重试时不能沿用上一次的，否则会被当成重放
 		String timestamp = Long.toString(clock.getAsLong());
@@ -247,6 +268,10 @@ public class InnerClient {
 		String traceId = MDC.get(MonitorConstants.TRACE_MDC_KEY);
 		if (traceId != null && TRACE_ID.matcher(traceId).matches()) {
 			headers.put(MonitorConstants.TRACE_HEADER, traceId);
+		}
+		// 灰度标记接着往后带。它不在签名里：对方只拿它决定再去调别的服务时找哪一组实例
+		if (lane != null) {
+			headers.put(Lanes.HEADER, lane);
 		}
 
 		Reply reply = transport.post(uri, headers, payload, readTimeout);
@@ -321,15 +346,27 @@ public class InnerClient {
 		return payload;
 	}
 
-	/** 取对方的实例并打乱顺序，让请求大致平均分到各实例 */
-	private List<ServiceInstance> instancesOf(String serviceId) {
-		List<ServiceInstance> instances;
+	/** 当前请求的灰度标记；请求自己没带时按这个实例的标记算，都没有是 null */
+	private String currentLane() {
+		String lane = LaneContext.current();
+		return lane != null ? lane : instanceLane;
+	}
+
+	private List<ServiceInstance> registered(String serviceId) {
 		try {
-			instances = new ArrayList<>(discoveryClient.getInstances(serviceId));
+			return discoveryClient.getInstances(serviceId);
 		} catch (RuntimeException e) {
 			throw new InnerCallException(Kind.FAILED, "向注册中心查询服务 " + serviceId + " 失败：" + e, e);
 		}
+	}
+
+	/** 两组各自打乱顺序（让请求大致平均分到各实例），先找的那一组排在前面 */
+	private List<ServiceInstance> inOrder(Lanes.Candidates found) {
+		List<ServiceInstance> instances = new ArrayList<>(found.preferred());
 		Collections.shuffle(instances, random);
+		List<ServiceInstance> fallback = new ArrayList<>(found.fallback());
+		Collections.shuffle(fallback, random);
+		instances.addAll(fallback);
 		return instances;
 	}
 

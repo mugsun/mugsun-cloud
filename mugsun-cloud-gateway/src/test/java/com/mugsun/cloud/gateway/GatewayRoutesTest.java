@@ -2,8 +2,8 @@ package com.mugsun.cloud.gateway;
 
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader;
 import com.mugsun.cloud.gateway.route.DynamicRouteLocator;
-import com.mugsun.cloud.gateway.route.NacosRouteSource;
 import com.mugsun.cloud.gateway.support.GatewayClients;
+import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -99,7 +99,7 @@ class GatewayRoutesTest {
 	void dynamicRoutesAreOffByDefault() {
 		assertThat(context.getBeansOfType(DynamicRouteLocator.class)).isEmpty();
 		assertThat(context.getBeansOfType(DynamicRouteLoader.class)).isEmpty();
-		assertThat(context.getBeansOfType(NacosRouteSource.class)).isEmpty();
+		assertThat(context.getBeansOfType(NacosConfigSource.Watch.class)).isEmpty();
 	}
 
 	private static DisposableServer backend(String service) {

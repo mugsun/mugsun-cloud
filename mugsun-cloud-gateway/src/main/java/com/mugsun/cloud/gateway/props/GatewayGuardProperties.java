@@ -102,6 +102,18 @@ public class GatewayGuardProperties {
 	/** 那份配置所在的分组；留空表示和服务注册用同一个分组 */
 	private String dynamicRoutesGroup = "";
 
+	/**
+	 * 是否启用灰度规则：从 Nacos 的一份配置里读「哪些请求走灰度」，改了不用重启网关。默认不启用：没有任何请求走灰度。
+	 * 不管启不启用，带着灰度标记启动的实例都收不到没有标记的请求。
+	 */
+	private boolean lanes = false;
+
+	/** 放灰度规则的那份配置的 Data ID */
+	private String lanesDataId = "mugsun-gateway-lanes.yaml";
+
+	/** 那份配置所在的分组；留空表示和服务注册用同一个分组 */
+	private String lanesGroup = "";
+
 	public String getTrustedProxies() {
 		return trustedProxies;
 	}
@@ -212,5 +224,29 @@ public class GatewayGuardProperties {
 
 	public void setDynamicRoutesGroup(String dynamicRoutesGroup) {
 		this.dynamicRoutesGroup = dynamicRoutesGroup == null ? "" : dynamicRoutesGroup;
+	}
+
+	public boolean isLanes() {
+		return lanes;
+	}
+
+	public void setLanes(Boolean lanes) {
+		this.lanes = lanes != null && lanes;
+	}
+
+	public String getLanesDataId() {
+		return lanesDataId;
+	}
+
+	public void setLanesDataId(String lanesDataId) {
+		this.lanesDataId = lanesDataId == null ? "" : lanesDataId;
+	}
+
+	public String getLanesGroup() {
+		return lanesGroup;
+	}
+
+	public void setLanesGroup(String lanesGroup) {
+		this.lanesGroup = lanesGroup == null ? "" : lanesGroup;
 	}
 }

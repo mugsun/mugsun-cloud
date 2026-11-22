@@ -1,5 +1,6 @@
 package com.mugsun.cloud.gateway.filter;
 
+import com.mugsun.cloud.gateway.lane.LaneNames;
 import com.mugsun.cloud.gateway.support.TraceIds;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,9 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * <p>只重试一次。没有别的实例可换，或者换了还是不行，按原来的方式返回 502 / 504。
  *
+ * <p>换给谁要看灰度标记：没有标记的请求只在正式实例里换；带标记的请求先换正式实例，没有正式实例才换同一个标记的另一个灰度实例。
+ * 这里只把没连上的那个实例记在请求上，怎么挑在 LaneInstanceSupplier 里。
+ *
  * <p>没有用网关自带的 Retry 过滤器：它为了能重发，会把每个请求的请求体整个存进内存，上传大文件时网关吃不消。
  *
  * <p>排在负载均衡选出实例之后，只包住「转发」这一步。
@@ -76,7 +80,7 @@ public class NextInstanceOnConnectFailureFilter implements GlobalFilter, Ordered
 		ServiceInstance first = chosen.getServer();
 		return chain.filter(exchange).onErrorResume(
 			error -> !exchange.getResponse().isCommitted() && neverConnected(error),
-			error -> instancesOf(first.getServiceId(), exchange).flatMap(instances -> {
+			error -> candidatesAfter(first, exchange).flatMap(instances -> {
 				ServiceInstance next = another(instances, first);
 				if (next == null) {
 					return Mono.error(error);
@@ -120,19 +124,24 @@ public class NextInstanceOnConnectFailureFilter implements GlobalFilter, Ordered
 		return others.get(ThreadLocalRandom.current().nextInt(others.size()));
 	}
 
-	/** 负载均衡现在手里的实例列表，和它选实例时用的是同一份；取不到按没有处理 */
-	private Mono<List<ServiceInstance>> instancesOf(String serviceId, ServerWebExchange exchange) {
+	/**
+	 * {@code failed} 没连上以后，这次请求还能换给哪些实例。问的是负载均衡选实例时用的那同一份实例列表，
+	 * 它从请求的属性里看到有实例没连上，给出的就是换实例时的候选；取不到按没有处理。
+	 */
+	private Mono<List<ServiceInstance>> candidatesAfter(ServiceInstance failed, ServerWebExchange exchange) {
+		String serviceId = failed.getServiceId();
 		ServiceInstanceListSupplier supplier = clientFactory
 			.getLazyProvider(serviceId, ServiceInstanceListSupplier.class).getIfAvailable();
 		if (supplier == null) {
 			return Mono.just(List.of());
 		}
+		exchange.getAttributes().put(LaneNames.FAILED_INSTANCE_ATTR, failed);
 		Request<RequestDataContext> request = new DefaultRequest<>(new RequestDataContext(
 			new RequestData(exchange.getRequest(), exchange.getAttributes()), hintOf(serviceId)));
 		return supplier.get(request).next().defaultIfEmpty(List.of()).onErrorReturn(List.of());
 	}
 
-	/** 和负载均衡过滤器取提示值的方式一样：按提示值分组的实例（比如灰度），重试时不会换到别的组去 */
+	/** 和负载均衡过滤器取提示值的方式一样，两次问实例列表时带的东西就一样 */
 	private String hintOf(String serviceId) {
 		Map<String, String> hints = clientFactory.getProperties(serviceId).getHint();
 		String specific = hints.get(serviceId);

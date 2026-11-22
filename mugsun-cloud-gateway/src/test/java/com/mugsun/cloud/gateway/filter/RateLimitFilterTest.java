@@ -106,15 +106,6 @@ class RateLimitFilterTest {
 	}
 
 	@Test
-	void clientKeyIsTheAddressOrTheSlash64() {
-		assertThat(RateLimitFilter.clientKey("192.0.2.1")).isEqualTo("192.0.2.1");
-		assertThat(RateLimitFilter.clientKey("2001:db8:1:2:abcd::9")).isEqualTo("2001:db8:1:2:0:0:0:0/64");
-		assertThat(RateLimitFilter.clientKey("::1")).isEqualTo("0:0:0:0:0:0:0:0/64");
-		assertThat(RateLimitFilter.clientKey("")).isEmpty();
-		assertThat(RateLimitFilter.clientKey(null)).isEmpty();
-	}
-
-	@Test
 	void requestsWithoutAnAddressShareOneBucket() {
 		RateLimitFilter filter = filter(properties -> properties.setRateLimit("3/60s"));
 

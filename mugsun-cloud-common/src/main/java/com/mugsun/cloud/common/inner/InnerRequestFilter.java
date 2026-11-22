@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mugsun.boot.tenant.TenantContext;
+import com.mugsun.cloud.common.lane.LaneContext;
+import com.mugsun.cloud.common.lane.Lanes;
 import com.mugsun.core.tool.exception.ServiceException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -56,6 +58,9 @@ import java.util.function.Supplier;
  * 按接口分开限，一个满了不影响别的；验签通过的请求才来占名额，租户号用的是签过名的那一个。
  *
  * <p>调用方在请求头里说了最多等多久的，处理期间发出的查询到点就取消（{@link InnerQueryTimeout}）。
+ *
+ * <p>调用方带来的灰度标记（{@link Lanes#HEADER}）在接口执行期间是当前请求的标记，执行完清掉：接口里再去调别的服务时
+ * 按它找实例。这个请求头和「最多等多久」一样不在签名里，验签通过以后才读，写法不对的按没带处理；除了找实例不作别的用途。
  */
 @Component
 @Order(InnerRequestFilter.ORDER)
@@ -290,6 +295,7 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 			if (callerWait > 0) {
 				InnerDeadline.set(arrived + callerWait * 1_000_000L);
 			}
+			LaneContext.set(request.getHeader(Lanes.HEADER));
 			Object data = TenantContext.execute(tenant, () -> endpoint.handle(call));
 			payload = success(data);
 			outcome = "成功";
@@ -307,6 +313,7 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 			refuse(response, HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "error", "内部接口执行出错");
 			return;
 		} finally {
+			LaneContext.clear();
 			InnerDeadline.clear();
 			gate.leave(tenant);
 		}
