@@ -138,10 +138,12 @@ class AccessLogFilterTest {
 
 	@Test
 	void modeAllWritesEveryRequest(CapturedOutput output) {
-		run(AccessLogMode.ALL, "/mode-all?token=secret-value", answering(HttpStatus.OK));
+		run(AccessLogMode.ALL, "/mode-all?token=secret-value&page=query-marker", answering(HttpStatus.OK));
 
 		assertThat(lineFor(output, "/mode-all")).contains(" status=200 ").contains(" end=ok ");
-		assertThat(output.getAll()).doesNotContain("secret-value");
+		// 日志写出去之前 token= 后面的值会被换成星号（LogSecretsMasking），只找令牌的值看不出查询串有没有被记下来，
+		// 所以另带一个参数：查询串要是被记了，它会原样出现
+		assertThat(output.getAll()).doesNotContain("secret-value").doesNotContain("query-marker");
 	}
 
 	@Test

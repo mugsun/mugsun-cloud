@@ -120,19 +120,21 @@ class GatewayAccessLogTest extends GatewayTestBase {
 
 	@Test
 	void accessLineTellsWhereTheRequestWentWithoutTheQuery(CapturedOutput output) {
-		get("/system/user/list?token=secret-value-1", "log-check-1", 200);
+		get("/system/user/list?token=secret-value-1&page=query-marker-1", "log-check-1", 200);
 
 		assertThat(accessLine(output, "log-check-1"))
 			.contains(" INFO ")
 			.contains("ip=127.0.0.1 method=GET uri=/system/user/list status=200 ms=")
 			.contains(" route=backend to=127.0.0.1:" + backendPort() + " lane=- end=ok trace=log-check-1");
-		assertThat(output.getAll()).doesNotContain("secret-value-1");
+		// 日志写出去之前 token= 后面的值会被换成星号（LogSecretsMasking），只找令牌的值看不出查询串有没有被记下来，
+		// 所以另带一个参数：查询串要是被记了，它会原样出现
+		assertThat(output.getAll()).doesNotContain("secret-value-1").doesNotContain("query-marker-1");
 	}
 
 	@Test
 	void websocketIsLoggedWithoutItsToken(CapturedOutput output) {
 		new ReactorNettyWebSocketClient()
-			.execute(URI.create("ws://127.0.0.1:" + gatewayPort + "/ws/message?token=secret-value-2"),
+			.execute(URI.create("ws://127.0.0.1:" + gatewayPort + "/ws/message?token=secret-value-2&v=query-marker-2"),
 				session -> session.send(Mono.just(session.textMessage("ping")))
 					.thenMany(session.receive().take(1))
 					.then())
@@ -142,7 +144,8 @@ class GatewayAccessLogTest extends GatewayTestBase {
 		assertThat(accessLine(output, traceId))
 			.contains(" method=GET uri=/ws/message status=101 ")
 			.contains(" route=backend to=127.0.0.1:" + backendPort() + " ");
-		assertThat(output.getAll()).doesNotContain("secret-value-2");
+		// 另带的那个参数用来判断查询串有没有被记下来，理由见上一个测试
+		assertThat(output.getAll()).doesNotContain("secret-value-2").doesNotContain("query-marker-2");
 	}
 
 	@Test

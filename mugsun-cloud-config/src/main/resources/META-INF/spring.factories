@@ -1,0 +1,4 @@
+# 网关和各服务启动时，给日志的每个出口包上打码的一层：日志里的 Nacos 访问令牌、地址里的登录令牌换成 ***。
+# 见 LogSecretsMasking 和 LogSecrets
+org.springframework.context.ApplicationListener=\
+com.mugsun.cloud.config.logging.LogSecretsMasking

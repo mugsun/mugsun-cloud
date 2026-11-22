@@ -10,7 +10,7 @@
 	</parent>
 	<artifactId>mugsun-cloud-config</artifactId>
 	<name>mugsun-cloud-config</name>
-	<description>配置中心：带进 Nacos Config 组件（启动时从 Nacos 读配置项），另有一个读单份配置并跟着改动刷新的小工具（路由、灰度规则用）。网关和各服务共用，不带网页栈（网关是 WebFlux，服务是 Servlet，两边都能依赖）</description>
+	<description>配置中心：带进 Nacos Config 组件（启动时从 Nacos 读配置项），另有一个读单份配置并跟着改动刷新的小工具（路由、灰度规则用）。网关和各服务共用，不带网页栈（网关是 WebFlux，服务是 Servlet，两边都能依赖）。两边都要有的日志打码也放在这里：日志里的 Nacos 访问令牌等凭证写出去之前换成星号</description>
 
 	<dependencies>
 		<dependency>
@@ -33,4 +33,19 @@
 			<scope>test</scope>
 		</dependency>
 	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<!-- Nacos 的客户端自己写的日志文件默认在用户主目录下（~/logs/nacos）。测试要读它，让它写在 target 下面 -->
+						<JM.LOG.PATH>${project.build.directory}/nacos-logs</JM.LOG.PATH>
+					</systemPropertyVariables>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
 </project>
