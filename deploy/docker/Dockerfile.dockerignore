@@ -5,6 +5,7 @@
 !mugsun-cloud-common/
 !mugsun-cloud-gateway/
 !mugsun-cloud-service/
+!mugsun-cloud-ops/
 !deploy/docker/entrypoint.sh
 !deploy/docker/healthcheck.sh
 

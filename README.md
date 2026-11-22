@@ -17,6 +17,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务：`/system/gis/**` 下的全部接口，对应单体版的 `mugsun-boot-gis`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
+| `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心：一个页面看到网关和各服务的每个实例在不在线，基于 Spring Boot Admin。可以不部署 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源、服务之间的调用等 |
 | `mugsun-cloud-config` | 无 | 配置中心：启动时从 Nacos 读配置的组件，和读路由、灰度规则这类单份配置的公用代码。网关和公共层都依赖它 |
 
@@ -59,7 +60,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show
 
 - 镜像都在 Docker 里从源码构建，第一次要下载 Maven 和前端的依赖。镜像构建好以后，启动整套实测约 40 秒。
 - 整套跑起来实测约占 3.5 GB 内存。从头构建管理后台的前端更占内存，Docker 至少分 8 GB：实测用到 7.3 GB，分 6 GB 时构建到一半被杀掉。Docker 的内存不宽裕时，先单独执行 `docker compose -f deploy/docker/docker-compose.yml build pc`，再执行上面的 `up`。
-- 全部口令和密钥首次启动时随机生成，各服务按生产配置运行。对外只有管理后台一个端口，默认只绑 `127.0.0.1:8188`。
+- 全部口令和密钥首次启动时随机生成，各服务按生产配置运行。映射到宿主机的只有两个端口，默认都只绑本机：管理后台 `127.0.0.1:8188`、监控中心 `127.0.0.1:8200`。监控中心的登录账号是例外，带公开的默认值，见[部署文档](./docs/deployment.md)第 18 节。
 - 端口、网段和项目名都和单体版那套 Docker 编排错开。两套同时运行没有实测过。
 - 清空重来用 `docker compose -f deploy/docker/docker-compose.yml down -v`，数据和密钥一起删。
 
@@ -122,7 +123,14 @@ export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-gateway/target/mugsun-cloud-gateway.jar
 ```
 
+```bash
+export MUGSUN_SERVICE_IP=127.0.0.1
+java -jar mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar
+```
+
 `curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。
+
+最后一条命令启动的是监控中心，也可以不启动。启动后浏览器打开 <http://localhost:8200>，能看到各实例在不在线；登录账号见[部署文档](./docs/deployment.md)第 18 节。
 
 system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。其它服务的接口文档在它们自己的端口上，路径相同。
 

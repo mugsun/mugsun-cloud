@@ -17,8 +17,11 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务，对应 `mugsun-boot-gis`，可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务，对应 `mugsun-boot-track`，可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务，对应 `mugsun-boot-ai`，可以不部署 |
+| `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心，Spring Boot Admin，WebFlux 栈，不依赖公共层，可以不部署 |
 
 服务名是 `mugsun-<名字>`，如 `mugsun-system`。
+
+`mugsun-cloud-ops` 下面放运维用的应用，一个应用一个子模块，对应 BladeX 的 `blade-ops`。它们不放业务代码，不依赖公共层。监控中心从 Nacos 找实例，直接请求每个实例的健康检查：健康检查不在 `/actuator/health` 的应用（现在只有网关），要在注册到 Nacos 的 `metadata` 里写 `management.context-path`，不然在监控页面上一直是不在线。
 
 `mugsun-cloud-config` 里不要加 Servlet 或 WebFlux 的依赖，也不放业务代码。它的包 `com.mugsun.cloud.config` 不在网关和各服务扫描的范围里，要生效的配置类登记在它的 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 里。加了新的模块目录，`deploy/docker/Dockerfile` 和 `Dockerfile.dockerignore` 里要各补一行，不然镜像构建找不到它。
 
@@ -134,8 +137,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 `deploy/docker` 是镜像和一条命令起全套的编排，说明见 [docs/deployment.md](./docs/deployment.md) 的第 16 节。`deploy/dev` 只给本机开发用。
 
-- 口令和密钥不写进编排文件、镜像、容器的环境变量和启动参数，也不打进日志。它们由 `gen-secrets.sh` 在首次启动时生成，按使用方分卷，每个容器只挂自己要读的那一个。新增一个密钥时先想清楚谁要读它，写进对应的文件。
-- 映射到宿主机的只有管理后台一个端口，默认只绑 `127.0.0.1`。不要给网关、各服务、Nacos、数据库和 Redis 加端口映射。
+- 口令和密钥不写进编排文件、镜像、容器的环境变量和启动参数，也不打进日志。它们由 `gen-secrets.sh` 在首次启动时生成，按使用方分卷，每个容器只挂自己要读的那一个。新增一个密钥时先想清楚谁要读它，写进对应的文件。例外只有监控中心的登录账号：照 BladeX 的做法写在配置里，带公开的默认值，经环境变量传进容器。
+- 映射到宿主机的只有管理后台和监控中心两个端口，默认都只绑 `127.0.0.1`。不要给网关、各服务、Nacos、数据库和 Redis 加端口映射。
 - 要被别的容器找到的容器用固定地址，连接配置里写地址，不写容器名。容器没在运行时，Docker 会把它的名字交给宿主机的 DNS 去查，请求和口令会发到查到的地址；Nginx 还只在启动时查一次。四个业务服务不用固定地址，它们经 Nacos 被找到。
 - system 的实例数由 `MUGSUN_SYSTEM_REPLICAS` 定，默认一个。不要给 system 写 `container_name` 和固定地址，否则起不了第二个实例。自检默认起两个 system 实例，写检查时一个服务按可能有几个容器处理。
 - 常驻的服务都写 `restart: unless-stopped` 和 `stop_grace_period`。不写停止时等多久的话，有的环境里 Docker 只等 1 秒就强杀。

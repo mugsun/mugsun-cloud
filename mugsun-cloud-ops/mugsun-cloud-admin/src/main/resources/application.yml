@@ -1,0 +1,70 @@
+# mugsun-cloud 监控中心（Spring Boot Admin）：一个页面看到网关和各服务的每个实例在不在线。
+# 要看哪些实例不用配，到 Nacos 的服务登记里查；浏览器直接访问这个端口，不经网关。
+
+server:
+  port: 8200
+  shutdown: graceful
+
+spring:
+  application:
+    name: mugsun-admin
+  config:
+    # 配置中心：和网关、各服务一样，启动时到 Nacos 读两份配置，里面的配置项盖过这个文件里的同名项。
+    # mugsun.yaml 是大家共用的，mugsun-admin.yaml 只给监控中心；两份都可以不建。分环境的两份写在这个文件最后
+    import:
+      - optional:nacos:mugsun.yaml
+      - optional:nacos:mugsun-admin.yaml
+  cloud:
+    nacos:
+      config:
+        # 这一段和网关的写法一样，各项的说明见网关的 application.yml
+        enabled: ${MUGSUN_CONFIG_CENTER:true}
+        preference: remote
+        server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
+        username: ${MUGSUN_NACOS_USERNAME:}
+        password: ${MUGSUN_NACOS_PASSWORD:}
+        namespace: ${MUGSUN_NACOS_NAMESPACE:}
+        group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
+      discovery:
+        server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
+        username: ${MUGSUN_NACOS_USERNAME:}
+        password: ${MUGSUN_NACOS_PASSWORD:}
+        namespace: ${MUGSUN_NACOS_NAMESPACE:}
+        group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
+        ip: ${MUGSUN_SERVICE_IP:}
+  boot:
+    admin:
+      ui:
+        title: Mugsun 监控中心
+        brand: <span>Mugsun 监控中心</span>
+  security:
+    user:
+      # 监控页面的登录账号。默认值是公开的，正式环境要改：用这两个环境变量，或者写进 Nacos 的 mugsun-admin.yaml
+      name: ${MUGSUN_MONITOR_USERNAME:mugsun}
+      password: ${MUGSUN_MONITOR_PASSWORD:mugsun}
+
+---
+# 分环境的 Nacos 配置：带着对应的 profile 启动时才读，盖过上面不分环境的两份
+spring:
+  config:
+    activate:
+      on-profile: dev
+    import:
+      - optional:nacos:mugsun-dev.yaml
+      - optional:nacos:mugsun-admin-dev.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:mugsun-test.yaml
+      - optional:nacos:mugsun-admin-test.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:mugsun-prod.yaml
+      - optional:nacos:mugsun-admin-prod.yaml

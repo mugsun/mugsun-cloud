@@ -1,4 +1,4 @@
-# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个服务、管理后台。
+# mugsun-cloud 一条命令起全套：PostgreSQL（PostGIS + pgvector）、Redis、Nacos、网关、system / gis / track / ai 四个服务、管理后台、监控中心。
 #
 #   docker compose -f deploy/docker/docker-compose.yml up -d --build
 #   浏览器打开 http://localhost:8188 ，账号 admin，口令（不写进日志）：
@@ -7,13 +7,15 @@
 # 只需要 Docker（Compose v2.17 以上），镜像都在 Docker 里从源码构建。做法和 mugsun-boot 的 docker-compose.full.yml 一致，
 # 区别是后端从一个进程换成了网关加四个服务，另加一个注册中心。
 #
-# 默认就是安全的配置，不带任何弱口令：
+# 默认就是安全的配置，除了监控中心的登录账号（见最后一条），不带任何弱口令：
 #   - 首次启动由 init 生成全部口令和密钥，按使用方拆进六个密钥卷，每个容器只挂自己的那一个，重启不变（见 gen-secrets.sh）；
 #   - 各服务按 prod 配置运行：密钥缺失拒绝启动、验证码打开、接口文档关闭；
 #   - 对外只有管理后台一个端口，默认只绑 127.0.0.1:8188；要给别的机器访问，显式设 MUGSUN_HTTP_BIND=0.0.0.0，
 #     并把 MUGSUN_PUBLIC_URL 设成它们访问用的地址。
 #     网关、各服务、Nacos、数据库和 Redis 都不映射到宿主机，理由见 docs/deployment.md 第 1、5 节；
-#   - Nacos 打开客户端鉴权，网关和各服务用一个账号接入：能注册和查询服务、能读配置，不能改配置，拿不到管理员口令（见 nacos-init.py）。
+#   - Nacos 打开客户端鉴权，网关和各服务用一个账号接入：能注册和查询服务、能读配置，不能改配置，拿不到管理员口令（见 nacos-init.py）；
+#   - 监控中心是例外：它另有一个端口（默认只绑 127.0.0.1:8200），登录账号照 BladeX 的做法写在配置里，默认值是公开的，
+#     要给别的机器访问先改口令，见下面 admin 那一段。
 #
 # 端口、网段和项目名的默认值都和单体版那套（8088、172.30.88.0/24）错开；两套同时运行没有实测过。
 # 网段默认占 172.30.89.0/24，和宿主机上别的网段冲突时改 MUGSUN_NET_PREFIX（写前三段，比如 10.89.0）。
@@ -308,6 +310,33 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  admin:
+    # 监控中心（Spring Boot Admin）：一个页面看到网关和四个服务的每个实例在不在线。浏览器直接访问它的端口，不经管理后台和网关。
+    # 登录账号照 BladeX 的做法写在配置里，默认 mugsun / mugsun，是公开的，所以端口默认只绑本机。
+    # 要给别的机器访问（MUGSUN_MONITOR_BIND=0.0.0.0）时，先用 MUGSUN_MONITOR_PASSWORD 把口令改掉
+    build:
+      <<: *build
+      target: admin
+    image: mugsun-cloud-admin:local
+    environment:
+      TZ: ${MUGSUN_TZ:-Asia/Shanghai}
+      JAVA_OPTS: ${MUGSUN_JAVA_OPTS:--Xmx512m}
+      # 它只用得到接入 Nacos 的账号，和网关读同一份密钥文件
+      MUGSUN_ENV_FILE: /secrets/gateway.env
+      MUGSUN_NACOS_ADDR: ${MUGSUN_NET_PREFIX:-172.30.89}.11:8848
+      MUGSUN_CONFIG_CENTER: ${MUGSUN_CONFIG_CENTER:-}
+      MUGSUN_MONITOR_USERNAME: ${MUGSUN_MONITOR_USERNAME:-mugsun}
+      MUGSUN_MONITOR_PASSWORD: ${MUGSUN_MONITOR_PASSWORD:-mugsun}
+    ports:
+      - "${MUGSUN_MONITOR_BIND:-127.0.0.1}:${MUGSUN_MONITOR_PORT:-8200}:8200"
+    volumes:
+      - secrets-gateway:/secrets:ro
+    depends_on:
+      nacos-init:
+        condition: service_completed_successfully
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   pc:
     # 管理后台：直接用 mugsun-pc 仓库自己的 Dockerfile 和 Nginx 配置构建（非 root、基础镜像固定摘要、带 CSP、
     # 用 $remote_addr 覆盖 X-Forwarded-For）。源码钉在 mugsun-boot 同一个提交里 docker-compose.full.yml 钉的提交，
@@ -358,6 +387,7 @@ services:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}
+      MUGSUN_MONITOR_PORT: ${MUGSUN_MONITOR_PORT:-8200}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -370,6 +400,7 @@ services:
           ' 账号: admin' \
           ' 查看口令（口令本身不打印在此）:' \
           '   docker compose -f deploy/docker/docker-compose.yml run --rm init show' \
+          " 监控中心: http://127.0.0.1:$${MUGSUN_MONITOR_PORT}（账号口令见 docs/deployment.md）" \
           '========================================' \
           ''
 

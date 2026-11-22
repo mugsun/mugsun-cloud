@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-ops</artifactId>
+	<packaging>pom</packaging>
+	<name>mugsun-cloud-ops</name>
+	<description>运维用的应用，不承担业务，每个子模块可以单独启动</description>
+	<modules>
+		<module>mugsun-cloud-admin</module>
+	</modules>
+</project>

@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud-ops</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-admin</artifactId>
+	<name>mugsun-cloud-admin</name>
+	<description>监控中心：一个页面看到网关和各服务的每个实例在不在线（Spring Boot Admin，WebFlux，不依赖公共层）</description>
+
+	<dependencies>
+		<!-- 监控页面和它背后定时去问各实例健康状况的那部分。它自己不带网页栈，用哪一种由下面的 webflux 定 -->
+		<dependency>
+			<groupId>de.codecentric</groupId>
+			<artifactId>spring-boot-admin-starter-server</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-webflux</artifactId>
+		</dependency>
+		<!-- 登录页：账号口令写在配置里（spring.security.user） -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<!-- 要看哪些实例，从 Nacos 的服务登记里查，和网关找服务用的是同一份 -->
+		<dependency>
+			<groupId>com.alibaba.cloud</groupId>
+			<artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+		</dependency>
+		<!-- 配置中心（Nacos Config）和日志打码，和网关、各服务共用 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-config</artifactId>
+		</dependency>
+		<!-- 只在 macOS 上生效（本机开发），和网关一样：缺了它，启动时会报一条 DNS 解析的错误日志 -->
+		<dependency>
+			<groupId>io.netty</groupId>
+			<artifactId>netty-resolver-dns-native-macos</artifactId>
+			<classifier>osx-aarch_64</classifier>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>io.netty</groupId>
+			<artifactId>netty-resolver-dns-native-macos</artifactId>
+			<classifier>osx-x86_64</classifier>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>mugsun-cloud-admin</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<skip>false</skip>
+					<mainClass>com.mugsun.cloud.admin.AdminApplication</mainClass>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

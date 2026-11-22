@@ -17,7 +17,7 @@
 	<version>0.2.0-SNAPSHOT</version>
 	<packaging>pom</packaging>
 	<name>mugsun-cloud</name>
-	<description>Mugsun 微服务版父工程（网关 + 公共层 + 各业务服务）</description>
+	<description>Mugsun 微服务版父工程（网关 + 公共层 + 各业务服务 + 监控中心）</description>
 	<url>https://github.com/mugsun/mugsun-cloud</url>
 
 	<licenses>
@@ -33,6 +33,7 @@
 		<module>mugsun-cloud-common</module>
 		<module>mugsun-cloud-gateway</module>
 		<module>mugsun-cloud-service</module>
+		<module>mugsun-cloud-ops</module>
 	</modules>
 
 	<properties>
@@ -41,6 +42,8 @@
 		<!-- Spring Cloud 2025.0.x 对应 Spring Boot 3.5.x；Spring Cloud Alibaba 2025.0.0.0 的 Nacos 组件自带 Nacos 客户端 3.0.3 -->
 		<spring-cloud.version>2025.0.3</spring-cloud.version>
 		<spring-cloud-alibaba.version>2025.0.0.0</spring-cloud-alibaba.version>
+		<!-- 监控中心用的 Spring Boot Admin，3.5.x 对应 Spring Boot 3.5.x -->
+		<spring-boot-admin.version>3.5.11</spring-boot-admin.version>
 		<!-- 以下版本号与 mugsun-boot 的父 pom 一致 -->
 		<kingbase.jdbc.version>9.0.1.jre7</kingbase.jdbc.version>
 		<dameng.jdbc.version>8.1.3.62</dameng.jdbc.version>
@@ -104,6 +107,11 @@
 						<artifactId>druid-spring-boot-starter</artifactId>
 					</exclusion>
 				</exclusions>
+			</dependency>
+			<dependency>
+				<groupId>de.codecentric</groupId>
+				<artifactId>spring-boot-admin-starter-server</artifactId>
+				<version>${spring-boot-admin.version}</version>
 			</dependency>
 			<dependency>
 				<groupId>com.mugsun</groupId>

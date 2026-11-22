@@ -47,6 +47,9 @@ spring:
         group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
         # 注册到注册中心的本机地址；留空自动取第一块非回环网卡，多网卡或开着 VPN 时建议写明
         ip: ${MUGSUN_SERVICE_IP:}
+        metadata:
+          # 告诉监控中心网关的健康检查在哪：它默认到 /actuator 下面找，网关的在 /_gateway 下面（见下面的 management）
+          "[management.context-path]": /_gateway
     loadbalancer:
       cache:
         # 服务实例列表的缓存时间。默认 35 秒，服务重启后要等这么久才切到新实例，调短
