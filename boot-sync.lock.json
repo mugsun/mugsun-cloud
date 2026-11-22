@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/mugsun/mugsun-boot",
-  "commit": "98a114a1f3c31b24d26695710420fea2ef533541",
-  "digest": "748baf6051c1cc7d4384113f67cc300d77cb7dcd6a3a528ae64467041e1c5f8f",
+  "commit": "c4eade1d00546bacd96ccdced84f2b5ca019e465",
+  "digest": "56e84cb3e501fe5c8fb07176822fdedbb9592a5c3e7d47fef7b2f2039c58564a",
   "files": {
     "deploy/docker/boot": 6,
     "mugsun-cloud-auth": 156,
