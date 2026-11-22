@@ -9,6 +9,20 @@ server:
   # 服务端口不要对外暴露：绕过网关直接访问服务的人可以自己填这几个头。
   forward-headers-strategy: native
 
+management:
+  endpoints:
+    web:
+      exposure:
+        # 监控接口全部打开（BladeX 的做法）：监控中心的页面上要看内存、线程、日志级别，都从这些接口取。
+        # 谁能访问由 MonitorAccessFilter 管：内网里直接连服务端口的全部能看、不用登录；
+        # 经网关来的和以前一样，只有 health、info、metrics、prometheus，后两个要登录和监控权限
+        include: "*"
+  endpoint:
+    health:
+      # 健康检查的明细（数据库、Redis、磁盘各自怎么样）只给直接连上来的监控中心看：只有它的请求带身份（MonitorAccessFilter 给的）。
+      # 经网关来的不用登录就能访问健康检查，所以只看得到正常还是不正常，和以前一样
+      show-details: when-authorized
+
 spring:
   flyway:
     # 主库的表结构只由 system 服务迁移：迁移脚本只在它的包里，它在自己的 application.yml 里重新打开。

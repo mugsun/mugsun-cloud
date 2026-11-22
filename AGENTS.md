@@ -23,6 +23,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 `mugsun-cloud-ops` 下面放运维用的应用，一个应用一个子模块，对应 BladeX 的 `blade-ops`。它们不放业务代码，不依赖公共层。监控中心从 Nacos 找实例，直接请求每个实例的健康检查：健康检查不在 `/actuator/health` 的应用（现在只有网关），要在注册到 Nacos 的 `metadata` 里写 `management.context-path`，不然在监控页面上一直是不在线。
 
+各服务 `/actuator` 下面的监控接口全部打开，谁能访问由公共层的 `MonitorAccessFilter`（`com.mugsun.cloud.common.monitor`）管：内网里直接连服务端口的全部能看，不用登录；经网关来的只有 `THROUGH_GATEWAY` 里那几个，并且照旧要过同步来的 `ActuatorAuthFilter`。要让一个监控接口经网关也能访问，把它加进 `THROUGH_GATEWAY`。`ActuatorAuthFilter` 不再由容器直接调用（`MonitorAccessConfiguration`），不要把它改回去。它靠请求带不带转发头来分辨是不是经网关来的，所以网关给每个转发的请求写转发头这件事（`ClientAddressFilter`）不能去掉。
+
 `mugsun-cloud-config` 里不要加 Servlet 或 WebFlux 的依赖，也不放业务代码。它的包 `com.mugsun.cloud.config` 不在网关和各服务扫描的范围里，要生效的配置类登记在它的 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 里。加了新的模块目录，`deploy/docker/Dockerfile` 和 `Dockerfile.dockerignore` 里要各补一行，不然镜像构建找不到它。
 
 网关和各服务都要有的日志打码也在这个模块（`com.mugsun.cloud.config.logging`）：`LogSecretsMasking` 在日志写出去之前把 `LogSecrets` 认得的几种凭证换成 `***`，登记在 `META-INF/spring.factories`，没有开关。它只是兜底，代码里照样不要往日志里记凭证。要多认一种写法时改 `LogSecrets`，在 `LogSecretsTest` 里补用例。测试里要断言「日志里没有某个值」时，不要只用会被打码的写法（比如 `token=` 后面的值）：那个值就算被记了也查不出来，要另带一个不会被打码的值，参考 `GatewayAccessLogTest`。
