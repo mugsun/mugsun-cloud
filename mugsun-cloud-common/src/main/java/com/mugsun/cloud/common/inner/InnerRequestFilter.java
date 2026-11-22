@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mugsun.boot.tenant.TenantContext;
 import com.mugsun.cloud.common.lane.LaneContext;
 import com.mugsun.cloud.common.lane.Lanes;
+import com.mugsun.core.i18n.message.I18n;
 import com.mugsun.core.tool.exception.ServiceException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -300,7 +301,9 @@ public class InnerRequestFilter extends OncePerRequestFilter implements SmartIni
 			payload = success(data);
 			outcome = "成功";
 		} catch (ServiceException e) {
-			payload = failure(InnerProtocol.CODE_BUSINESS, e.getMessage() == null ? "操作失败" : e.getMessage());
+			// 这条消息调用方会原样带给用户，这里按调用方带来的语言翻译好：这句话的翻译在这个服务的翻译文件里，调用方那边不一定有。
+			// 调用方没带语言时是默认语言，原样返回。日志里记原文
+			payload = failure(InnerProtocol.CODE_BUSINESS, I18n.translate(e.getMessage() == null ? "操作失败" : e.getMessage()));
 			outcome = "业务失败：" + e.getMessage();
 		} catch (RuntimeException | JsonProcessingException e) {
 			if (InnerDeadline.passed()) {

@@ -232,6 +232,7 @@
   - 公共层引入 mugsun-core 的 `mugsun-starter-i18n`，每个服务都带
   - 请求头 `Accept-Language` 是英文就回英文；没带或不认识的语言仍回中文
   - core 的英文句子放在公共层，地图、埋点、AI 的放在各自的服务里
+  - 服务之间互相调用时把用户的语言带过去，对方报的业务失败也用这种语言
   - 网关自己拒绝请求时的提示语还只有中文
 - AI 服务接入 Spring AI，随 mugsun-boot 同步过来
   - 注入 `ChatClient.Builder` 就能调「大模型配置」里的模型

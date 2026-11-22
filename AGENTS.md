@@ -149,6 +149,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 调用方报来的等待时间（`X-Mugsun-Inner-Wait`）不参与签名，只是提示：验签通过以后才读，并且限制在 1 秒到 `long-read-timeout` 之间。不要拿它做别的判断；也不要把它加进签名，加了以后新旧版本的服务在滚动发布期间互相调不通。「忙」的回答是签了名的，调用方不采信没签名的「忙」。
 - 灰度标记（`X-Mugsun-Lane`）和等待时间一样不参与签名，只是提示：`InnerRequestFilter` 验签通过以后才读，处理完清掉。它只影响这次处理里再去调别的服务时挑哪个实例，不要拿它做权限或数据上的判断，也不要把它加进签名。当前请求的标记放在 `LaneContext`（日志的 MDC 里也有，键是 `lane`）：经网关来的请求由公共层的 `LaneFilter` 放进去，内部调用由 `InnerRequestFilter` 放进去，别处不要写它。
 - `InnerClient` 发起调用时带的是当前请求的灰度标记；没有请求可跟时（定时任务、自己起的线程）带这个实例自己的标记（`InstanceLane`，来自 `MUGSUN_LANE`）。挑实例的两条规则在 `Lanes.candidates`，和网关的 `LaneInstanceSupplier` 是同一个意思，要一起改：没有标记只找正式实例，有标记先找同标记的、没有再找正式实例。另开线程处理请求时标记不会跟过去，要跟就自己传。
+- 用户的语言（`Accept-Language`）也跟着内部调用走，同样不参与签名：`InnerClient` 只在当前线程定了语言时才带（用户请求里由 mugsun-core 的 `LocaleContextFilter` 定），定时任务不带。对方的 `LocaleContextFilter` 排在 `InnerRequestFilter` 前面，按它定当前语言；`InnerRequestFilter` 只拿它把业务失败的消息翻译好再返回（这句话的翻译在被调用的服务里，调用方不一定有），不要拿它做别的判断。
 - 内部接口要有测试，都不需要 Nacos 和 Redis：验签的规则、等待时间在 `InnerRequestFilterTest`，同时处理的上限和名额怎么在租户之间分在 `InnerGateTest`，熔断在 `InnerBreakersTest`，查询时限在 `InnerQueryTimeoutTest`，调用方怎么处理各种回答在 `InnerClientTest`，两头接起来的情况在 `InnerLoopbackTest`。这几道保护在真实的故障里管不管用，单元测试看不出来：改了它们以后，要起整套服务，把对方冻住、把表锁住、让请求一起来（一个租户的，和几个租户一起的），实际测一遍等多久、占多少连接。
 
 ## 部署文件的约定

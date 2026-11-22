@@ -16,6 +16,7 @@ import org.slf4j.MDC;
 import org.springframework.cloud.client.DefaultServiceInstance;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.util.unit.DataSize;
 
 import java.io.IOException;
@@ -28,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -84,6 +86,8 @@ class InnerClientTest {
 	void cleanUp() {
 		TenantContext.clear();
 		MDC.clear();
+		LocaleContextHolder.resetLocaleContext();
+		LocaleContextHolder.setDefaultLocale(null);
 	}
 
 	// ---------- 发出去的请求 ----------
@@ -196,6 +200,28 @@ class InnerClientTest {
 
 		assertThat(sent.get(0).headers().get("X-Trace-Id")).isEqualTo("abc-123");
 		assertThat(sent.get(1).headers()).doesNotContainKey("X-Trace-Id");
+	}
+
+	/** 用户这次请求的语言带给对方：对方报业务失败时，消息用同一种语言写 */
+	@Test
+	void forwardsTheLanguageOfTheCurrentRequest() {
+		oneInstance();
+
+		LocaleContextHolder.setLocale(Locale.forLanguageTag("en-US"));
+		TenantContext.execute("000000", () -> client().call(TARGET, PATH, Map.of()));
+
+		assertThat(sent.get(0).headers().get("Accept-Language")).isEqualTo("en-US");
+	}
+
+	/** 不在用户请求里（定时任务）时不带：这时取到的是进程的默认语言，带过去会把对方自己的默认语言盖掉 */
+	@Test
+	void sendsNoLanguageOutsideOfARequest() {
+		oneInstance();
+
+		LocaleContextHolder.setDefaultLocale(Locale.ENGLISH);
+		TenantContext.execute("000000", () -> client().call(TARGET, PATH, Map.of()));
+
+		assertThat(sent.get(0).headers()).doesNotContainKey("Accept-Language");
 	}
 
 	@Test

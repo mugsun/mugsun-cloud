@@ -9,10 +9,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mugsun.boot.tenant.TenantContext;
 import com.mugsun.cloud.common.lane.LaneContext;
 import com.mugsun.cloud.common.lane.Lanes;
+import com.mugsun.core.i18n.message.I18n;
+import com.mugsun.core.i18n.message.MessageTranslator;
+import com.mugsun.core.i18n.web.LocaleContextFilter;
 import com.mugsun.core.tool.exception.ServiceException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.context.support.StaticMessageSource;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -24,6 +29,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -236,6 +242,44 @@ class InnerRequestFilterTest {
 		assertThat(json.path("msg").asText()).isEqualTo("图层模块没有启用");
 		assertResponseSigned(request, response);
 		assertThat(TenantContext.getRaw()).isNull();
+	}
+
+	/**
+	 * 调用方把用户的语言带过来了：业务失败的消息翻译成那种语言再返回。这句话的翻译在这个服务的翻译文件里，调用方那边不一定有。
+	 * 当前语言由排在前面的 LocaleContextFilter 按请求头定，这里直接放上。
+	 */
+	@Test
+	void businessFailureIsTranslatedIntoTheCallersLanguage() throws Exception {
+		StaticMessageSource messages = new StaticMessageSource();
+		messages.addMessage("图层模块没有启用", Locale.ENGLISH, "The layer module is not enabled");
+		MessageTranslator translator = new MessageTranslator(messages, Locale.SIMPLIFIED_CHINESE);
+		I18n.install(translator);
+		try {
+			behaviour = call -> {
+				throw new ServiceException("图层模块没有启用");
+			};
+			InnerRequestFilter filter = filter();
+
+			LocaleContextHolder.setLocale(Locale.ENGLISH);
+			MockHttpServletRequest english = signed(PATH, "000000", BODY);
+			MockHttpServletResponse translated = run(filter, english);
+			LocaleContextHolder.resetLocaleContext();
+			MockHttpServletResponse untouched = run(filter, signed(PATH, "000000", BODY));
+
+			assertThat(mapper.readTree(translated.getContentAsByteArray()).path("msg").asText())
+				.isEqualTo("The layer module is not enabled");
+			assertResponseSigned(english, translated);
+			assertThat(mapper.readTree(untouched.getContentAsByteArray()).path("msg").asText()).isEqualTo("图层模块没有启用");
+		} finally {
+			LocaleContextHolder.resetLocaleContext();
+			I18n.uninstall(translator);
+		}
+	}
+
+	/** 定语言的过滤器要排在这个过滤器前面，否则上面翻译时还不知道调用方带来的是什么语言 */
+	@Test
+	void theLanguageIsSettledBeforeThisFilterRuns() {
+		assertThat(LocaleContextFilter.ORDER).isLessThan(InnerRequestFilter.ORDER);
 	}
 
 	/** 故障的细节只记在这边的日志里，不带给调用方；这种响应不签名，调用方不会采信 */

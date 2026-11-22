@@ -21,6 +21,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
+import org.springframework.context.i18n.LocaleContext;
+import org.springframework.context.i18n.LocaleContextHolder;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -39,6 +42,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -68,6 +72,9 @@ import java.util.regex.Pattern;
  * <p>当前请求带着灰度标记时（见 {@link Lanes}），先找对方同一个标记的实例，并把标记接着带过去；对方没有这个标记的实例，
  * 或者试的那一个不行，就找正式实例。没有标记的请求只找正式实例。请求自己没带标记、而这个实例是灰度实例时
  * （它自己的定时任务，或者有人不经网关直接访问它），按这个实例的标记算。
+ *
+ * <p>用户这次请求的语言也带过去（请求头 {@code Accept-Language}）：对方报业务上的失败时，消息会原样带给用户，
+ * 要用同一种语言写。不在用户请求里发起的调用（定时任务）不带，对方用默认语言。
  */
 @Component
 public class InnerClient {
@@ -272,6 +279,14 @@ public class InnerClient {
 		// 灰度标记接着往后带。它不在签名里：对方只拿它决定再去调别的服务时找哪一组实例
 		if (lane != null) {
 			headers.put(Lanes.HEADER, lane);
+		}
+		// 用户的语言接着往后带。它不在签名里：对方只拿它决定提示语用哪种语言写。
+		// 只在这个线程明确定了语言时才带（处理用户请求时由 LocaleContextFilter 定）：没定时 LocaleContextHolder.getLocale()
+		// 给的是进程的默认语言，带过去会把对方自己的默认语言盖掉
+		LocaleContext localeContext = LocaleContextHolder.getLocaleContext();
+		Locale locale = localeContext == null ? null : localeContext.getLocale();
+		if (locale != null && !locale.getLanguage().isEmpty()) {
+			headers.put(HttpHeaders.ACCEPT_LANGUAGE, locale.toLanguageTag());
 		}
 
 		Reply reply = transport.post(uri, headers, payload, readTimeout);
