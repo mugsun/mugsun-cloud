@@ -15,6 +15,7 @@
 | 其余的 Java 类 | `mugsun-cloud-service/mugsun-cloud-system/src/boot/java` |
 | `application.yml` | 公共层，改名为 `mugsun-boot-defaults.yml` |
 | `application-*.yml`、`logback-spring.xml` | 公共层 |
+| `i18n/` 下的翻译文件 | 公共层。里面是 core 所有类的英文句子，这些类分在十几个服务里，每个服务都要读到 |
 | `META-INF/spring.factories` | 按里面登记的类分别属于哪边，拆成两份 |
 | 其他资源文件，如数据库迁移脚本 | system |
 

@@ -204,6 +204,7 @@
       { "match": "application.yml", "to": "common", "as": "mugsun-boot-defaults.yml" },
       { "match": "application-*.yml", "to": "common" },
       { "match": "logback-spring.xml", "to": "common" },
+      { "match": "i18n/*", "to": "common" },
       { "match": "META-INF/spring.factories", "to": "split" },
       { "match": "generator/*", "to": "mugsun-cloud-ops/mugsun-cloud-develop" },
       { "match": "flow/*.json", "to": "mugsun-cloud-ops/mugsun-cloud-flow" },
