@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # 一键全套自检：从零构建并启动（system 起两个实例）→ 逐项检查部署上的安全约定、网关的开关传进了容器并且在起作用、
-# 各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
+# 网关和各服务都到配置中心读了配置、运行中存进去的每个实例都收到、各实例领到的机器号各不相同 → 登录、上报并查到第一条埋点、
 # 服务之间互相调用、同一个请求编号在网关和服务的日志里都找得到
 # → 两个 system 实例之间保持一致，从空库一起启动都没有重启过，正常停掉一个的过程中经网关的访问不能有失败
-# → 重启 Nacos、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复
+# → 把 Nacos 的容器删掉重建、再把全部容器停掉打乱顺序重新启动，看能不能自己恢复，存过的配置还在不在，
+# 重启以后用的是不是配置中心里的值
 # → 把每个接口都请求一遍：不登录进不去，不用登录的接口和清单一致，网关转给了有这个接口的服务，
 # 没有任何角色的账号进得去的接口和清单一致 → 清理。
 # 用独立的项目名、端口和网段（默认 mugsun-cloud-smoke、18188、172.30.90.0/24），不碰本机别的容器和卷。
@@ -196,7 +197,7 @@ trusted=$("${DC[@]}" exec -T gateway printenv MUGSUN_OPENAPI_TRUSTED_PROXIES)
 
 # ---- 网关的开关：网关认的每一个，编排都传进了容器；传进去的在起作用 ----
 # 编排只把写在 environment 里的变量传进容器，漏传的开关写进 .env 也不生效，而且没有任何提示。
-# 故意不传的写在 not_passed 里：动态路由和灰度规则都要网关接入 Nacos 的账号能读配置，这份编排没有给这个权限
+# 故意不传的写在 not_passed 里：动态路由和灰度规则在这份编排里还没有接上，没有实测过
 not_passed="MUGSUN_GATEWAY_DYNAMIC_ROUTES MUGSUN_GATEWAY_LANES"
 # 只认写成 ${MUGSUN_GATEWAY_...} 的：注释里也会提到这个前缀
 declared=$(grep -oE '\$\{MUGSUN_GATEWAY_[A-Z0-9_]+' ../../mugsun-cloud-gateway/src/main/resources/application.yml \
@@ -275,6 +276,67 @@ done
 
 # ---- Nacos：五个服务都用接入账号登记上了 ----
 wait_registered 60
+
+# ---- 配置中心：网关和四个服务启动时都到 Nacos 读了配置，运行中存进去的每个实例都收到 ----
+# 读不到配置时各应用照样能启动，只在日志里报错，所以要到日志里看（docs/deployment.md「配置中心」）。
+# 每个应用读四份：共用的和自己的，各有不分环境和 prod 两份。这时四份都还没有建，读到的是空的
+for svc in ${JAVA_SERVICES}; do
+	for c in $(cid "${svc}"); do
+		started_log=$(docker logs "${c}" 2>&1)
+		for data_id in mugsun.yaml "mugsun-${svc}.yaml" mugsun-prod.yaml "mugsun-${svc}-prod.yaml"; do
+			[[ "${started_log}" == *"[Nacos Config] Listening config: dataId=${data_id}, group=DEFAULT_GROUP"* ]] \
+				|| fail "${svc} 没有到配置中心读 ${data_id}：日志里没有「Listening config: dataId=${data_id}」"
+		done
+		[[ "${started_log}" != *"Error getting properties from nacos"* ]] \
+			|| fail "${svc} 到配置中心读配置时出错了：多半是接入账号没有读配置的权限"
+	done
+done
+# 容器的日志晚一点才读得到，没找到就等一秒再看，最多 30 秒。用法：app_logged <容器> <日志里要有的一段文字>
+app_logged() {
+	local app_logs
+	for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+		app_logs=$(docker logs "${1}" 2>&1 || true)
+		[[ "${app_logs}" != *"${2}"* ]] || return 0
+		sleep 1
+	done
+	return 1
+}
+# 往配置中心存一份配置，已经有的整份换掉。用法：config_put <名字> <内容>
+config_put() {
+	"${DC[@]}" run --rm -T nacos-init config put "${1}" <<<"${2}" >/dev/null || fail "往配置中心存 ${1} 没有成功"
+}
+# 共用的那份改了以后，每个实例都要收到：日志里有一行，列着改了的配置项的名字。用法：all_refreshed <配置项的名字> <什么时候>
+all_refreshed() {
+	local app id
+	for app in ${JAVA_SERVICES}; do
+		for id in $(cid "${app}"); do
+			app_logged "${id}" "Refresh keys changed: [${1}]" \
+				|| fail "${2}往配置中心存了 mugsun.yaml，${app} 等了 30 秒没有收到"
+		done
+	done
+}
+# AI 服务按配置中心里的地址连数据库的连接有几条：那个地址带着一个应用名，数据库里按它数
+config_named_connections() {
+	"${DC[@]}" exec -T postgres psql -U postgres -d mugsun -At -c \
+		"SELECT count(*) FROM pg_stat_activity WHERE application_name = 'smoke-from-nacos'"
+}
+# 存一份共用的，每个实例都要收到。存进去的这一项没有程序读，不影响别的检查；
+# 后面的登录、上报、服务之间互相调用都在这次改动之后，顺带验证了各应用收到改动以后照常工作
+config_put mugsun.yaml "mugsun:
+  smoke:
+    marker: first"
+all_refreshed mugsun.smoke.marker ""
+# 再存一份只给 AI 服务、只在 prod 下读的，把它连数据库的地址换成带应用名的。连接池不跟着运行中的改动重建，
+# 到「整台机器重启」之前它的连接上都不带这个名字，重启以后要带：到那一步再查
+config_put mugsun-ai-prod.yaml "mybatis-flex:
+  datasource:
+    primary:
+      url: jdbc:postgresql://${net}.13:5432/mugsun?ApplicationName=smoke-from-nacos"
+app_logged "$(cid ai)" "Refresh keys changed: [mybatis-flex.datasource.primary.url]" \
+	|| fail "往配置中心存了 mugsun-ai-prod.yaml，ai 等了 30 秒没有收到"
+stored=$("${DC[@]}" run --rm -T nacos-init config list)
+[ "${stored}" = "$(printf 'mugsun-ai-prod.yaml\nmugsun.yaml')" ] || fail "配置中心里不是刚存的那两份配置：${stored}"
+echo ">> 网关和四个服务的每个实例启动时都到配置中心读了各自的四份配置；运行中存进去的两份，该收到的实例都收到了"
 
 # ---- 机器号：四个业务服务的每个实例都领到了一个，各不相同 ----
 # 程序生成的主键里带着机器号：两个实例的机器号相同，同一毫秒往同一张表里写的两条主键就可能相同
@@ -395,21 +457,57 @@ if [ "${MUGSUN_SYSTEM_REPLICAS}" -gt 1 ]; then
 fi
 
 # ---- Nacos 重启以后能自己恢复 ----
-# 重启后马上再执行一次 up：初始化脚本会在 Nacos 刚起来的时候重跑，要能通过；
+# 不只是重启，是把 Nacos 的容器删掉重建（换镜像、改了编排文件再执行 up 时就是这样）：容器里的东西都没了，留下的只有数据卷。
+# 重建后马上再执行一次 up：初始化脚本会在 Nacos 刚起来的时候重跑，要能通过；
 # 各服务登记的实例在 Nacos 里只存在内存中，重启就没了，要能自己重新登记，网关要能重新找到它们
 restarted=$(date +%s)
-"${DC[@]}" restart nacos >/dev/null 2>&1
+nacos_before=$(cid nacos)
+"${DC[@]}" up -d --force-recreate --no-deps nacos >/dev/null 2>&1 || fail "重建 Nacos 的容器没有成功"
+[ "$(cid nacos)" != "${nacos_before}" ] || fail "Nacos 的容器没有被重建，还是原来那一个"
 # shellcheck disable=SC2086
 "${DC[@]}" up -d --wait --wait-timeout 300 nacos ${JAVA_SERVICES} pc >/dev/null 2>&1 || fail "Nacos 重启以后再执行 up 没有成功"
 wait_registered 90
 wait_serving 60 "Nacos 重启以后"
-echo ">> Nacos 重启以后 $(($(date +%s) - restarted)) 秒，五个服务重新登记上，经网关的接口恢复"
+# 配置中心也要恢复：存过的配置在数据卷里，容器重建以后还在；再改共用的那份，每个实例还收得到
+stored=$("${DC[@]}" run --rm -T nacos-init config list)
+[ "${stored}" = "$(printf 'mugsun-ai-prod.yaml\nmugsun.yaml')" ] || fail "Nacos 的容器重建以后，配置中心里存过的配置不在了：${stored}"
+config_put mugsun.yaml "mugsun:
+  smoke:
+    marker: first
+    after-restart: second"
+all_refreshed mugsun.smoke.after-restart "Nacos 重启以后"
+echo ">> Nacos 的容器删掉重建以后 $(($(date +%s) - restarted)) 秒，五个服务重新登记上，经网关的接口恢复，配置中心里存过的配置还在，再改的配置每个实例都收到"
 
 # ---- 整台机器重启以后能自己恢复 ----
 # 机器或者 Docker 重启以后，各容器靠 restart 策略自己起来，先后顺序不定，一次性的初始化容器不会再跑。
 # 这里把常驻容器全部停掉，故意先起管理后台和五个服务，15 秒以后才起数据库、Redis 和 Nacos：
 # 连不上依赖的服务会退出，由 Docker 重新拉起；依赖起来以后整套要能自己恢复，不用人去重启哪个容器。
 # 直接用 docker stop 和 docker start：compose 的 start 会按依赖关系排好先后
+
+# 停止用多久取决于最慢的那个容器，把最慢的三个报出来。用了 20 秒以上的，多半是优雅停机等到了一个阶段的上限，
+# 这时 Spring 在日志里写了它还在等谁，一并报出来。
+# 时间都按 Docker 自己的钟算，从它发出停止信号（kill 事件）到进程退出（die 事件）：拿宿主机的整秒去截，
+# 最后退出的那个容器正好落在这一秒里，会被漏掉（实测）。用法：slow_stops <停止之前 docker_now 的输出>
+docker_now() {
+	docker info --format '{{.SystemTime}}'
+}
+
+slow_stops() {
+	stops=$(docker events --since "${1}" --until "$(docker_now)" --filter type=container \
+		--filter event=kill --filter event=die --format '{{.Time}} {{.Action}} {{.Actor.Attributes.name}}')
+	began=$(printf '%s\n' "${stops}" | awk '$2 == "kill" && !seen { print $1; seen = 1 }')
+	[ -n "${began}" ] || return 0
+	printf '%s\n' "${stops}" | awk '$2 == "die"' | sort -rn | head -n 3 | while read -r at _ name; do
+		took=$((at - began))
+		waiting=""
+		if [ "${took}" -ge 20 ]; then
+			waiting=$(docker logs --since "${1}" "${name}" 2>&1 \
+				| grep -o 'still running after timeout of [0-9]*ms: \[[^]]*\]' | tail -n 1 || true)
+		fi
+		printf '%s %s 秒%s；' "${name}" "${took}" "${waiting:+（日志：${waiting}）}"
+	done
+}
+
 front=""
 for svc in pc ${JAVA_SERVICES}; do
 	front="${front} $(cid "${svc}")"
@@ -418,9 +516,14 @@ back=""
 for svc in postgres redis nacos; do
 	back="${back} $(cid "${svc}")"
 done
+# 配置中心：前面把 AI 服务连数据库的地址存进了配置中心。它一直没有重启过，用的还应该是启动时的地址
+[ "$(config_named_connections)" = 0 ] || fail "AI 服务没有重启，连数据库的地址就换成了配置中心里的：文档里写的是要重启才生效"
+stop_began=$(docker_now)
 rebooted=$(date +%s)
 # shellcheck disable=SC2086
 docker stop ${front} ${back} >/dev/null
+stop_took=$(($(date +%s) - rebooted))
+slowest=$(slow_stops "${stop_began}" || true)
 # 停止时每个进程都要来得及自己收尾退出。退出码 137 表示等到了时间、被强杀的
 for svc in postgres redis nacos pc ${JAVA_SERVICES}; do
 	for id in $(cid "${svc}"); do
@@ -435,7 +538,24 @@ docker start ${back} >/dev/null
 wait_serving 180 "全部容器重新启动以后"
 # 经网关的接口有一个 system 实例就能恢复。两个实例各自由 Docker 拉起，先后可能差几十秒，这里等到两个都登记上
 wait_registered 120
-echo ">> 全部容器停掉、打乱顺序重新启动以后 $(($(date +%s) - rebooted)) 秒，五个服务重新登记上，经网关的接口恢复"
+recovered=$(($(date +%s) - rebooted))
+# 恢复用多久，主要看各个服务被 Docker 重新拉起了几次：依赖没起来时服务启动到一半会退出，等下一次。
+# docker start 会把容器的这个计数清零（实测），所以这里读到的就是这一步里的次数
+pulled=""
+for svc in ${JAVA_SERVICES}; do
+	for id in $(cid "${svc}"); do
+		pulled="${pulled}${pulled:+、}${svc} $(docker inspect -f '{{.RestartCount}}' "${id}")"
+	done
+done
+# 配置中心：重启以后 AI 服务连数据库用的是配置中心里的地址。这一项在包里的 application-prod.yml 里也有值，
+# 所以这同时说明：启动时读到了配置中心，配置中心的值盖过了包里分环境的文件，数据库连接这类配置可以放在配置中心
+waited=0
+until [ "$(config_named_connections)" -gt 0 ]; do
+	[ "${waited}" -lt 60 ] || fail "重启以后 AI 服务连数据库用的不是配置中心里的地址：启动时没有读到 mugsun-ai-prod.yaml，或者被包里的配置盖过了"
+	sleep 3
+	waited=$((waited + 3))
+done
+echo ">> 全部容器停掉、打乱顺序重新启动以后 ${recovered} 秒（其中停止用了 ${stop_took} 秒，最慢的三个容器：${slowest%；}），五个服务重新登记上，经网关的接口恢复，这期间各服务被 Docker 重新拉起的次数：${pulled}；再过 $(($(date +%s) - rebooted - recovered)) 秒，查到 AI 服务连数据库用的是配置中心里的地址"
 
 # ---- 把每个接口都请求一遍：不登录进不去，网关转给了有这个接口的服务 ----
 # 接口清单从各服务自己的接口文档里取。文档默认不提供（前面检查过），这里用一份临时的编排片段把它打开、

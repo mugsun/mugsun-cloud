@@ -13,7 +13,7 @@
 #   - 对外只有管理后台一个端口，默认只绑 127.0.0.1:8188；要给别的机器访问，显式设 MUGSUN_HTTP_BIND=0.0.0.0，
 #     并把 MUGSUN_PUBLIC_URL 设成它们访问用的地址。
 #     网关、各服务、Nacos、数据库和 Redis 都不映射到宿主机，理由见 docs/deployment.md 第 1、5 节；
-#   - Nacos 打开客户端鉴权，网关和各服务用一个只能注册和查询服务的账号接入，拿不到管理员口令（见 nacos-init.py）。
+#   - Nacos 打开客户端鉴权，网关和各服务用一个账号接入：能注册和查询服务、能读配置，不能改配置，拿不到管理员口令（见 nacos-init.py）。
 #
 # 端口、网段和项目名的默认值都和单体版那套（8088、172.30.88.0/24）错开；两套同时运行没有实测过。
 # 网段默认占 172.30.89.0/24，和宿主机上别的网段冲突时改 MUGSUN_NET_PREFIX（写前三段，比如 10.89.0）。
@@ -45,6 +45,9 @@ x-service-env: &service-env
   MUGSUN_ENV_FILE: /secrets/service.env
   # Nacos、数据库和 Redis 都按固定地址连，原因见文件开头
   MUGSUN_NACOS_ADDR: ${MUGSUN_NET_PREFIX:-172.30.89}.11:8848
+  # 配置中心：启动时到 Nacos 读配置，默认开，写 false 关掉。往里面放配置用 nacos-init 的 config 命令，
+  # 读哪几份、谁盖过谁见 docs/deployment.md「配置中心」
+  MUGSUN_CONFIG_CENTER: ${MUGSUN_CONFIG_CENTER:-}
   JDBC_URL: jdbc:postgresql://${MUGSUN_NET_PREFIX:-172.30.89}.13:5432/mugsun
   JDBC_USERNAME: mugsun
   TRACK_JDBC_URL: jdbc:postgresql://${MUGSUN_NET_PREFIX:-172.30.89}.13:5432/mugsun_track
@@ -174,6 +177,8 @@ services:
   nacos-init:
     # 一次性：给 Nacos 设管理员口令，建网关和各服务用的接入账号并核对。每次 up 都执行，做过的步骤会跳过。
     # 看各服务登记的实例：docker compose -f deploy/docker/docker-compose.yml run --rm nacos-init status
+    # 往配置中心里放一份配置（另有 config list / get / delete）：
+    #   docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config put mugsun.yaml < mugsun.yaml
     # 镜像由上面的 init 构建，这里只是拿来用，所以不让 Compose 去拉取
     image: mugsun-cloud-init:local
     pull_policy: never
@@ -273,6 +278,8 @@ services:
       # 网关的密钥文件里只有接入 Nacos 的账号：它不连数据库和 Redis，也不参与服务之间的调用
       MUGSUN_ENV_FILE: /secrets/gateway.env
       MUGSUN_NACOS_ADDR: ${MUGSUN_NET_PREFIX:-172.30.89}.11:8848
+      # 配置中心的开关，和四个服务用的是同一个
+      MUGSUN_CONFIG_CENTER: ${MUGSUN_CONFIG_CENTER:-}
       # 只采信管理后台容器（Nginx）这一个固定地址传来的 X-Forwarded-For，不采信整个网段。
       # 单体版里这个变量配给后端，微服务版配给网关（docs/deployment.md 第 2 节）
       MUGSUN_OPENAPI_TRUSTED_PROXIES: ${MUGSUN_NET_PREFIX:-172.30.89}.10/32
