@@ -9,11 +9,12 @@ import com.mugsun.boot.system.mapper.SysUserMapper;
 import com.mugsun.boot.tenant.TenantValidator;
 import com.mugsun.boot.tenant.entity.SysTenantPackage;
 import com.mugsun.boot.tenant.mapper.SysTenantPackageMapper;
+import com.mugsun.core.lock.client.LocalLockClient;
+import com.mugsun.core.lock.template.LockTemplate;
 import com.mybatisflex.core.query.QueryWrapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.lang.reflect.Modifier;
 import java.util.Arrays;
@@ -49,7 +50,7 @@ class TenantCacheSyncTest {
 	private final TenantCacheSync sync = new TenantCacheSync(beans.getBeanProvider(TenantValidator.class));
 
 	private final TenantValidator validator = advised(new TenantValidator(tenantMapper, packageMapper,
-		mock(SysUserMapper.class), mock(StringRedisTemplate.class)));
+		mock(SysUserMapper.class), new LockTemplate(new LocalLockClient())));
 
 	TenantCacheSyncTest() {
 		beans.registerSingleton("tenantValidator", validator);

@@ -231,6 +231,17 @@
   - 只起必需的四个：`./dev.sh up system auth desk gateway`，约 1.3 GB
   - `deploy/dev/nacos.sh` 只管 Nacos 这一个容器，新增子命令 `env`
 
+### 变更
+
+- 分布式锁改用 mugsun-core 的 `mugsun-starter-lock`，随 mugsun-boot 同步过来
+  - 公共层引入这个组件，各服务都能用 `@DistributedLock` 和 `LockTemplate`
+  - 换了 6 处：租户账号配额、流程发起、通知重试、日志清理、待删文件清理、埋点定时任务
+  - 锁在 Redis 里的键名没有变，新旧版本的实例可以同时运行
+  - 持有期间自动续期，不再靠固定的过期时间；进程崩溃后最多 30 秒放开
+  - 镜像里的 mugsun-core 换了提交（`MUGSUN_CORE_REF`），镜像要重新构建
+  - 本机的 mugsun-core 也要换：`./dev.sh` 装的会自动换成新提交
+  - 自己手工装的 mugsun-core 要重装一次（`./dev.sh core`），否则找不到这个组件
+
 ### 修复
 
 - 第三方库版本的比对漏了 `mugsun-cloud-ops` 下的 7 个服务，补进默认范围
