@@ -170,7 +170,7 @@ export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar
 ```
 
-`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。
+`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。
 
 最后一条命令启动的是监控中心，也可以不启动。启动后浏览器打开 <http://localhost:8200>，能看到各实例在不在线；登录账号见[部署文档](./docs/deployment.md)第 18 节。
 
