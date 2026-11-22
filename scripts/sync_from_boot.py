@@ -266,12 +266,21 @@ def partition_core(index, rules):
     return common, system, parent
 
 
-def split_services(index, rules, common, system):
+def split_services(index, rules, common, system, granted):
     """core 里分给别的服务的类（规则 core.services）：从 system 里拿出来，放进规则里 target 写的模块。
 
     分出去的类只能引用公共层的类和一起分出去的类，留在 system 的类也不能再引用它们：拆开以后两边不在一个进程里。
+    例外是 extras 里写明单独拷贝给某个模块的类（granted：{目标模块: 类}）：那个模块里也有它们，引用得到。
     返回 ({目标模块: 类}, 留在 system 的类)。"""
     moved, owner = collections.OrderedDict(), {}
+    # 用确切的类名分给某个服务的类。别的服务整包的写法匹配到它们时不算：一个包大部分归一个服务、
+    # 个别类归另一个服务是常事（auth 包归登录服务，其中改头像的接口类归文件和短信服务）
+    named = {}
+    for service in rules.get("services", []):
+        for pattern in service["classes"]:
+            if "*" not in pattern:
+                for cls in expand(index, [pattern]):
+                    named.setdefault(cls, service["target"])
     for service in rules.get("services", []):
         target = service["target"]
         if target in moved or target in (rules["common"], rules["system"]):
@@ -281,10 +290,12 @@ def split_services(index, rules, common, system):
             found = expand(index, [pattern])
             if "*" in pattern:
                 # 整包的写法匹配到的公共层的类不算：包里有几个类别处也要用、已经进了公共层是常事，
-                # 不能因此就要求把整个包一个类一个类地写出来（那样包里新加的类会悖悖留在 system）
+                # 不能因此就要求把整个包一个类一个类地写出来（那样包里新加的类会悄悄留在 system）
                 found -= common
+                found = {cls for cls in found if named.get(cls, target) == target}
                 if not found:
-                    die("core.services 里的 %s 匹配到的类都在公共层，各服务都带着，这一条可以删掉" % pattern)
+                    die("core.services 里的 %s 匹配到的类都在公共层（各服务都带着）或者已经用类名分给了别的服务，"
+                        "这一条可以删掉" % pattern)
             classes |= found
         for cls in sorted(classes):
             if cls in common:
@@ -306,16 +317,17 @@ def split_services(index, rules, common, system):
     for target, classes in moved.items():
         for cls in sorted(classes):
             for dep in sorted(index.deps[cls]):
-                if dep not in common and dep not in classes:
+                if dep not in common and dep not in classes and dep not in granted.get(target, ()):
                     problems.append("  %s（%s）-> %s（%s）" % (short(cls), where(cls), short(dep), where(dep)))
     for cls in sorted(rest):
         for dep in sorted(index.deps[cls]):
-            if dep in owner:
+            if dep in owner and dep not in granted.get(rules["system"], ()):
                 problems.append("  %s（%s）-> %s（%s）" % (short(cls), where(cls), short(dep), where(dep)))
     if problems:
         lines = ["分给别的服务的类和留在 system 的类互相引用了，拆开以后两边不在一个进程里，编译不过："]
         lines += problems
-        lines.append("处理办法：两边都要用的类加进 core.commonClasses；只有那个服务用的类一起写进它的 classes；"
+        lines.append("处理办法：各服务都要用的类加进 core.commonClasses；只有那个服务用的类一起写进它的 classes；"
+                     "只有这两边要用、又只读写共用的库和 Redis 的类，在 extras 里写明单独拷贝一份给另一边；"
                      "是一次业务调用的话，先在 mugsun-boot 里把它抽成接口。")
         die("\n".join(lines))
     return moved, rest
@@ -387,7 +399,12 @@ def plan(rules, boot, ref):
     java_root = core["module"] + "/src/main/java"
     index = JavaIndex(files, java_root)
     common, system, parent = partition_core(index, core)
-    moved, system = split_services(index, core, common, system)
+    # extras 里从 core 单独拷贝给某个模块的类：那个模块里也有，检查互相引用时要算上
+    granted = collections.defaultdict(set)
+    for extra in extras:
+        if extra["module"] == core["module"]:
+            granted[extra["to"]] |= expand(index, extra["classes"])
+    moved, system = split_services(index, core, common, system, granted)
     targets = {"common": core["common"], "system": core["system"]}
     owner = {}
     for cls in common:
