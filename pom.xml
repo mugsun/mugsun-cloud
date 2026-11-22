@@ -196,7 +196,8 @@
 				<artifactId>spring-ai-model</artifactId>
 				<version>${spring-ai.version}</version>
 				<exclusions>
-					<!-- 和 mugsun-boot 一样排除：这个注解包跟着 springdoc 走，不排除的话 Maven 会改用 Spring AI 声明的旧版本 -->
+					<!-- 和 mugsun-boot 一样排除：这个注解包跟着 springdoc 走，不排除的话 Maven 会改用 Spring AI 声明的旧版本。
+					     下面 spring-ai-client-chat 自己也声明了这个包，两处都要排除，只排一处不起作用 -->
 					<exclusion>
 						<groupId>io.swagger.core.v3</groupId>
 						<artifactId>swagger-annotations-jakarta</artifactId>
@@ -207,6 +208,12 @@
 				<groupId>org.springframework.ai</groupId>
 				<artifactId>spring-ai-client-chat</artifactId>
 				<version>${spring-ai.version}</version>
+				<exclusions>
+					<exclusion>
+						<groupId>io.swagger.core.v3</groupId>
+						<artifactId>swagger-annotations-jakarta</artifactId>
+					</exclusion>
+				</exclusions>
 			</dependency>
 			<!-- 以下几个库定成单体版包里的版本，原因见上面属性的注释；检查办法见 docs/sync-from-boot.md 的「第三方库的版本」 -->
 			<dependency>
