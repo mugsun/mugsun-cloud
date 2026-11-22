@@ -76,135 +76,103 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show
 
 ## 本地启动
 
-开发时直接用 JDK 启动各服务。需要 JDK 21 和 Docker。mugsun-core、mugsun-boot 和本仓库放在同一个目录下。
+开发时直接用 JDK 启动各服务。需要 JDK 21 和 Docker，别的都不用配：
 
 ```bash
-# 1. mugsun-core 的 0.3.0-SNAPSHOT 不在 Maven Central，先装到本地
+git clone https://github.com/mugsun/mugsun-cloud.git && cd mugsun-cloud
+./dev.sh up
+```
+
+脚本依次做下面几件事，做完把访问地址和默认账号打印出来：
+
+| 步骤 | 做了什么 |
+| --- | --- |
+| 依赖 | 用 `deploy/dev/docker-compose.yml` 起 Nacos、PostgreSQL 和 Redis，端口只绑本机。端口上已经有一个在运行的，就直接用它 |
+| mugsun-core | 它的开发版不在 Maven Central 上。本机没装过就下载源码装到本机的 Maven 仓库，用的提交和 `deploy/docker/Dockerfile` 里的 `MUGSUN_CORE_REF` 相同 |
+| 密钥 | 服务之间互相调用用的密钥首次执行时随机生成，写在 `config/application-local.yml` 里，这个文件不进仓库 |
+| 打包 | `./mvnw clean package -DskipTests`。上次打包以后代码没变就跳过 |
+| 启动 | 先启动 system 并等它起来：主库的库表由它来建，加密数据用的几把密钥也由它首次生成。然后同时启动其余 11 个业务服务、网关和监控中心，最后经网关请求一次 system |
+
+第一次要下载镜像和 Maven 依赖，时间看网速。这些都下载过以后，实测（M4 芯片、16 GB 内存的 Mac mini）从零到全部起来约一分钟，14 个 Java 进程合计占内存约 4.7 GB，三个依赖的容器另占约 1.1 GB。
+
+内存不够时不用全起。只起登录和基本管理要用的四个服务，实测约 40 秒起来，四个进程合计占内存约 1.3 GB：
+
+```bash
+./dev.sh up system auth desk gateway
+```
+
+没起的服务，对应的页面打不开（网关返回 503）。之后要用哪个，再执行 `./dev.sh up <服务名>` 补上。
+
+起来以后：
+
+| 地址 | 是什么 |
+| --- | --- |
+| <http://localhost:8080> | 网关，对外的入口。`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了 |
+| <http://localhost:8080/swagger-ui/index.html> | system 的接口文档。其它服务的接口文档在它们自己的端口上，路径相同 |
+| <http://localhost:8200> | 监控中心，能看到各实例在不在线。账号和口令默认都是 `mugsun`，见[部署文档](./docs/deployment.md)第 18 节 |
+
+管理后台是另一个仓库 [mugsun-pc](https://github.com/mugsun/mugsun-pc)，开发模式默认就连 `localhost:8080`，不用改配置：在它的目录下执行 `pnpm install && pnpm dev`，浏览器打开 <http://localhost:3006>。
+
+账号 `admin`，初始口令 `123456`，首次登录会要求修改。这个默认口令只在本地开发（带 `dev` 启动）时有效：生产环境不设 `MUGSUN_INIT_PASSWORD` 会拒绝启动。
+
+其它命令：
+
+| 要做什么 | 命令 |
+| --- | --- |
+| 看依赖和每个服务起没起来 | `./dev.sh status` |
+| 跟着看一个服务的日志 | `./dev.sh logs system` |
+| 改了代码，重启一个服务（会先重新打包） | `./dev.sh restart system` |
+| 再启动一个服务，已经在运行的不动 | `./dev.sh up gis` |
+| 停掉一个服务，比如要换到 IDE 里调试它 | `./dev.sh stop system` |
+| 只起依赖，服务全部在 IDE 里启动 | `./dev.sh deps` |
+| 全部停掉，数据库里的数据留着 | `./dev.sh down` |
+| 全部停掉，并清空本地开发库 | `./dev.sh reset` |
+| 哪些服务注册上了 | `deploy/dev/nacos.sh status` |
+
+服务名是 `system`、`auth`（登录服务）、`gis`、`track`、`ai`、`desk`、`log`、`report`、`develop`、`job`、`resource`、`flow`、`gateway`、`admin`（监控中心）。进程号和日志在 `.dev/` 下，这个目录不进仓库。
+
+每个服务默认带一组为本机开发选的 JVM 参数，图的是启动快、占内存少，代价是长时间运行时慢一些，生产不要照搬。要换就设环境变量 `MUGSUN_JAVA_OPTS`。这一项和别的能改的环境变量（几个依赖的端口等）写在 `dev.sh` 开头的说明里。
+
+### 在 IDE 里调试一个服务
+
+先 `./dev.sh up`，再 `./dev.sh stop system` 把要调试的服务停掉，然后在 IDE 里启动它的主类。启动配置里有两处要注意：
+
+- Active profiles 写 `dev`。没配 profile 按生产处理，缺密钥会拒绝启动。网关和监控中心不用写。
+- 工作目录用仓库根目录。服务之间互相调用用的密钥在根目录的 `config/application-local.yml` 里，换了工作目录就读不到。
+
+之后再执行 `./dev.sh up`，脚本看到端口上已经有这个服务在运行，不会再启动一份。
+
+### 不用脚本，手工启动
+
+脚本做的事都可以手工做，用到的变量和部署时是同一批：
+
+```bash
+# mugsun-core 的开发版不在 Maven Central，先装到本机
 git clone https://github.com/mugsun/mugsun-core.git
 (cd mugsun-core && mvn -B clean install -DskipTests)
 
-# 2. 数据库和 Redis 用单体版的 compose：PostgreSQL 5432、Redis 6379
-git clone https://github.com/mugsun/mugsun-boot.git
-(cd mugsun-boot && docker compose up -d)
-
-# 3. 注册中心和打包
-git clone https://github.com/mugsun/mugsun-cloud.git && cd mugsun-cloud
+cd mugsun-cloud
 deploy/dev/nacos.sh up
-./mvnw -B package -DskipTests
-```
+docker compose -f deploy/dev/docker-compose.yml up -d postgres redis
+./mvnw -B clean package -DskipTests
 
-生成一把服务之间互相调用用的密钥，下面四个业务服务都用这一个值：
-
-```bash
-openssl rand -hex 32
-```
-
-然后各开一个终端，依次启动 system、登录服务、gis、track、ai 和网关。system 要最先启动并等它启动完成：主库的库表由它来建，加密数据用的那几把密钥也由它首次生成。登录服务不启动就登录不了；可选的 gis、track、ai 可以不启动。
-
-```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-export MUGSUN_INIT_PASSWORD='<admin 的初始口令>'
+export MUGSUN_INNER_SECRET='<openssl rand -hex 32 生成的值>'
 java -jar mugsun-cloud-service/mugsun-cloud-system/target/mugsun-cloud-system.jar --spring.profiles.active=dev
 ```
 
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-auth/target/mugsun-cloud-auth.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-service/mugsun-cloud-gis/target/mugsun-cloud-gis.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-service/mugsun-cloud-track/target/mugsun-cloud-track.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-service/mugsun-cloud-ai/target/mugsun-cloud-ai.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-service/mugsun-cloud-desk/target/mugsun-cloud-desk.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-ops/mugsun-cloud-log/target/mugsun-cloud-log.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-ops/mugsun-cloud-report/target/mugsun-cloud-report.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-ops/mugsun-cloud-develop/target/mugsun-cloud-develop.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-ops/mugsun-cloud-job/target/mugsun-cloud-job.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-ops/mugsun-cloud-resource/target/mugsun-cloud-resource.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-export MUGSUN_INNER_SECRET='<上面生成的值>'
-java -jar mugsun-cloud-ops/mugsun-cloud-flow/target/mugsun-cloud-flow.jar --spring.profiles.active=dev
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-java -jar mugsun-cloud-gateway/target/mugsun-cloud-gateway.jar
-```
-
-```bash
-export MUGSUN_SERVICE_IP=127.0.0.1
-java -jar mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar
-```
-
-`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。
-
-最后一条命令启动的是监控中心，也可以不启动。启动后浏览器打开 <http://localhost:8200>，能看到各实例在不在线；登录账号见[部署文档](./docs/deployment.md)第 18 节。
-
-system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。其它服务的接口文档在它们自己的端口上，路径相同。
-
-| 要看什么 | 命令 |
-| --- | --- |
-| 网关自己是否正常 | `curl http://localhost:8080/_gateway/health` |
-| 哪些服务注册上了 | `deploy/dev/nacos.sh status` |
-| 停掉 Nacos | `deploy/dev/nacos.sh down` |
+其余服务各开一个终端，换成各自的包，路径是 `<模块目录>/target/<模块名>.jar`。system 要最先启动并等它启动完成。网关和监控中心不带 `--spring.profiles.active=dev`，也不需要 `MUGSUN_INNER_SECRET`。
 
 几点说明：
 
-- `MUGSUN_SERVICE_IP` 是服务注册到 Nacos 的地址。不设置时自动取一块网卡的地址，开着 VPN 或有多块网卡时可能取错，网关就连不上服务。本机开发建议写成 `127.0.0.1`。
-- `MUGSUN_INIT_PASSWORD` 只在首次建库时用来创建 `admin`，和单体版一样。
-- `MUGSUN_INNER_SECRET` 是服务之间互相调用用的密钥，四个业务服务要一样，网关不用。不设置时服务照常启动，只是跨服务的功能用不了，见[服务之间的调用](#服务之间的调用)。
-- 各业务服务都要显式带 `--spring.profiles.active=dev`。没配 profile 按生产处理，缺密钥会拒绝启动。
-- 埋点库 `mugsun_track` 由 track 服务迁移。单体版的 compose 已经把这个库建好；用自己的 PostgreSQL 时，库不存在 track 会自己建，数据库账号要有 `CREATEDB` 权限。
-- 网关默认端口和单体版一样是 8080，同一台机器上两个不能都用默认端口。
-- 本地的个性化配置写在启动目录下的 `config/application-local.yml`，这个文件不进仓库。模板在 mugsun-boot 的 `config/application-local.yml.example`。
+- 可选的 gis、track、ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。登录服务不启动就登录不了。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。
+- `MUGSUN_SERVICE_IP` 是服务注册到 Nacos 的地址，脚本默认用 `127.0.0.1`。手工启动又不设置时自动取一块网卡的地址，开着 VPN 或有多块网卡时可能取错，网关就连不上服务。
+- `MUGSUN_INNER_SECRET` 是服务之间互相调用用的密钥，各业务服务要一样，网关不用。不设置时服务照常启动，只是跨服务的功能用不了，见[服务之间的调用](#服务之间的调用)。
+- 管理员的初始口令只在首次建库时用来创建 `admin`，和单体版一样。想换一个，首次启动前设 `MUGSUN_INIT_PASSWORD`。
+- 埋点库 `mugsun_track` 由 track 服务迁移。脚本起的 PostgreSQL 已经把这个库建好；用自己的 PostgreSQL 时，库不存在 track 会自己建，数据库账号要有 `CREATEDB` 权限。
+- 12 个业务服务连同一个 PostgreSQL。每个服务的连接池平时只留 2 个连接，忙的时候最多 10 个。脚本起的 PostgreSQL 把连接数上限调到了 200；用自己的 PostgreSQL 时，`max_connections` 要比各服务的上限加起来大，算法见[部署文档](./docs/deployment.md)第 21 节。
+- 网关默认端口和单体版一样是 8080，同一台机器上两个不能都用默认端口。服务的端口被别的程序占着时，脚本会报出是哪个端口。
+- 本地的个性化配置写在仓库根目录的 `config/application-local.yml`，这个文件不进仓库。模板在 mugsun-boot 的 `config/application-local.yml.example`。
 
 ## 配置
 

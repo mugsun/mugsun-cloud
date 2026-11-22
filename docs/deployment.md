@@ -1407,7 +1407,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 
 ### 验证到什么程度
 
-只编译过，并用一个测试核对了网关的路由和日志服务里的接口类对得上（`LogRoutesTest`）。日志服务还没有实际启动过：六个页面经网关能不能查、解锁账号和处理错误日志管不管用、别的服务出错是不是记得进来，都还没有测。
+用一个测试核对了网关的路由和日志服务里的接口类对得上（`LogRoutesTest`）。本地整套起来（`./dev.sh up`）实测过：日志服务能启动、注册上，登录后经网关查登录日志，查到了刚才两次登录的记录。其余五个页面、解锁账号和处理错误日志管不管用、别的服务出错是不是记得进来，还没有测。
 
 ## 20. 从 system 里分出来的其它服务
 
@@ -1415,13 +1415,13 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 
 | 服务 | 对应 BladeX 的 | 模块、服务名、端口 | 管什么 | 它没在运行时 | 验证到什么程度 |
 | --- | --- | --- | --- | --- | --- |
-| 报表服务 | `blade-ops/blade-report` | `mugsun-cloud-ops/mugsun-cloud-report`，`mugsun-report`，8106 | 报表的定义和预览：`/system/report/**` | 这组路径经网关返回 503，管理后台的报表页面打不开，别的功能不受影响 | 只编译过，`ReportRoutesTest` 核对了网关的路由；没有实际启动过 |
-| 代码生成服务 | `blade-ops/blade-develop` | `mugsun-cloud-ops/mugsun-cloud-develop`，`mugsun-develop`，8107 | 代码生成、数据建模、代码生成用的数据源和方案、在线表单：`/system/gen/**`、`/system/gen-datasource/**`、`/system/gen-scheme/**`、`/system/online-form/**` | 这几组路径经网关返回 503，管理后台的代码生成、在线表单页面打不开，别的功能不受影响 | 只编译过，`DevelopRoutesTest` 核对了网关的路由；没有实际启动过 |
-| 定时任务服务 | `blade-ops/blade-job` | `mugsun-cloud-ops/mugsun-cloud-job`，`mugsun-job`，8108 | 定时任务和调度中心的管理接口：`/system/job/**`、`/system/job-server/**`；PowerJob 执行器和三个处理器；按保留期清理日志 | 这两组路径经网关返回 503，定时任务、调度中心两个页面打不开；调度中心派的任务没有执行器接；到期的日志不会被清理，直到它再启动 | 只编译过，`JobRoutesTest` 核对了网关的路由；没有实际启动过，也没有接过真的调度中心 |
-| 文件和短信服务 | `blade-ops/blade-resource` | `mugsun-cloud-ops/mugsun-cloud-resource`，`mugsun-resource`，8109 | 文件上传下载 `/system/file/**`、存储配置 `/system/oss/**`、短信配置 `/system/sms/**`、富文本图片 `/system/richtext/image/**`、头像 `/auth/avatar/**`、反馈附件 `/system/feedback/attachment/**`、本地存储直出的 `/file/**`；发验证码、验验证码、发通知短信（内部接口） | 这几组路径经网关返回 503：文件传不了也下不了，头像和图片显示不出来；短信验证码、双因子短信、短信通知发不出去，页面上提示短信服务暂时不可用；账号密码登录不受影响 | 只编译过，`ResourceRoutesTest` 核对了网关的路由，短信的内部调用两端各有单元测试；没有实际启动过，没有真的传过文件、发过短信 |
-| 审批流服务 | `blade-ops/blade-flow` | `mugsun-cloud-ops/mugsun-cloud-flow`，`mugsun-flow`，8110 | 流程定义和设计、发起、待办、办理、流转记录 `/system/flow/**`，手机端的待办 `/app/todos/**`；按用户取待办列表（内部接口，手机端首页用） | 这两组路径经网关返回 503：流程设计、发起、办理都用不了；手机端首页提示待办暂时取不到（首页要显示待办数）；管理后台工作台上的待办数直接查库，不受影响 | 只编译过，`FlowRoutesTest` 核对了网关的路由，取待办的内部调用两端各有单元测试；没有实际启动过，没有真的发起、办理过流程 |
-| 工作台服务 | `blade-service/blade-desk` | `mugsun-cloud-service/mugsun-cloud-desk`，`mugsun-desk`，8111 | 通知公告 `/system/notice/**`（管理、我的通知、已读）、登录后首页的工作台 `/system/workbench/**`（概览、快捷入口）、手机端消息中心里的公告 `/app/inbox/notices/**`；首页要的公告、按标题找公告（两个内部接口，手机端首页和全局搜索用） | 这三组路径经网关返回 503：登录后的首页工作台和公告页面打不开；手机端首页提示公告暂时取不到；顶栏的全局搜索提示公告暂时搜不到 | 只编译过，`DeskRoutesTest` 核对了网关的路由，两个内部调用两端各有单元测试；没有实际启动过，没有真的发过公告 |
-| 登录服务 | `blade-auth` | `mugsun-cloud-auth`，`mugsun-auth`，8100 | 登录 `/auth/**`（账号密码、短信、第三方账号登录，两步验证，注册，找回密码，退出，切换租户，取登录信息，改资料和密码）、验证码 `/auth/captcha/**`、在线用户 `/system/online/**`、开放授权 `/oauth2/**` 和 `/open/**`、OAuth 应用 `/system/oauth-client/**` 和调用记录 `/system/oauth-log/**`、手机端的登录 `/app/auth/**` 和验证码 `/app/captcha/**`。改头像 `/auth/avatar/**` 不在这里，在文件和短信服务 | 这九组路径经网关返回 503：没法新登录、注册、找回密码，刷新页面后取不到登录信息，退出和改密码不行，别的系统没法用 OAuth2 换令牌。已经打开的页面照常用：别的服务认登录只看 Redis 里的登录态，不问登录服务 | 只编译过，`AuthRoutesTest` 核对了网关的路由；没有实际启动过，没有真的登录过 |
+| 报表服务 | `blade-ops/blade-report` | `mugsun-cloud-ops/mugsun-cloud-report`，`mugsun-report`，8106 | 报表的定义和预览：`/system/report/**` | 这组路径经网关返回 503，管理后台的报表页面打不开，别的功能不受影响 | `ReportRoutesTest` 核对了网关的路由；本地整套起来实测过：能启动、注册上，登录后经网关查报表列表正常，其余功能没有逐项测 |
+| 代码生成服务 | `blade-ops/blade-develop` | `mugsun-cloud-ops/mugsun-cloud-develop`，`mugsun-develop`，8107 | 代码生成、数据建模、代码生成用的数据源和方案、在线表单：`/system/gen/**`、`/system/gen-datasource/**`、`/system/gen-scheme/**`、`/system/online-form/**` | 这几组路径经网关返回 503，管理后台的代码生成、在线表单页面打不开，别的功能不受影响 | `DevelopRoutesTest` 核对了网关的路由；本地整套起来实测过：能启动、注册上，登录后经网关查代码生成的数据源列表正常，其余功能没有逐项测 |
+| 定时任务服务 | `blade-ops/blade-job` | `mugsun-cloud-ops/mugsun-cloud-job`，`mugsun-job`，8108 | 定时任务和调度中心的管理接口：`/system/job/**`、`/system/job-server/**`；PowerJob 执行器和三个处理器；按保留期清理日志 | 这两组路径经网关返回 503，定时任务、调度中心两个页面打不开；调度中心派的任务没有执行器接；到期的日志不会被清理，直到它再启动 | `JobRoutesTest` 核对了网关的路由；本地整套起来实测过：能启动、注册上，登录后经网关查调度中心列表正常；没有接过真的调度中心 |
+| 文件和短信服务 | `blade-ops/blade-resource` | `mugsun-cloud-ops/mugsun-cloud-resource`，`mugsun-resource`，8109 | 文件上传下载 `/system/file/**`、存储配置 `/system/oss/**`、短信配置 `/system/sms/**`、富文本图片 `/system/richtext/image/**`、头像 `/auth/avatar/**`、反馈附件 `/system/feedback/attachment/**`、本地存储直出的 `/file/**`；发验证码、验验证码、发通知短信（内部接口） | 这几组路径经网关返回 503：文件传不了也下不了，头像和图片显示不出来；短信验证码、双因子短信、短信通知发不出去，页面上提示短信服务暂时不可用；账号密码登录不受影响 | `ResourceRoutesTest` 核对了网关的路由，短信的内部调用两端各有单元测试；本地整套起来实测过：能启动、注册上，登录后经网关查文件列表正常；没有真的传过文件、发过短信 |
+| 审批流服务 | `blade-ops/blade-flow` | `mugsun-cloud-ops/mugsun-cloud-flow`，`mugsun-flow`，8110 | 流程定义和设计、发起、待办、办理、流转记录 `/system/flow/**`，手机端的待办 `/app/todos/**`；按用户取待办列表（内部接口，手机端首页用） | 这两组路径经网关返回 503：流程设计、发起、办理都用不了；手机端首页提示待办暂时取不到（首页要显示待办数）；管理后台工作台上的待办数直接查库，不受影响 | `FlowRoutesTest` 核对了网关的路由，取待办的内部调用两端各有单元测试；本地整套起来实测过：能启动、注册上，登录后经网关查待办列表正常；没有真的发起、办理过流程 |
+| 工作台服务 | `blade-service/blade-desk` | `mugsun-cloud-service/mugsun-cloud-desk`，`mugsun-desk`，8111 | 通知公告 `/system/notice/**`（管理、我的通知、已读）、登录后首页的工作台 `/system/workbench/**`（概览、快捷入口）、手机端消息中心里的公告 `/app/inbox/notices/**`；首页要的公告、按标题找公告（两个内部接口，手机端首页和全局搜索用） | 这三组路径经网关返回 503：登录后的首页工作台和公告页面打不开；手机端首页提示公告暂时取不到；顶栏的全局搜索提示公告暂时搜不到 | `DeskRoutesTest` 核对了网关的路由，两个内部调用两端各有单元测试；本地整套起来实测过：能启动、注册上，登录后经网关查公告列表正常；没有真的发过公告 |
+| 登录服务 | `blade-auth` | `mugsun-cloud-auth`，`mugsun-auth`，8100 | 登录 `/auth/**`（账号密码、短信、第三方账号登录，两步验证，注册，找回密码，退出，切换租户，取登录信息，改资料和密码）、验证码 `/auth/captcha/**`、在线用户 `/system/online/**`、开放授权 `/oauth2/**` 和 `/open/**`、OAuth 应用 `/system/oauth-client/**` 和调用记录 `/system/oauth-log/**`、手机端的登录 `/app/auth/**` 和验证码 `/app/captcha/**`。改头像 `/auth/avatar/**` 不在这里，在文件和短信服务 | 这九组路径经网关返回 503：没法新登录、注册、找回密码，刷新页面后取不到登录信息，退出和改密码不行，别的系统没法用 OAuth2 换令牌。已经打开的页面照常用：别的服务认登录只看 Redis 里的登录态，不问登录服务 | `AuthRoutesTest` 核对了网关的路由；本地整套起来实测过：经网关取验证码、用账号密码登录、首次登录改口令、用新口令重新登录都正常；短信登录、第三方账号登录、两步验证、开放授权没有测 |
 
 和 BladeX 不一样的地方：
 
@@ -1432,3 +1432,18 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 - 审批流：BladeX 的 blade-flow 用 Flowable 引擎，另有 blade-flow-api 给别的服务调用（工作台里的请假用它发起流程、完成任务）。这边也是这样分的：服务是 `mugsun-cloud-flow`，给别的服务调用的那一层是 `mugsun-cloud-ops-api/mugsun-cloud-flow-api`。不一样的地方：引擎是单体版用的 warm-flow；发起和办理都在审批流服务自己的接口里（请假的示例也在），没有别的服务要发起流程，所以 flow-api 里目前只有「按用户取待办」一个调用，以后有服务要发起流程时加在那里；BladeX 的流程表在单独的一个库里，这边和其它服务用同一个库。
 - 工作台：BladeX 的 blade-desk 里是通知公告和一个请假流程的示例，另有 blade-desk-api 给别的服务取公告列表。这边也是这样分的：服务是 `mugsun-cloud-service/mugsun-cloud-desk`，给别的服务调用的那一层是 `mugsun-cloud-service-api/mugsun-cloud-desk-api`。不一样的地方：这边的工作台服务还带登录后首页的概览统计和快捷入口；请假不在这里，它是审批流服务里的一个流程定义，发起和办理都在审批流服务；desk-api 里是「首页要的公告」和「按标题找公告」两个调用，都要带上是谁在看（用户编号和有没有公告管理权限），因为这边的公告可以只发给指定的人或部门，BladeX 的取公告列表不分人。
 - 登录：BladeX 的 blade-auth 在仓库最外层，这边的 `mugsun-cloud-auth` 也放在最外层。它里面只有登录本身（验证码、短信、第三方账号、注册这几种换令牌的办法，锁定和密码的处理），OAuth2 的接口在它的框架包里；用户信息和登录日志经 blade-user-api、blade-system-api 到别的服务读写，短信经 blade-resource-api 发。不一样的地方：这边的登录服务直接读写同一个库里的用户、角色这些表（各服务共用一个库，公共层里带着这些类），不经别的服务，所以没有为它新增给别的服务调用的那一层；短信和 BladeX 一样，经 `mugsun-cloud-resource-api` 转给文件和短信服务。这边的登录服务还多带了在线用户、登录后取信息和改资料改密码、切换租户、OAuth 应用管理和调用记录、手机端的登录。有两组类两个服务各带一份（同一份代码，只读写共用的库和 Redis）：发邮件的类，system 管邮件模板，登录服务发找回密码和两步验证的邮件；OAuth 应用和令牌的类，system 删租户时用它清掉这个租户的应用和令牌。
+
+## 21. 数据库的连接数上限要够各服务的连接池用
+
+12 个业务服务连同一个 PostgreSQL，每个服务有自己的连接池。连接数加起来超过数据库的上限（`max_connections`，PostgreSQL 默认 100）时，后来的连接被拒绝，数据库报 `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute`，表现是后启动的服务启动失败，或者接口报错。
+
+- 主库的池平时只留 2 个连接（`minimum-idle`），忙的时候再加，最多 10 个（`maximum-pool-size`，连接池 Hikari 的默认值），闲下来十分钟后退回 2 个。这一项写在公共层的 `mugsun-cloud-defaults.yml` 里，对每个业务服务都生效。track 服务有两个池，主库一个、埋点库一个，设置相同。
+- 每个服务各一个实例时一共 13 个池，都空闲时合计三十多个连接，全部用满是 130 个。多实例时按实例数往上乘。
+- 部署时把 `max_connections` 调到比「每个服务的实例数 × 它的池的上限」加起来还大，再给数据库迁移、备份和人工连接留出余量。
+- 某个服务要多留连接或者调上限，在配置中心里它自己的那一份配置上改 `mybatis-flex.datasource.primary.minimum-idle` 和 `maximum-pool-size`（第 17 节），重启这个服务生效。第 4 节里每个内部接口同时最多处理 6 个请求，这个数是照池的上限 10 个定的，改上限时一起看。
+- 租户配了独立的库或者独立的 schema 时（第 7 节），每个服务实例对每个这样的租户另建一个池，固定 5 个连接，不在上面的数里。这样的租户多了，这一项比上面的数大得多：10 个这样的租户、12 个服务各一个实例，就是 600 个。这一条是按代码算的，没有实测。
+
+实测（`./dev.sh up`，12 个业务服务各一个实例，都空闲）：主库 33 到 34 个连接，埋点库 2 到 3 个。把 `minimum-idle` 设成 2 之前，每个池启动后都建满 10 个，整套起来就把 100 个占满：实测 track 连不上库、启动失败，之后重启工作台服务也因为连不上库而失败。
+
+- `deploy/dev/docker-compose.yml` 起的本地开发库，上限调到了 200。
+- 第 16 节的 Docker 全套没有调，用的是 PostgreSQL 默认的 100：空闲时够用，各服务同时都很忙时可能不够。

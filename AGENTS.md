@@ -184,7 +184,7 @@ deploy/docker/smoke.sh                               # 从零起整套容器逐�
 - 只构建或只测一个模块时带 `-am`，把它依赖的本仓模块一起构建，比如 `./mvnw -B -pl mugsun-cloud-gateway -am test`；只跑个别测试类时再加 `-Dsurefire.failIfNoSpecifiedTests=false`。不带 `-am` 时 Maven 到本机仓库去找 `mugsun-cloud-config`、`mugsun-cloud-common` 的包，找不到就报错。
 - 这里没有业务测试，业务改动在 mugsun-boot 里测。
 - 业务代码用到的第三方库，版本以单体版打出的包为准，用 `scripts/compare_libs.py` 检查。不要引入会改这些库版本的版本清单（BOM）：`spring-cloud-alibaba-dependencies` 会改 guava 等库，所以父 pom 没有引入它，只单独写了 Nacos 组件的版本。版本不一致时的处理见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「第三方库的版本」。
-- 本地联调的启动步骤见 [README](./README.md)。`java -jar` 启动服务时要显式传 `--spring.profiles.active=...`，没配 profile 按生产处理。
+- 本地联调用 `./dev.sh up` 一条命令起整套，改了代码用 `./dev.sh restart <服务>`，说明见 [README](./README.md) 的「本地启动」。手工用 `java -jar` 启动服务时要显式传 `--spring.profiles.active=...`，没配 profile 按生产处理。
 - 重型任务（构建、测试、启动服务）一律经仓库父目录 `mugsun/` 下的 `_locks/heavy.sh` 排队，用法和 mugsun-boot 相同：
   ```bash
   ../_locks/heavy.sh <名字> <做什么> -- <命令...>

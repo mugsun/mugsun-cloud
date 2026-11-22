@@ -26,3 +26,5 @@ Thumbs.db
 
 # deploy/dev/nacos.sh 生成的本机密钥
 .env
+# ./dev.sh 的进程号、日志和下载的 mugsun-core 源码
+.dev/

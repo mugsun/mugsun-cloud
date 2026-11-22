@@ -278,7 +278,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 
 1. 给新服务写 pom、启动类和 `application.yml`，照 `mugsun-cloud-gis` 的写。`application.yml` 里配置中心的那几段导入（第一段的两份和最后按环境分的三段）整个照抄，把名字里的 `mugsun-gis` 换成新服务的服务名。漏了或者名字没换，`ConfigCenterImportsTest` 不通过。
 2. 在网关的路由里把它的路径写在 `mugsun-system` 前面。
-3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
+3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名，在 `dev.sh` 的 `SERVICE_TABLE` 里补一行（名字、模块目录、端口、健康检查地址），开头说明里的服务名和 README「本地启动」里的服务名也补上。
 4. 在公共层的 `com.mugsun.cloud.module` 包里写一个模块状态类，照 `CloudGisModuleStatus` 的写。要知道这个服务有没有部署的服务（现在是 system 和登录服务）靠它决定菜单显不显示、登录信息里怎么说；这些服务的启动类要扫描这个包，漏了的话 `ModuleStatusScanTest` 会报错。
 5. 逐个检查留在 system 的过滤器、拦截器和配置类。新服务带了它们保护或配置的功能，就让新服务也带上它们：各服务都能带的加进 `commonClasses`，只有个别服务能带的写进 `extras`。track 带文件存储，所以有两处：
    - `system.file.LocalFileAccessFilter` 进了公共层。不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。

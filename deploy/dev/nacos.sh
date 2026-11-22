@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# 本地开发用的 Nacos（注册中心）。
+# 本地开发用的 Nacos（注册中心）。仓库根目录的 ./dev.sh 会调用它，也可以单独用。
 #   ./nacos.sh up       启动；首次启动时生成 .env（随机密钥，不进仓库）
 #   ./nacos.sh status   看容器状态和已注册的服务实例
 #   ./nacos.sh logs     看日志
 #   ./nacos.sh down     停止并删除容器，注册数据一并清空
+#   ./nacos.sh env      只生成 .env，不启动（这份编排的任何命令都要先有 .env）
+# 只管 Nacos 这一个容器，同一份编排里的 PostgreSQL 和 Redis 由 ./dev.sh 管。
 # 换端口：MUGSUN_NACOS_PORT=18848 ./nacos.sh up，服务启动时带 MUGSUN_NACOS_ADDR=127.0.0.1:18848。
 set -eu
 
@@ -55,13 +57,16 @@ wait_ready() {
 }
 
 case "${1:-}" in
+	env)
+		write_env
+		;;
 	up)
 		write_env
-		docker compose up -d
+		docker compose up -d nacos
 		wait_ready
 		;;
 	status)
-		docker compose ps
+		docker compose ps nacos
 		for name in ${SERVICES}; do
 			found="$(instances_of "${name}" 2>/dev/null | grep -oE '"ip":"[^"]+","port":[0-9]+' | sed -E 's/"ip":"([^"]+)","port":([0-9]+)/\1:\2/' | tr '\n' ' ' || true)"
 			echo "${name}: ${found:-没有实例}"
@@ -71,10 +76,10 @@ case "${1:-}" in
 		docker compose logs --tail "${2:-100}" nacos
 		;;
 	down)
-		docker compose down
+		docker compose rm --stop --force nacos
 		;;
 	*)
-		echo "用法：./nacos.sh up | status | logs | down" >&2
+		echo "用法：./nacos.sh up | status | logs | down | env" >&2
 		exit 64
 		;;
 esac
