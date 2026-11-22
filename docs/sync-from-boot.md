@@ -227,7 +227,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 
 | 情况 | 例子 | 处理 |
 | --- | --- | --- |
-| 单体版里的版本是另一个模块带来的，拆开后这个服务里没有那个模块 | AI 模块把 `tika-core` 定在 3.2.2，文件存储组件自己带的是 2.4.1 | 在父 pom 的 `dependencyManagement` 里定成单体版包里的版本 |
+| 单体版里的版本是另一个模块带来的，拆开后这个服务里没有那个模块 | AI 模块把 `tika-core` 定在 3.2.2，文件存储组件自己带的是 2.4.1；任务服务的 `guava` 只有 PowerJob 带着（31.1），单体版包里的 33.3.1 是文件存储用的 minio 带的 | 在父 pom 的 `dependencyManagement` 里定成单体版包里的版本。别的服务里这个库跟着另一个组件走的（guava 在文件和短信服务里跟着 minio），就只在缺它的那个服务的 pom 里定，免得那个组件升级后别的服务被锁在旧版本上 |
 | 引入的版本清单（BOM）改了业务代码也在用的库 | `spring-cloud-alibaba-dependencies` 会改 `guava` 和 `mybatis-spring-boot-starter` | 不引入这份清单，用到它的哪个组件就在父 pom 里单独写那个组件的版本 |
 | 库是另一个库间接带进来的，拆开后带它的那个库不在这个服务里 | track 和 system 用到的 `hutool-http`、system 用到的 `hutool-json` 在单体版里由短信组件带入，短信组件现在只在文件和短信服务里 | 在服务的 pom 里显式引入，版本取单体版包里的 |
 | 引入的版本清单改了别的库，这份清单又不能不引入 | `spring-cloud-dependencies` 从 2025.1 起管 okhttp（4.12.1）和 bouncycastle（1.85），单体版包里是 okhttp 4.12.0、bcjmail 1.81 | 在父 pom 的 `dependencyManagement` 里直接写这几个库的版本，定成单体版包里的。直接写的优先于引入的清单 |

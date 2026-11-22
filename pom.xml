@@ -81,6 +81,9 @@
 		<okhttp.version>4.12.0</okhttp.version>
 		<bcjmail.version>1.81</bcjmail.version>
 		<bcpkix.version>1.81.1</bcpkix.version>
+		<!-- 任务服务里的 guava 只有 PowerJob 带着（31.1-jre）；单体版里文件存储用的 minio 先带了下面这个版本，打进包里的是它，
+		     PowerJob 在单体版里就是和它一起跑的。只在任务服务的 pom 里用，不放进下面的 dependencyManagement，理由和上面的 hutool-http 相同 -->
+		<guava.version>33.3.1-jre</guava.version>
 		<!-- 这里的属性名不要和 spring-boot-dependencies 里已有的属性同名：同名会把 Spring Boot 管的那个库在所有模块里的版本改掉。
 		     commons-logging 从 Spring Boot 4 起由 Spring Boot 管（属性 commons-logging.version），和单体版一样，这里不再写 -->
 	</properties>

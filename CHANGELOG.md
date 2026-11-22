@@ -215,6 +215,9 @@
 
 ### 修复
 
+- 第三方库版本的比对漏了 `mugsun-cloud-ops` 下的 7 个服务，补进默认范围
+  - 补上后查出任务服务的 guava 是 31.1，单体版是 33.3.1，已改成一致
+  - 跟着 guava 走的 failureaccess、j2objc-annotations 也一致了
 - 第三方库的版本和单体版打出的包对齐，此前有 5 个库不一致
   - tika-core 2.4.1 → 3.2.2，commons-io 2.16.1 → 2.20.0
   - commons-collections4 4.4 → 4.5.0，guava 33.4.8 → 33.3.1
