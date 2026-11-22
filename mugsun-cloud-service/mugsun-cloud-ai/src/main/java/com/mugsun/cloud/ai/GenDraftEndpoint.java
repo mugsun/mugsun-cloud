@@ -14,7 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 内部接口：用大模型把一句话的建表描述变成代码生成的建模草稿，给 system 服务的「规则建模」用。
+ * 内部接口：用大模型把一句话的建表描述变成代码生成的建模草稿，给代码生成服务的「规则建模」用。
  *
  * <p>出草稿用的是 mugsun-boot 的 {@code GenAiDraftEnhancerImpl}，这里只负责收发。草稿只是候选，不落库也不建表：
  * 要不要采用、表名字段名合不合规，由 system 服务在用户确认时再检查。

@@ -1,4 +1,4 @@
-package com.mugsun.cloud.system.ai;
+package com.mugsun.cloud.develop;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;

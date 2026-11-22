@@ -301,6 +301,21 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  develop:
+    # 代码生成服务：代码生成、数据建模和在线表单。它停了只是管理后台这几个页面打不开
+    build:
+      <<: *build
+      target: develop
+    image: mugsun-cloud-develop:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   gateway:
     build:
       <<: *build
@@ -424,6 +439,8 @@ services:
       log:
         condition: service_healthy
       report:
+        condition: service_healthy
+      develop:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

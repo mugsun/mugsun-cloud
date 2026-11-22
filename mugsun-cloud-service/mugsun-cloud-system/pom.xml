@@ -10,7 +10,7 @@
 	</parent>
 	<artifactId>mugsun-cloud-system</artifactId>
 	<name>mugsun-cloud-system</name>
-	<description>system 服务：登录、用户、角色、菜单、租户、文件、消息、流程、代码生成等（mugsun-boot-core 除公共层以外的部分）</description>
+	<description>system 服务：登录、用户、角色、菜单、租户、文件、消息、流程等（mugsun-boot-core 除了公共层和分给别的服务的部分）</description>
 
 	<dependencies>
 		<dependency>
@@ -18,10 +18,6 @@
 			<artifactId>mugsun-cloud-common</artifactId>
 		</dependency>
 		<!-- 以下与 mugsun-boot-core 的依赖一致，是公共层用不到、只有 system 用的那些 -->
-		<dependency>
-			<groupId>com.mybatis-flex</groupId>
-			<artifactId>mybatis-flex-codegen</artifactId>
-		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-websocket</artifactId>

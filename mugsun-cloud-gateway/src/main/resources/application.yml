@@ -109,6 +109,12 @@ spring:
               uri: lb://mugsun-report
               predicates:
                 - Path=/system/report/**
+            # 代码生成服务：代码生成、数据建模、代码生成用的数据源和方案、在线表单。路径要写在 mugsun-system 前面；
+            # 两边对不对得上，由代码生成服务的 DevelopRoutesTest 检查
+            - id: mugsun-develop
+              uri: lb://mugsun-develop
+              predicates:
+                - Path=/system/gen/**,/system/gen-datasource/**,/system/gen-scheme/**,/system/online-form/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

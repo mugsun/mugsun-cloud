@@ -64,7 +64,7 @@ Redis 也要是同一个：登录态存在 Redis 里。`dev` 配置下连不上 
 | --- | --- |
 | AI 问图层、AI 解读埋点数据 | ai 调 gis、track，取库里的实数 |
 | 埋点分析的「问数据」用大模型解析提问 | track 调 ai |
-| 代码生成的建模草稿用大模型出 | system 调 ai |
+| 代码生成的建模草稿用大模型出 | develop 调 ai |
 
 调用走 `/inner` 开头的内部接口，直接连对方的服务端口，不经网关。内部接口不看登录令牌，只认签名。签名用的密钥由环境变量 `MUGSUN_INNER_SECRET` 给出：
 
@@ -1113,7 +1113,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 
 ### 只用镜像
 
-每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`admin`：
+每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`admin`：
 
 ```bash
 docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
@@ -1409,7 +1409,9 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 | 服务 | 对应 BladeX 的 | 模块、服务名、端口 | 管什么 | 它没在运行时 | 验证到什么程度 |
 | --- | --- | --- | --- | --- | --- |
 | 报表服务 | `blade-ops/blade-report` | `mugsun-cloud-ops/mugsun-cloud-report`，`mugsun-report`，8106 | 报表的定义和预览：`/system/report/**` | 这组路径经网关返回 503，管理后台的报表页面打不开，别的功能不受影响 | 只编译过，`ReportRoutesTest` 核对了网关的路由；没有实际启动过 |
+| 代码生成服务 | `blade-ops/blade-develop` | `mugsun-cloud-ops/mugsun-cloud-develop`，`mugsun-develop`，8107 | 代码生成、数据建模、代码生成用的数据源和方案、在线表单：`/system/gen/**`、`/system/gen-datasource/**`、`/system/gen-scheme/**`、`/system/online-form/**` | 这几组路径经网关返回 503，管理后台的代码生成、在线表单页面打不开，别的功能不受影响 | 只编译过，`DevelopRoutesTest` 核对了网关的路由；没有实际启动过 |
 
 和 BladeX 不一样的地方：
 
 - 报表：BladeX 的报表服务装的是 UReport2 报表设计器。这边的报表是单体版自己写的那一套（内置数据集加图表配置），拆出来的是同一份代码，没有换成 UReport2。
+- 代码生成：BladeX 的 blade-develop 里是它自己的代码生成器（模型、模型字段、生成配置、数据源）。这边拆出来的是单体版的代码生成、数据建模和在线表单，代码没有改，生成代码用的模板也跟着搬到了这个服务。BladeX 还给别的服务留了一个查数据源的接口（`IDatasourceClient`），它自己没有地方调，这边也还没有服务要用，先不建。

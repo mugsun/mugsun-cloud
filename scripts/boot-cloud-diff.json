@@ -20,12 +20,12 @@
       "same": "密钥表在各服务共用的主库里，system 直接删，删除语句和单体版相同，仍然和删租户在同一个事务里，ai 服务没启动也照样清。单体版的可选模块以后新增别的清理实现时，`TenantPurgerGuardTest` 会失败，提醒在 system 里补上。",
       "tests": ["CloudAiSecretPurgerTest", "TenantPurgerGuardTest"]
     },
-    "com.mugsun.cloud.system.ai.RemoteGenAiDraftEnhancer": {
+    "com.mugsun.cloud.develop.RemoteGenAiDraftEnhancer": {
       "title": "代码生成的「规则建模」请大模型出草稿",
       "how": "forward",
       "related": ["com.mugsun.cloud.ai.GenDraftEndpoint"],
-      "why": "单体版里代码生成直接调 AI 模块的实现，让大模型出建模草稿。微服务版里代码生成在 system 服务，大模型在 ai 服务。",
-      "same": "system 把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。",
+      "why": "单体版里代码生成直接调 AI 模块的实现，让大模型出建模草稿。微服务版里代码生成单独是一个服务，大模型在 ai 服务。",
+      "same": "代码生成服务把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。",
       "tests": ["RemoteGenAiDraftEnhancerTest", "GenDraftEndpointTest"]
     },
     "com.mugsun.cloud.system.module.CloudAiModuleStatus": {
@@ -94,6 +94,7 @@
     "mugsun-cloud-service/mugsun-cloud-ai": "ai 服务的启动入口，和启动时的检查。",
     "mugsun-cloud-ops/mugsun-cloud-admin": "监控中心：一个页面看网关和各服务的每个实例在不在线。",
     "mugsun-cloud-ops/mugsun-cloud-log": "日志服务：六类日志的查询和处理。接口类是同步来的，手写的只有启动入口。",
-    "mugsun-cloud-ops/mugsun-cloud-report": "报表服务：报表的定义和预览。接口类、实体和 Mapper 是同步来的，手写的只有启动入口。"
+    "mugsun-cloud-ops/mugsun-cloud-report": "报表服务：报表的定义和预览。接口类、实体和 Mapper 是同步来的，手写的只有启动入口。",
+    "mugsun-cloud-ops/mugsun-cloud-develop": "代码生成服务：代码生成、数据建模和在线表单。业务类和代码模板是同步来的，手写的是启动入口和请 ai 服务出建模草稿的转发。"
   }
 }

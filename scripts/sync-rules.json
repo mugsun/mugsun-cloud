@@ -52,7 +52,9 @@
       "gen.GenNaming",
       "gen.entity.GenTable",
       "gen.entity.GenColumn",
-      "system.service.HandlerSelectService"
+      "system.service.HandlerSelectService",
+      "system.service.MenuService",
+      "gen.RuntimeSql"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -77,6 +79,13 @@
           "system.entity.SysReport",
           "system.mapper.SysReportMapper"
         ]
+      },
+      {
+        "target": "mugsun-cloud-ops/mugsun-cloud-develop",
+        "classes": [
+          "gen.**",
+          "online.**"
+        ]
       }
     ],
     "resources": [
@@ -84,6 +93,7 @@
       { "match": "application-*.yml", "to": "common" },
       { "match": "logback-spring.xml", "to": "common" },
       { "match": "META-INF/spring.factories", "to": "split" },
+      { "match": "generator/*", "to": "mugsun-cloud-ops/mugsun-cloud-develop" },
       { "match": "*", "to": "system" }
     ]
   },

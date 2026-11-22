@@ -11,9 +11,9 @@
 | 一 | 同一件事，两边各有一个实现 | 7 处 |
 | 二 | 业务上两边做法不同 | 2 处 |
 | 三 | 单体版有、这边不带的类 | 1 个 |
-| 四 | 只有微服务版才有的类 | 89 个 |
+| 四 | 只有微服务版才有的类 | 90 个 |
 
-微服务版手写的类一共 107 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
+微服务版手写的类一共 108 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
 
 ## 这一页怎么保持是对的
 
@@ -73,11 +73,11 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 - 接口：`gen.GenAiDraftEnhancer`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.GenAiDraftEnhancerImpl`（同步在 mugsun-cloud-ai）
-- 微服务版的实现：`system.ai.RemoteGenAiDraftEnhancer`（mugsun-cloud-system）
+- 微服务版的实现：`develop.RemoteGenAiDraftEnhancer`（mugsun-cloud-develop）
 - 一起用到的手写类：`ai.GenDraftEndpoint`（mugsun-cloud-ai）
-- 为什么另写：单体版里代码生成直接调 AI 模块的实现，让大模型出建模草稿。微服务版里代码生成在 system 服务，大模型在 ai 服务。
+- 为什么另写：单体版里代码生成直接调 AI 模块的实现，让大模型出建模草稿。微服务版里代码生成单独是一个服务，大模型在 ai 服务。
 - 做法：转给对方服务
-- 怎么保证一样：system 把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。
+- 怎么保证一样：代码生成服务把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。
 - 测试：`RemoteGenAiDraftEnhancerTest`、`GenDraftEndpointTest`
 
 ### 4. AI 模块在不在、开没开
@@ -154,7 +154,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 另外有两样也不同步：单体版的打包模块 `mugsun-boot-server`（只有 pom 和测试），和各模块的测试代码。业务测试在 mugsun-boot 里跑。
 
-## 四、只有微服务版才有的类（89 个）
+## 四、只有微服务版才有的类（90 个）
 
 单体版是一个进程，用不着这些。每个类后面的话是它类注释的第一句。
 
@@ -320,3 +320,10 @@ ai 服务的启动入口，和启动时的检查。
 
 - `report`
   - `ReportApplication`：报表服务启动入口。
+
+### mugsun-cloud-develop（1 个）
+
+代码生成服务：代码生成、数据建模和在线表单。业务类和代码模板是同步来的，手写的是启动入口和请 ai 服务出建模草稿的转发。
+
+- `develop`
+  - `DevelopApplication`：代码生成服务启动入口。

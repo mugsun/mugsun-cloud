@@ -276,7 +276,16 @@ def split_services(index, rules, common, system):
         target = service["target"]
         if target in moved or target in (rules["common"], rules["system"]):
             die("sync-rules.json 的 core.services 里 target 写的 %s 重复了，或者就是公共层、system 的模块" % target)
-        classes = expand(index, service["classes"])
+        classes = set()
+        for pattern in service["classes"]:
+            found = expand(index, [pattern])
+            if "*" in pattern:
+                # 整包的写法匹配到的公共层的类不算：包里有几个类别处也要用、已经进了公共层是常事，
+                # 不能因此就要求把整个包一个类一个类地写出来（那样包里新加的类会悖悖留在 system）
+                found -= common
+                if not found:
+                    die("core.services 里的 %s 匹配到的类都在公共层，各服务都带着，这一条可以删掉" % pattern)
+            classes |= found
         for cls in sorted(classes):
             if cls in common:
                 die("core.services 里的 %s 在公共层，各服务都带着它，不用再分给 %s" % (short(cls), target))
@@ -441,7 +450,11 @@ def plan(rules, boot, ref):
                 for target, content in split_factories(files[path], owner.get).items():
                     out[target]["resources/" + rel] = content
             elif rule["to"] != "skip":
-                out[targets[rule["to"]]]["resources/" + rule.get("as", rel)] = files[path]
+                to = rule["to"]
+                if to not in targets and to not in moved:
+                    die("core.resources 里 %s 的 to 写的是 %s：只能是 common、system、split、skip，"
+                        "或者 core.services 里某个服务的模块" % (rule["match"], to))
+                out[targets.get(to, to)]["resources/" + rule.get("as", rel)] = files[path]
             break
         else:
             die("资源文件 %s 没有匹配的规则，请在 sync-rules.json 的 core.resources 里补上" % rel)

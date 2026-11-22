@@ -35,7 +35,7 @@ PERMISSIONS = [(NAMESPACE + ":*:naming/*", "rw"), (NAMESPACE + ":*:config/*", "r
 # 配置的格式按名字的后缀定，不认识的后缀按纯文本存
 CONFIG_TYPES = {"yaml": "yaml", "yml": "yaml", "properties": "properties", "json": "json", "xml": "xml"}
 USAGE = "用法：nacos-init.py [status | config list | config get <名字> | config put <名字> | config delete <名字>]"
-SERVICES = ["mugsun-gateway", "mugsun-system", "mugsun-gis", "mugsun-track", "mugsun-ai", "mugsun-log", "mugsun-report"]
+SERVICES = ["mugsun-gateway", "mugsun-system", "mugsun-gis", "mugsun-track", "mugsun-ai", "mugsun-log", "mugsun-report", "mugsun-develop"]
 RESET_HINT = "密钥卷和 Nacos 的数据卷不是同一次生成的。用 docker compose down -v 清空后重来"
 
 

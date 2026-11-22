@@ -19,6 +19,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
 | `mugsun-cloud-ops/mugsun-cloud-log` | 8105 | 日志服务：操作、登录、通用、数据变更、访问、错误六类日志的查询和处理接口，从 system 里分出来的，接口路径不变 |
 | `mugsun-cloud-ops/mugsun-cloud-report` | 8106 | 报表服务：报表的定义和预览接口，从 system 里分出来的，接口路径不变 |
+| `mugsun-cloud-ops/mugsun-cloud-develop` | 8107 | 代码生成服务：代码生成、数据建模和在线表单，从 system 里分出来的，接口路径不变 |
 | `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心：一个页面看到网关和各服务的每个实例在不在线，基于 Spring Boot Admin。可以不部署 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源、服务之间的调用等 |
 | `mugsun-cloud-config` | 无 | 配置中心：启动时从 Nacos 读配置的组件，和读路由、灰度规则这类单份配置的公用代码。网关和公共层都依赖它 |
@@ -134,6 +135,12 @@ java -jar mugsun-cloud-ops/mugsun-cloud-report/target/mugsun-cloud-report.jar --
 
 ```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
+java -jar mugsun-cloud-ops/mugsun-cloud-develop/target/mugsun-cloud-develop.jar --spring.profiles.active=dev
+```
+
+```bash
+export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-gateway/target/mugsun-cloud-gateway.jar
 ```
 
@@ -142,7 +149,7 @@ export MUGSUN_SERVICE_IP=127.0.0.1
 java -jar mugsun-cloud-ops/mugsun-cloud-admin/target/mugsun-cloud-admin.jar
 ```
 
-`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。
+`curl http://localhost:8080/ping` 有响应就是网关和 system 都通了。gis、track 和 ai 服务可以不启动，见[可选服务可以不部署](#可选服务可以不部署)。日志服务（端口 8105）不启动时，管理后台的六个日志页面打不开（网关返回 503），各服务照常记日志，见[部署文档](./docs/deployment.md)第 19 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。从 system 里分出来的其它服务（报表等）不启动时，对应的页面打不开，见第 20 节。
 
 最后一条命令启动的是监控中心，也可以不启动。启动后浏览器打开 <http://localhost:8200>，能看到各实例在不在线；登录账号见[部署文档](./docs/deployment.md)第 18 节。
 
@@ -221,7 +228,7 @@ system 按注册中心里有没有对应服务的实例来判断。服务启动�
 | --- | --- | --- |
 | AI 问图层、AI 解读埋点数据 | ai 向 gis、track 取库里的实数 | 提示对应的服务现在不在线、查不了 |
 | 埋点分析的「问数据」用大模型解析提问 | track 调 ai | 只按规则解析提问，和单体版没装 AI 模块时一样 |
-| 代码生成的建模草稿用大模型出 | system 调 ai | 按规则解析描述，和单体版没装 AI 模块时一样 |
+| 代码生成的建模草稿用大模型出 | develop 调 ai | 按规则解析描述，和单体版没装 AI 模块时一样 |
 
 对方部署了、但此刻一个实例都没有（正在重启，或者挂了）的时候也是上面这一列：发起调用的服务只看得到注册中心里有没有它的实例，分不出是哪一种。
 

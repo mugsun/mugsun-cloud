@@ -149,6 +149,11 @@
 - 报表服务 `mugsun-cloud-ops/mugsun-cloud-report`：端口 8106，对应 BladeX 的 blade-report
   - 报表的定义和预览接口从 system 搬到这里，路径不变，网关按路径转发
   - 只编译过，报表服务还没有实际启动过
+- 代码生成服务 `mugsun-cloud-ops/mugsun-cloud-develop`：端口 8107
+  - 对应 BladeX 的 blade-develop；代码生成、数据建模、在线表单从 system 搬来，路径不变
+  - 生成代码用的模板、请 ai 服务出建模草稿的转发类跟着搬到这个服务
+  - 同步规则：分服务可以写整个包，资源文件也可以跟着分过去
+  - 只编译过，代码生成服务还没有实际启动过
   - 只验证了它自己能启动和登录，各实例显示得对不对还没有在整套环境里测
 
 ### 修复

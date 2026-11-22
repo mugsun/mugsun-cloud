@@ -19,6 +19,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务，对应 `mugsun-boot-ai`，可以不部署 |
 | `mugsun-cloud-ops/mugsun-cloud-log` | 8105 | 日志服务：六类日志的查询和处理接口，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-report` | 8106 | 报表服务：报表的定义和预览接口，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
+| `mugsun-cloud-ops/mugsun-cloud-develop` | 8107 | 代码生成服务：代码生成、数据建模和在线表单，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心，Spring Boot Admin，WebFlux 栈，不依赖公共层，可以不部署 |
 
 服务名是 `mugsun-<名字>`，如 `mugsun-system`。
@@ -116,7 +117,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器、拦截器和配置类：新服务带了它们保护或配置的功能，就让新服务也带上。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
 - 进不了公共层的类（它依赖的组件不是每个服务都带），用 `sync-rules.json` 的 `extras` 单独拷给需要的服务，不要在 `src/main` 里照着重写一份。例子：文件存储的配置类 `FileStorageTikaConfig` 单独拷给了 track。
 - PowerJob 执行器只在 system 上启动：同一个应用名下的执行器，调度中心派任务时不加区分。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
-- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里，主要是接口类，只有它用的实体和 Mapper 可以一起分过去。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
+- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 服务之间的调用
@@ -127,7 +128,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 发起调用：用 `InnerClient`，对方的服务名从 `ServiceNames` 取。对方要去调大模型的用 `callSlow`。`reachable` 用来在调用之前判断对方在不在。
 - 带过去的身份只有租户，没有用户，也不转发用户的登录令牌。所以只有在单体版里本来就只看租户、不看用户的调用才能这样转；用户有没有权限做这件事，由发起调用的一方在调用之前判断。接口的实现里不能用 `StpUtil` 和 `@DataScope`。
 - 请求和响应都用共享密钥签名，协议在 `InnerProtocol`，校验在 `InnerRequestFilter`。改这两个类等于改鉴权，属于敏感改动。
-- 对方没有部署时，效果要和单体版没装那个模块时一样；对方在但调用失败时，要和单体版里那个模块出错时一样。现有的三处可以参考：ai 的 `RemoteInsightPort`、track 的 `RemoteTrackAskLlmGateway`、system 的 `RemoteGenAiDraftEnhancer`。
+- 对方没有部署时，效果要和单体版没装那个模块时一样；对方在但调用失败时，要和单体版里那个模块出错时一样。现有的三处可以参考：ai 的 `RemoteInsightPort`、track 的 `RemoteTrackAskLlmGateway`、代码生成服务的 `RemoteGenAiDraftEnhancer`。
 - 调用方只看得到注册中心里有没有对方的实例，分不出它是没有部署，还是部署了、此刻不在（正在重启，或者挂了）。这时给用户的话要在两种情况下都是真的，不要说「没有部署」。
 - 给用户看的提示里不带地址、服务名和状态码，具体原因只记日志。日志里不记密钥和签名。
 - 对方连得上、但是不回话或者忙不过来时有三道保护，都在公共层，默认开着：调用方的熔断（`InnerBreakers`，按实例、接口、租户分开记），被调用方每个接口同时处理的上限（`InnerGate`，整个接口一个上限、同一个租户一个上限，满了回「忙」），按调用方的等待时间给查询设时限（`InnerQueryTimeout`）。效果和配置项见 [docs/deployment.md](./docs/deployment.md) 第 4 节的「对方出了问题时的三道保护」。写接口和发起调用时要配合的是下面几条。
