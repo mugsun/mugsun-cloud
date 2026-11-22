@@ -4,7 +4,7 @@
 #   docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
 # 整套一起起，用同目录的 docker-compose.yml。
 #
-# mugsun-core 在镜像里先构建安装：依赖的 0.2.0-SNAPSHOT 不在 Maven Central 上。源码取 GitHub 上的 MUGSUN_CORE_REF，
+# mugsun-core 在镜像里先构建安装：依赖的 0.3.0-SNAPSHOT 不在 Maven Central 上。源码取 GitHub 上的 MUGSUN_CORE_REF，
 # 钉到 40 位提交号，和 mugsun-boot 同一个提交里 docker/full/boot.Dockerfile 钉的一致，同步 mugsun-boot 时跟着改。
 # 本地联调可以换成本机的源码：
 #   docker build --build-context mugsun-core=../mugsun-core -f deploy/docker/Dockerfile --target system .
@@ -12,7 +12,7 @@
 # 基础镜像固定摘要（多架构），和 mugsun-boot 用的是同一组；升级时标签和摘要一起改。
 # 镜像里不放任何密钥：密钥在运行时用环境变量给，或者写在 MUGSUN_ENV_FILE 指的文件里，见 entrypoint.sh。
 FROM scratch AS mugsun-core
-ARG MUGSUN_CORE_REF=50c5843684c2f297f6aa37193fcc4e0c48ff12c6
+ARG MUGSUN_CORE_REF=4e2f555e150bbd6f29f9bf697bdb2742e59d4c0f
 ADD https://github.com/mugsun/mugsun-core.git#${MUGSUN_CORE_REF} /
 
 FROM maven:3.9-eclipse-temurin-21@sha256:99e61abcff91a9b1333463bd8451fb18495d6eba9250ac66a338b518f8278320 AS build

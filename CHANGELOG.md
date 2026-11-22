@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+### 不兼容变更
+
+- 升级到 Spring Boot 4.1.3，和 mugsun-boot、mugsun-core 一起升
+  - Spring Cloud 2025.1.5，网关是 Spring Cloud Gateway 5.0.5
+  - Spring Cloud Alibaba 2025.1.0.0，Nacos 客户端 3.1.1，服务端仍是 3.0.3
+  - 监控中心的 Spring Boot Admin 4.1.5；JDK 仍是 21
+  - mugsun-core 换成 `0.3.0-SNAPSHOT`，构建前先重新安装它
+  - 镜像里的 mugsun-core 换了提交（`MUGSUN_CORE_REF`），镜像要重新构建
+  - JSON 这一步仍用 Jackson 2，接口返回不变；网关单独引 `spring-boot-jackson2`
+  - 已有配置项的名字都没变，Nacos 里的配置和环境变量不用改
+  - 第三方库的版本重新和单体版的包对齐，改了三处：
+  - `commons-logging` 改由 Spring Boot 管（1.3.6），父 pom 删掉同名的属性
+  - Spring Cloud 新管起来的 okhttp、bouncycastle 定回单体版包里的版本
+  - ai 服务的 asm 9.7.1 → 9.11.1
+
 ### 新增
 
 - 工程骨架：父 pom、公共层、system 服务、网关，版本与 mugsun-boot 对齐

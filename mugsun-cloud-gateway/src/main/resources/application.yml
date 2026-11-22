@@ -14,6 +14,11 @@ server:
 spring:
   application:
     name: mugsun-gateway
+  http:
+    codecs:
+      # 过渡期：JSON 仍用 Jackson 2（Spring Boot 4 默认是 Jackson 3）。各服务的这一项由 mugsun-core 设默认值，
+      # 网关不带 mugsun-starter-web，在这里写明。换到 Jackson 3 以后和 pom 里的 spring-boot-jackson2 一起去掉
+      preferred-json-mapper: jackson2
   config:
     # 配置中心：启动时到 Nacos 读这两份配置，里面的配置项盖过这个文件里的同名项。
     # 命令行参数、名字和配置项对得上的环境变量仍然比 Nacos 优先，变量是空的也算：下面 mugsun.gateway 的开关都是这一类，

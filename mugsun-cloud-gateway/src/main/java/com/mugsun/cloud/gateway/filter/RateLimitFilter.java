@@ -127,7 +127,7 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
 	private String describe(ServerWebExchange exchange) {
 		String path = AccessLogFilter.clean(exchange.getRequest().getURI().getRawPath(), MAX_LOGGED_PATH);
 		String text = exchange.getRequest().getMethod() + " " + path + "，请求编号 " + TraceIds.of(exchange);
-		if (noTrustedProxies && exchange.getRequest().getHeaders().containsKey(ClientView.X_FORWARDED_FOR)) {
+		if (noTrustedProxies && exchange.getRequest().getHeaders().containsHeader(ClientView.X_FORWARDED_FOR)) {
 			text += "。这个请求带着 X-Forwarded-For，而可信代理（" + TRUSTED_PROXIES + "）没有配："
 				+ "网关前面有反向代理的话，所有请求都被算在了代理这一个地址上";
 		}

@@ -8,7 +8,7 @@ import com.mugsun.cloud.gateway.props.GatewayGuardProperties.AccessLogMode;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.springframework.boot.autoconfigure.web.ServerProperties;
+import org.springframework.boot.web.server.autoconfigure.ServerProperties;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.cloud.client.DefaultServiceInstance;

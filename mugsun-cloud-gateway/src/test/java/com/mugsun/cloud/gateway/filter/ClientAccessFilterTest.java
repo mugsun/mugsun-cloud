@@ -4,7 +4,7 @@ import com.mugsun.cloud.gateway.error.GatewayRejectedException;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.autoconfigure.web.ServerProperties;
+import org.springframework.boot.web.server.autoconfigure.ServerProperties;
 import org.springframework.cloud.gateway.filter.ReactiveLoadBalancerClientFilter;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.http.HttpMethod;

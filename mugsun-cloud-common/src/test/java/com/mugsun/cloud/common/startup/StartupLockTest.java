@@ -2,7 +2,7 @@ package com.mugsun.cloud.common.startup;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.boot.web.context.WebServerGracefulShutdownLifecycle;
+import org.springframework.boot.web.server.context.WebServerGracefulShutdownLifecycle;
 import org.springframework.context.ApplicationContextException;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.support.GenericApplicationContext;

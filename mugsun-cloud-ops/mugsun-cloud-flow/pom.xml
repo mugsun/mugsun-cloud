@@ -25,7 +25,7 @@
 		<!-- 流程引擎，从 system 挪到了这里，版本跟着 mugsun-bom 走。ai 服务另带着一份：AI 预审的监听器和演示数据要用它的类 -->
 		<dependency>
 			<groupId>org.dromara.warm</groupId>
-			<artifactId>warm-flow-mybatis-sb3-starter</artifactId>
+			<artifactId>warm-flow-mybatis-sb4-starter</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.dromara.warm</groupId>

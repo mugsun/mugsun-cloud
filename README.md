@@ -31,7 +31,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 
 服务注册和发现、配置中心都用 Nacos。数据库（PostgreSQL）和 Redis 的用法与单体版相同，主库和埋点库的库表也是同一套。
 
-版本：JDK 21、Spring Boot 3.5.13、Spring Cloud 2025.0.3、Spring Cloud Alibaba 2025.0.0.0。
+版本：JDK 21、Spring Boot 4.1.3、Spring Cloud 2025.1.5、Spring Cloud Alibaba 2025.1.0.0。
 
 ## 代码从哪来
 
@@ -79,7 +79,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm init show
 开发时直接用 JDK 启动各服务。需要 JDK 21 和 Docker。mugsun-core、mugsun-boot 和本仓库放在同一个目录下。
 
 ```bash
-# 1. mugsun-core 的 0.2.0-SNAPSHOT 不在 Maven Central，先装到本地
+# 1. mugsun-core 的 0.3.0-SNAPSHOT 不在 Maven Central，先装到本地
 git clone https://github.com/mugsun/mugsun-core.git
 (cd mugsun-core && mvn -B clean install -DskipTests)
 

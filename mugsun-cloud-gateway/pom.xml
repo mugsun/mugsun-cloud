@@ -44,6 +44,13 @@
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-actuator</artifactId>
 		</dependency>
+		<!-- 过渡期：JSON 仍用 Jackson 2（com.fasterxml.jackson）。Spring Boot 4 默认只装配 Jackson 3，ResultWriter 要的
+		     ObjectMapper 由这个模块装配。各服务的经 mugsun-starter-web 带入，网关不带它，单独引入。
+		     换到 Jackson 3 以后和 application.yml 里的 spring.http.codecs.preferred-json-mapper 一起去掉 -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-jackson2</artifactId>
+		</dependency>
 		<!-- 只在 macOS 上生效（本机开发）：缺了它，网关在 macOS 上启动时会报一条 DNS 解析的错误日志 -->
 		<dependency>
 			<groupId>io.netty</groupId>

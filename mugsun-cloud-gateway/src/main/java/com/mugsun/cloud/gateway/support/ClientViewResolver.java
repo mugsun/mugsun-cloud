@@ -2,7 +2,7 @@ package com.mugsun.cloud.gateway.support;
 
 import com.mugsun.boot.common.web.IpCidr;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import org.springframework.boot.autoconfigure.web.ServerProperties;
+import org.springframework.boot.web.server.autoconfigure.ServerProperties;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 

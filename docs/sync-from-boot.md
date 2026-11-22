@@ -223,23 +223,26 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 
 业务代码和单体版是同一份，它用到的第三方库也要和单体版一样：两边的包里都有的库，版本要相同。业务测试是在单体版那套版本上跑的，版本一样，测试结果在这边才作数。
 
-版本在三种情况下会和单体版不一样：
+版本在五种情况下会和单体版不一样：
 
 | 情况 | 例子 | 处理 |
 | --- | --- | --- |
 | 单体版里的版本是另一个模块带来的，拆开后这个服务里没有那个模块 | AI 模块把 `tika-core` 定在 3.2.2，文件存储组件自己带的是 2.4.1 | 在父 pom 的 `dependencyManagement` 里定成单体版包里的版本 |
 | 引入的版本清单（BOM）改了业务代码也在用的库 | `spring-cloud-alibaba-dependencies` 会改 `guava` 和 `mybatis-spring-boot-starter` | 不引入这份清单，用到它的哪个组件就在父 pom 里单独写那个组件的版本 |
 | 库是另一个库间接带进来的，拆开后带它的那个库不在这个服务里 | track 和 system 用到的 `hutool-http`、system 用到的 `hutool-json` 在单体版里由短信组件带入，短信组件现在只在文件和短信服务里 | 在服务的 pom 里显式引入，版本取单体版包里的 |
+| 引入的版本清单改了别的库，这份清单又不能不引入 | `spring-cloud-dependencies` 从 2025.1 起管 okhttp（4.12.1）和 bouncycastle（1.85），单体版包里是 okhttp 4.12.0、bcjmail 1.81 | 在父 pom 的 `dependencyManagement` 里直接写这几个库的版本，定成单体版包里的。直接写的优先于引入的清单 |
+| 父 pom 里自己起的版本属性和 Spring Boot 管的属性同名 | Spring Boot 4 新增了属性 `commons-logging.version`，父 pom 里原有的同名属性（1.2，原来只给 ai 服务用）把所有模块的 `commons-logging` 都改成了 1.2 | 删掉或改名。父 pom 里的属性名不要和 `spring-boot-dependencies` 里已有的属性同名，升级 Spring Boot 后要重新查一遍 |
 
 用 `scripts/compare_libs.py` 检查。它比较网关、各服务的包和单体版的包，列出版本不同的库：
 
 ```bash
-./mvnw -B package
+./mvnw -B clean package
 python3 scripts/compare_libs.py                    # 单体版的包取 ../mugsun-boot/mugsun-boot-server/target/mugsun-boot.jar
 python3 scripts/compare_libs.py --boot-jar <路径>   # 单体版的包在别处时
 ```
 
 - 单体版的包要用 `boot-sync.lock.json` 里记的那个提交打。
+- 打包要带 `clean`。只改了 pom 里的版本、模块自己的代码没变时，不带 `clean` 打出的包里可能还是上一次的库，监控中心的包就遇到过。
 - 输出「一致」说明版本都相同。有不同时逐个列出，退出码为 1。
 - 「只在这个包里」列的是单体版没有的库，应当只有 Nacos、Spring Cloud 这些微服务组件和它们带进来的库。gis 和 track 的包里还有 `mybatis-flex-processor`，它是编译期的注解处理器，运行时不起作用。
 - `annotations`、`error_prone_annotations` 这两个库里只有注解，版本不同不影响运行，脚本只提示，不算差异。

@@ -5,7 +5,7 @@ import com.mugsun.cloud.gateway.lane.LaneRuleBook;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.support.ClientViewResolver;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.autoconfigure.web.ServerProperties;
+import org.springframework.boot.web.server.autoconfigure.ServerProperties;
 import org.springframework.cloud.gateway.filter.ReactiveLoadBalancerClientFilter;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;

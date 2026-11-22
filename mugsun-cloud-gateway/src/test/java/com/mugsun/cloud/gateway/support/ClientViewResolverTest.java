@@ -5,8 +5,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.boot.autoconfigure.web.ServerProperties;
-import org.springframework.boot.autoconfigure.web.ServerProperties.ForwardHeadersStrategy;
+import org.springframework.boot.web.server.autoconfigure.ServerProperties;
+import org.springframework.boot.web.server.autoconfigure.ServerProperties.ForwardHeadersStrategy;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 
