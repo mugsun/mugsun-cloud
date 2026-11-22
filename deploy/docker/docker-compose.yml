@@ -381,6 +381,22 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  auth:
+    # 登录服务：登录、注册、找回密码、验证码、第三方账号登录、开放授权（OAuth2）、在线用户。
+    # 它停了：没法新登录，刷新页面后取不到登录信息；已经打开的页面照常用，别的服务认登录只看 Redis 里的登录态
+    build:
+      <<: *build
+      target: auth
+    image: mugsun-cloud-auth:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   gateway:
     build:
       <<: *build
@@ -514,6 +530,8 @@ services:
       flow:
         condition: service_healthy
       desk:
+        condition: service_healthy
+      auth:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

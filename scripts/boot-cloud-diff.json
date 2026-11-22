@@ -64,7 +64,7 @@
       "title": "AI 模块在不在、开没开",
       "how": "rewrite",
       "related": ["com.mugsun.cloud.module.ServicePresence"],
-      "why": "菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，system 里没有那个实现。",
+      "why": "菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，要问它的 system 和登录服务里都没有那个实现。",
       "same": "「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。",
       "tests": ["ModuleStatusTest"]
     },
@@ -72,7 +72,7 @@
       "title": "地图模块在不在、开没开",
       "how": "rewrite",
       "related": ["com.mugsun.cloud.module.ServicePresence"],
-      "why": "菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，system 里没有那个实现。",
+      "why": "菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，要问它的 system 和登录服务里都没有那个实现。",
       "same": "「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。",
       "tests": ["ModuleStatusTest"]
     },
@@ -80,7 +80,7 @@
       "title": "埋点模块在不在、开没开",
       "how": "rewrite",
       "related": ["com.mugsun.cloud.module.ServicePresence"],
-      "why": "菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，system 里没有那个实现。",
+      "why": "菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，要问它的 system 和登录服务里都没有那个实现。",
       "same": "「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。",
       "tests": ["ModuleStatusTest"]
     },
@@ -120,6 +120,7 @@
     "mugsun-cloud-config": "配置中心的接入（从 Nacos 读动态路由、灰度规则这类整份的配置），和日志打码（日志写出去之前把凭证换成星号）。网关和各服务都带着它。",
     "mugsun-cloud-common": "各服务都带的公共层里手写的部分：服务之间的内部调用、灰度标记、机器号、几个实例之间同步内存里的状态、启动和停止的顺序。",
     "mugsun-cloud-gateway": "网关：所有请求的入口。转发、限流、黑白名单、灰度发布、动态路由、访问日志都在这里。",
+    "mugsun-cloud-auth": "登录服务：登录、注册、找回密码、验证码、第三方账号登录、开放授权（OAuth2）、在线用户，手机端的登录。业务类是同步来的，手写的只有启动入口。",
     "mugsun-cloud-service/mugsun-cloud-system": "system 服务的启动入口。",
     "mugsun-cloud-service/mugsun-cloud-gis": "gis 服务的启动入口，和启动时的检查。",
     "mugsun-cloud-service/mugsun-cloud-track": "track 服务的启动入口，和启动时的检查。",

@@ -77,7 +77,7 @@ def api(method, path, body=None, trace=None):
     return res.get("data")
 
 
-# 1. 三个模块的开关。服务刚登记到 Nacos 时 system 可能还没刷新到，等一等再下结论
+# 1. 三个模块的开关，由登录服务随登录信息返回。服务刚登记到 Nacos 时登录服务可能还没刷新到，等一等再下结论
 flags = {}
 for _ in range(30):
     info = api("GET", "/api/auth/info") or {}
@@ -89,12 +89,13 @@ else:
     fail("登录信息里的模块开关不全是打开的：%s" % flags)
 print("OK 登录信息里地图、埋点、AI 三个模块都是打开的")
 
-# 2. 同一个登录态访问另外三个服务（system 在上面登录时已经用过）
-for path in ("/api/system/gis/layer/page?pageNum=1&pageSize=1",
+# 2. 同一个登录态访问另外四个服务（登录是在登录服务上做的）。system 用的是取菜单的接口
+for path in ("/api/v3/system/menus",
+             "/api/system/gis/layer/page?pageNum=1&pageSize=1",
              "/api/system/track/app/page?pageNum=1&pageSize=1",
              "/api/system/ai/model/page?pageNum=1&pageSize=1"):
     api("GET", path)
-print("OK 同一个登录态在地图、埋点、AI 三个服务上都有效")
+print("OK 同一个登录态在 system、地图、埋点、AI 四个服务上都有效")
 
 # 3. 服务之间的调用：这两个接口由 AI 服务接收，它再分别去地图、埋点服务取数据概况。
 #    没配大模型也会返回取到的数据，只是没有解读文字。
@@ -181,7 +182,7 @@ def seconds_until(limit, done):
 if len(SYSTEM_ADDRS) > 1:
     # 7.1 登录态存在 Redis 里，在哪个实例上都有效
     for addr in SYSTEM_ADDRS:
-        direct(addr, "GET", "/auth/info")
+        direct(addr, "GET", "/v3/system/menus")
     print("OK 同一个登录态在 %d 个 system 实例上都有效" % len(SYSTEM_ADDRS))
 
     # 7.2 数据权限规则每个实例在内存里各有一份。在一个实例上保存，再删除，另一个实例都要在 5 秒内跟上，两个方向各做一遍。

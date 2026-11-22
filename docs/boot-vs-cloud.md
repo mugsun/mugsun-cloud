@@ -11,9 +11,9 @@
 | 一 | 同一件事，两边各有一个实现 | 11 处 |
 | 二 | 业务上两边做法不同 | 2 处 |
 | 三 | 单体版有、这边不带的类 | 1 个 |
-| 四 | 只有微服务版才有的类 | 102 个 |
+| 四 | 只有微服务版才有的类 | 103 个 |
 
-微服务版手写的类一共 129 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
+微服务版手写的类一共 130 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
 
 ## 这一页怎么保持是对的
 
@@ -130,7 +130,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 单体版的实现：`ai.AiModuleService`（同步在 mugsun-cloud-ai）
 - 微服务版的实现：`module.CloudAiModuleStatus`（mugsun-cloud-common）
 - 一起用到的手写类：`module.ServicePresence`（mugsun-cloud-common）
-- 为什么另写：菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，system 里没有那个实现。
+- 为什么另写：菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，要问它的 system 和登录服务里都没有那个实现。
 - 做法：这边重写
 - 怎么保证一样：「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
@@ -141,7 +141,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 单体版的实现：`gis.GisModuleService`（同步在 mugsun-cloud-gis）
 - 微服务版的实现：`module.CloudGisModuleStatus`（mugsun-cloud-common）
 - 一起用到的手写类：`module.ServicePresence`（mugsun-cloud-common）
-- 为什么另写：菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，system 里没有那个实现。
+- 为什么另写：菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，要问它的 system 和登录服务里都没有那个实现。
 - 做法：这边重写
 - 怎么保证一样：「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
@@ -152,7 +152,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 单体版的实现：`track.TrackModuleService`（同步在 mugsun-cloud-track）
 - 微服务版的实现：`module.CloudTrackModuleStatus`（mugsun-cloud-common）
 - 一起用到的手写类：`module.ServicePresence`（mugsun-cloud-common）
-- 为什么另写：菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，system 里没有那个实现。
+- 为什么另写：菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，要问它的 system 和登录服务里都没有那个实现。
 - 做法：这边重写
 - 怎么保证一样：「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。
 - 测试：`ModuleStatusTest`
@@ -198,7 +198,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 另外有两样也不同步：单体版的打包模块 `mugsun-boot-server`（只有 pom 和测试），和各模块的测试代码。业务测试在 mugsun-boot 里跑。
 
-## 四、只有微服务版才有的类（102 个）
+## 四、只有微服务版才有的类（103 个）
 
 单体版是一个进程，用不着这些。每个类后面的话是它类注释的第一句。
 
@@ -310,6 +310,13 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
   - `RequestPaths`：一次请求涉及的所有路径：客户端发来的、路由改写之前的、改写之后要发给服务的。
   - `ResultWriter`：网关自己产生的失败响应（服务连不上、路径被拦下），格式和后端的统一返回体 `R` 一致，前端不用区分是谁返回的。
   - `TraceIds`：请求编号：一次请求在网关和后面各服务的日志里用同一个编号，排查问题时拿它把几边的日志对上。
+
+### mugsun-cloud-auth（1 个）
+
+登录服务：登录、注册、找回密码、验证码、第三方账号登录、开放授权（OAuth2）、在线用户，手机端的登录。业务类是同步来的，手写的只有启动入口。
+
+- `auth`
+  - `AuthApplication`：登录服务启动入口，对应 BladeX 最外层的 blade-auth。
 
 ### mugsun-cloud-system（1 个）
 

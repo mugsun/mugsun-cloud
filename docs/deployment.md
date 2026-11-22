@@ -65,7 +65,7 @@ Redis 也要是同一个：登录态存在 Redis 里。`dev` 配置下连不上 
 | AI 问图层、AI 解读埋点数据 | ai 调 gis、track，取库里的实数 |
 | 埋点分析的「问数据」用大模型解析提问 | track 调 ai |
 | 代码生成的建模草稿用大模型出 | develop 调 ai |
-| 短信：登录验证码的发送和校验、双因子登录的短信、短信通知 | system 调 resource（文件和短信服务，第 20 节） |
+| 短信：登录验证码的发送和校验、双因子登录的短信、短信通知 | auth（登录服务，第 20 节）和 system 调 resource（文件和短信服务，第 20 节）：登录和双因子的短信由登录服务调，短信通知由 system 调 |
 | 手机端首页显示待办 | system 调 flow（审批流服务，第 20 节） |
 | 手机端首页显示公告、顶栏的全局搜索找公告 | system 调 desk（工作台服务，第 20 节） |
 
@@ -87,7 +87,7 @@ openssl rand -hex 32
 | 发起调用的服务没配 | 提示内部调用没有开通 | 只按规则解析提问，没有提示 | 按规则生成 |
 | 被调用的服务没配，或者两边不一致 | 提示对方服务暂时不可用 | 按规则解析提问，并提示模型调用失败 | 按规则生成 |
 
-短信没有退路：system 和文件和短信服务有一边没配密钥、或者两边不一致时，短信验证码、双因子登录的短信和短信通知都发不出去，用短信验证码也登录不了，页面上提示「短信服务暂时不可用，请稍后再试」。账号密码登录不受影响。
+短信没有退路：发短信的一边（登录服务管短信验证码和双因子登录的短信，system 管短信通知）和文件和短信服务有一边没配密钥、或者两边不一致时，那一边的短信发不出去；是登录服务这一边的话，用短信验证码也登录不了，页面上提示「短信服务暂时不可用，请稍后再试」。账号密码登录不受影响。
 
 待办和公告也没有退路：system 和审批流服务、工作台服务有一边没配密钥、或者两边不一致时，手机端首页打不开，提示「待办暂时取不到，请稍后再试」或「公告暂时取不到，请稍后再试」；顶栏的全局搜索提示「公告暂时搜不到，请稍后再试」。不当成没有待办、没有公告。别的页面不受影响。
 
@@ -337,7 +337,7 @@ system 可以部署多个实例，网关在它们之间轮流转发。要注意�
 
 ## 8. gis、track 和 ai 服务可以不部署
 
-system 按 Nacos 里有没有对应服务的实例判断模块在不在：
+system 和登录服务按 Nacos 里有没有对应服务的实例判断模块在不在（system 管菜单，登录服务返回的登录信息里有这几个模块的开关）：
 
 | 服务名 | 有实例 | 没有实例 |
 | --- | --- | --- |
@@ -346,7 +346,7 @@ system 按 Nacos 里有没有对应服务的实例判断模块在不在：
 | `mugsun-ai` | 显示 AI 菜单，`/system/ai/**` 和 `/v1/**` 由 ai 应答 | 不显示 AI 菜单，这两类路径返回 503 |
 
 - 服务注册上之后，菜单几秒内出现。
-- 实例全部消失后，菜单过一分钟左右才消失。重启或滚动发布服务时菜单不会少一块，这段时间里点进对应的页面会看到 503。这段时间用 system 的 `mugsun.cloud.module.absent-grace` 调，默认 `60s`。
+- 实例全部消失后，菜单过一分钟左右才消失。重启或滚动发布服务时菜单不会少一块，这段时间里点进对应的页面会看到 503。这段时间用 `mugsun.cloud.module.absent-grace` 调，默认 `60s`；system 和登录服务都读它，要改就改 Nacos 里各服务共用的 `mugsun.yaml`，两边才一致。
 - 已经登录的用户要刷新页面，菜单才会变。
 - `/track/**` 是埋点 SDK 上报用的公开接口。没部署 track 时，SDK 的上报会收到 503。
 - `/v1/**` 是 OpenAI 兼容的开放接口，调用方用 AI 密钥，不用登录。没部署 ai 时，这些调用会收到 503。
@@ -357,14 +357,14 @@ system 按 Nacos 里有没有对应服务的实例判断模块在不在：
 | 开关 | 配给谁 | 效果 |
 | --- | --- | --- |
 | 系统参数 `gis.module.enabled=false` | 在管理后台改 | 菜单隐藏，gis 服务对 `/system/gis/**` 返回 404，不用停服务 |
-| `MUGSUN_GIS_ENABLED=false` | system | system 当 GIS 不存在，菜单隐藏 |
-| `MUGSUN_TRACK_ENABLED=false` | system | system 当埋点不存在，菜单隐藏 |
+| `MUGSUN_GIS_ENABLED=false` | system 和登录服务 | 两边都当 GIS 不存在：菜单隐藏，登录信息里 `gisEnabled` 为 `false` |
+| `MUGSUN_TRACK_ENABLED=false` | system 和登录服务 | 两边都当埋点不存在：菜单隐藏，登录信息里 `trackEnabled` 为 `false` |
 | 系统参数 `ai.module.enabled=false` | 在管理后台改 | 菜单隐藏，ai 服务对 `/system/ai/**` 和 `/v1/**` 返回 404，不用停服务 |
-| `MUGSUN_AI_ENABLED=false` | system | system 当 AI 不存在，菜单隐藏 |
+| `MUGSUN_AI_ENABLED=false` | system 和登录服务 | 两边都当 AI 不存在：菜单隐藏，登录信息里 `aiEnabled` 为 `false` |
 
 - 埋点没有系统参数开关，单体版也没有。
 - 用系统参数关掉 AI 以后，埋点「问数据」和建模草稿也不再调用大模型，改按规则处理，其中「问数据」会带一句模型调用失败的提示。改回 `true` 后马上恢复。
-- 配给 system 的三个环境变量只管菜单和登录信息。对应的服务还在跑的话，它的接口照常应答，别的服务也照常调它的内部接口。
+- 这三个环境变量只管菜单和登录信息，system 和登录服务要配成一样：菜单由 system 给，登录信息里的开关由登录服务给，只配一边的话两处会对不上。对应的服务还在跑的话，它的接口照常应答，别的服务也照常调它的内部接口。
 - gis、track 和 ai 服务自己不接受这几个值，带着 `false` 会拒绝启动。不需要某个模块就不要部署它的服务。
 
 ## 9. 健康检查
@@ -1120,7 +1120,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 
 ### 只用镜像
 
-每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`job`、`resource`、`flow`、`desk`、`admin`：
+每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`job`、`resource`、`flow`、`desk`、`auth`、`admin`：
 
 ```bash
 docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
@@ -1421,6 +1421,7 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 | 文件和短信服务 | `blade-ops/blade-resource` | `mugsun-cloud-ops/mugsun-cloud-resource`，`mugsun-resource`，8109 | 文件上传下载 `/system/file/**`、存储配置 `/system/oss/**`、短信配置 `/system/sms/**`、富文本图片 `/system/richtext/image/**`、头像 `/auth/avatar/**`、反馈附件 `/system/feedback/attachment/**`、本地存储直出的 `/file/**`；发验证码、验验证码、发通知短信（内部接口） | 这几组路径经网关返回 503：文件传不了也下不了，头像和图片显示不出来；短信验证码、双因子短信、短信通知发不出去，页面上提示短信服务暂时不可用；账号密码登录不受影响 | 只编译过，`ResourceRoutesTest` 核对了网关的路由，短信的内部调用两端各有单元测试；没有实际启动过，没有真的传过文件、发过短信 |
 | 审批流服务 | `blade-ops/blade-flow` | `mugsun-cloud-ops/mugsun-cloud-flow`，`mugsun-flow`，8110 | 流程定义和设计、发起、待办、办理、流转记录 `/system/flow/**`，手机端的待办 `/app/todos/**`；按用户取待办列表（内部接口，手机端首页用） | 这两组路径经网关返回 503：流程设计、发起、办理都用不了；手机端首页提示待办暂时取不到（首页要显示待办数）；管理后台工作台上的待办数直接查库，不受影响 | 只编译过，`FlowRoutesTest` 核对了网关的路由，取待办的内部调用两端各有单元测试；没有实际启动过，没有真的发起、办理过流程 |
 | 工作台服务 | `blade-service/blade-desk` | `mugsun-cloud-service/mugsun-cloud-desk`，`mugsun-desk`，8111 | 通知公告 `/system/notice/**`（管理、我的通知、已读）、登录后首页的工作台 `/system/workbench/**`（概览、快捷入口）、手机端消息中心里的公告 `/app/inbox/notices/**`；首页要的公告、按标题找公告（两个内部接口，手机端首页和全局搜索用） | 这三组路径经网关返回 503：登录后的首页工作台和公告页面打不开；手机端首页提示公告暂时取不到；顶栏的全局搜索提示公告暂时搜不到 | 只编译过，`DeskRoutesTest` 核对了网关的路由，两个内部调用两端各有单元测试；没有实际启动过，没有真的发过公告 |
+| 登录服务 | `blade-auth` | `mugsun-cloud-auth`，`mugsun-auth`，8100 | 登录 `/auth/**`（账号密码、短信、第三方账号登录，两步验证，注册，找回密码，退出，切换租户，取登录信息，改资料和密码）、验证码 `/auth/captcha/**`、在线用户 `/system/online/**`、开放授权 `/oauth2/**` 和 `/open/**`、OAuth 应用 `/system/oauth-client/**` 和调用记录 `/system/oauth-log/**`、手机端的登录 `/app/auth/**` 和验证码 `/app/captcha/**`。改头像 `/auth/avatar/**` 不在这里，在文件和短信服务 | 这九组路径经网关返回 503：没法新登录、注册、找回密码，刷新页面后取不到登录信息，退出和改密码不行，别的系统没法用 OAuth2 换令牌。已经打开的页面照常用：别的服务认登录只看 Redis 里的登录态，不问登录服务 | 只编译过，`AuthRoutesTest` 核对了网关的路由；没有实际启动过，没有真的登录过 |
 
 和 BladeX 不一样的地方：
 
@@ -1430,3 +1431,4 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 - 文件和短信：BladeX 的 blade-resource 管对象存储、附件和短信，另有 blade-resource-api 给别的服务调用（登录服务用它发短信验证码）。这边也是这样分的：服务是 `mugsun-cloud-resource`，给别的服务调用的那一层是 `mugsun-cloud-ops-api/mugsun-cloud-resource-api`。不一样的地方：BladeX 的服务之间用 Feign 调用，这边用带签名的内部接口（第 4 节）；BladeX 把「上传文件」也做成了给别的服务调用的接口，这边别的服务目前只需要调短信，文件的那一个没有做；头像、富文本图片、反馈附件 BladeX 没有单独的接口，这边它们要读写文件存储，跟着存储过来。
 - 审批流：BladeX 的 blade-flow 用 Flowable 引擎，另有 blade-flow-api 给别的服务调用（工作台里的请假用它发起流程、完成任务）。这边也是这样分的：服务是 `mugsun-cloud-flow`，给别的服务调用的那一层是 `mugsun-cloud-ops-api/mugsun-cloud-flow-api`。不一样的地方：引擎是单体版用的 warm-flow；发起和办理都在审批流服务自己的接口里（请假的示例也在），没有别的服务要发起流程，所以 flow-api 里目前只有「按用户取待办」一个调用，以后有服务要发起流程时加在那里；BladeX 的流程表在单独的一个库里，这边和其它服务用同一个库。
 - 工作台：BladeX 的 blade-desk 里是通知公告和一个请假流程的示例，另有 blade-desk-api 给别的服务取公告列表。这边也是这样分的：服务是 `mugsun-cloud-service/mugsun-cloud-desk`，给别的服务调用的那一层是 `mugsun-cloud-service-api/mugsun-cloud-desk-api`。不一样的地方：这边的工作台服务还带登录后首页的概览统计和快捷入口；请假不在这里，它是审批流服务里的一个流程定义，发起和办理都在审批流服务；desk-api 里是「首页要的公告」和「按标题找公告」两个调用，都要带上是谁在看（用户编号和有没有公告管理权限），因为这边的公告可以只发给指定的人或部门，BladeX 的取公告列表不分人。
+- 登录：BladeX 的 blade-auth 在仓库最外层，这边的 `mugsun-cloud-auth` 也放在最外层。它里面只有登录本身（验证码、短信、第三方账号、注册这几种换令牌的办法，锁定和密码的处理），OAuth2 的接口在它的框架包里；用户信息和登录日志经 blade-user-api、blade-system-api 到别的服务读写，短信经 blade-resource-api 发。不一样的地方：这边的登录服务直接读写同一个库里的用户、角色这些表（各服务共用一个库，公共层里带着这些类），不经别的服务，所以没有为它新增给别的服务调用的那一层；短信和 BladeX 一样，经 `mugsun-cloud-resource-api` 转给文件和短信服务。这边的登录服务还多带了在线用户、登录后取信息和改资料改密码、切换租户、OAuth 应用管理和调用记录、手机端的登录。有两组类两个服务各带一份（同一份代码，只读写共用的库和 Redis）：发邮件的类，system 管邮件模板，登录服务发找回密码和两步验证的邮件；OAuth 应用和令牌的类，system 删租户时用它清掉这个租户的应用和令牌。

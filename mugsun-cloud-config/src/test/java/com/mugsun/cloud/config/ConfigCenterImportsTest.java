@@ -77,12 +77,13 @@ class ConfigCenterImportsTest {
 		assertThat(root).as("从当前目录往上找不到仓库根目录").isNotNull();
 		String settings = "src/main/resources/application.yml";
 		List<Path> files = new ArrayList<>();
-		files.add(root.resolve("mugsun-cloud-gateway").resolve(settings));
-		for (String parent : List.of("mugsun-cloud-service", "mugsun-cloud-ops")) {
-			try (Stream<Path> apps = Files.list(root.resolve(parent))) {
+		// 仓库最外层的应用（网关、登录服务），和两个父目录下的应用
+		for (Path parent : List.of(root, root.resolve("mugsun-cloud-service"), root.resolve("mugsun-cloud-ops"))) {
+			try (Stream<Path> apps = Files.list(parent)) {
 				apps.map(app -> app.resolve(settings)).filter(Files::isRegularFile).sorted().forEach(files::add);
 			}
 		}
+		assertThat(files).as("网关的 application.yml").contains(root.resolve("mugsun-cloud-gateway").resolve(settings));
 		return files;
 	}
 

@@ -17,7 +17,7 @@
 			<groupId>com.mugsun</groupId>
 			<artifactId>mugsun-cloud-common</artifactId>
 		</dependency>
-		<!-- 短信在文件和短信服务里。登录、双因子和短信通知还在这里，依赖它的 api 模块就能调过去 -->
+		<!-- 短信在文件和短信服务里。短信通知（SmsNotifyChannel）还在这里，依赖它的 api 模块就能调过去；登录和两步验证的短信在登录服务 -->
 		<dependency>
 			<groupId>com.mugsun</groupId>
 			<artifactId>mugsun-cloud-resource-api</artifactId>
@@ -38,27 +38,12 @@
 			<artifactId>spring-boot-starter-websocket</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>me.zhyd.oauth</groupId>
-			<artifactId>JustAuth</artifactId>
-		</dependency>
-		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-mail</artifactId>
 		</dependency>
-		<!-- 登录时用 hutool-http 从 User-Agent 解析浏览器和操作系统（AuthLoginService），消息通道的配置用 hutool-json
-		     解析（SysNotifyChannelController）。单体版里这两个都由短信组件 sms4j 间接带入，sms4j 跟着短信去了文件和短信服务，
-		     这里单独引入，版本和单体版包里的一样。排除它们自带的 hutool-core，理由和 track 的 pom 里写的一样 -->
-		<dependency>
-			<groupId>cn.hutool</groupId>
-			<artifactId>hutool-http</artifactId>
-			<version>${hutool-http.version}</version>
-			<exclusions>
-				<exclusion>
-					<groupId>cn.hutool</groupId>
-					<artifactId>hutool-core</artifactId>
-				</exclusion>
-			</exclusions>
-		</dependency>
+		<!-- 消息通道的配置用 hutool-json 解析（SysNotifyChannelController）。单体版里它由短信组件 sms4j 间接带入，
+		     sms4j 跟着短信去了文件和短信服务，这里单独引入，版本和单体版包里的一样。排除它自带的 hutool-core，理由和 track 的 pom 里写的一样。
+		     登录时解析 User-Agent 用的 hutool-http 跟着登录去了登录服务 -->
 		<dependency>
 			<groupId>cn.hutool</groupId>
 			<artifactId>hutool-json</artifactId>

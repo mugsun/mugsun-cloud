@@ -6,6 +6,7 @@
 !mugsun-cloud-service-api/
 !mugsun-cloud-ops-api/
 !mugsun-cloud-gateway/
+!mugsun-cloud-auth/
 !mugsun-cloud-service/
 !mugsun-cloud-ops/
 !deploy/docker/entrypoint.sh

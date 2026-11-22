@@ -140,6 +140,13 @@ spring:
               uri: lb://mugsun-desk
               predicates:
                 - Path=/system/notice/**,/system/workbench/**,/app/inbox/notices/**
+            # 登录服务：登录和验证码（/auth）、在线用户、开放授权（/oauth2、/open、OAuth 应用和调用记录）、手机端的登录和验证码，
+            # 路径要写在 mugsun-system 前面；/auth/avatar 归文件和短信服务，所以还要写在 mugsun-resource 后面。
+            # 两边对不对得上，由登录服务的 AuthRoutesTest 检查
+            - id: mugsun-auth
+              uri: lb://mugsun-auth
+              predicates:
+                - Path=/auth/**,/auth/captcha/**,/system/online/**,/oauth2/**,/system/oauth-client/**,/system/oauth-log/**,/open/**,/app/auth/**,/app/captcha/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

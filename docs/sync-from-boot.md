@@ -130,15 +130,16 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 | 文件和短信服务 `mugsun-resource` | `system.file` 包（上传规则、清理没传完的文件、文件类型识别的配置），文件、存储配置、短信配置、富文本图片、头像、反馈附件六个接口类，连带 `OssService`、`SmsService`、`AttachFileRecorder`、`AvatarUploadService`、`RichTextImageService`、`FileAccessService`，和存储配置、短信配置、短信验证码、分片上传四张表的实体和 Mapper | 附件表和反馈表的实体和 Mapper、`AttachService`、`AvatarBinder`、`UserAvatarWriter`（system 里改头像、查附件也要用）；短信的接口 `common.sms.SmsGateway` 本来就在公共层的包里 |
 | 审批流服务 `mugsun-flow` | 审批流的接口类 `FlowController` 和它的异常处理 `FlowExceptionAdvice`，连带 `FlowService`、`FlowGraphService`、`MugsunFlowListener`、`MugsunPermissionHandler`；手机端待办的 `AppTodoController`、`AppTodoService` 和只有它们用的三个返回对象；`flow/` 下的流程定义文件 | `system.service.UserSelectOptions`（system 的用户接口也用它选人）、`app.AppTodoReader` 和 `app.dto.AppTodoItemVO`（system 里的手机端首页经它们取待办） |
 | 工作台服务 `mugsun-desk` | 通知公告的接口类 `SysNoticeController`，连带 `NoticeReadService` 和公告、公告已读、公告范围三张表的实体和 Mapper；`workbench` 包（首页工作台的接口类、快捷入口的实体和 Mapper）；手机端公告的 `AppNoticeController`、`AppNoticeService` 和只有它们用的一个返回对象 | `system.service.NoticeViewer`、`system.service.NoticeTitleFinder`、`app.AppNoticeReader` 和返回对象 `AppNoticeSummaryVO`、`AppNoticeItemVO`（system 里的手机端首页和全局搜索经它们取公告），`app.dto.AppPageVO`（system 里手机端的站内信列表也用它） |
+| 登录服务 `mugsun-auth` | `auth`、`captcha`、`oauth`、`social` 四个包（登录、注册、找回密码、两步验证、在线用户，验证码，开放授权，第三方账号登录），和验证码的图片资源 `captcha/`；`auth` 包里改头像的两个类在文件和短信服务，已经在公共层的 `LoginLockService` 和 `auth.lock` 包不动。手机端登录的 `AppAuthController`、`AppCaptchaController`、`AppSliderCaptchaService` 和只有它们用的几个对象；`SocialService` 和第三方账号绑定的实体、Mapper；`LoginLogService`、`ClientService` | `log.UsualLogService`（system 里的用户管理和租户管理也记通用日志）、`captcha.CaptchaType`（system 里的租户管理也用它）、`app.AppUserReader`（system 里的手机端首页也用它认「我是谁」）、客户端的实体和 Mapper（system 里的客户端管理也读写这张表）。另有两组类两边各带一份，写在 `extras` 里：发邮件的 `mail.MailService` 和邮件模板的实体、Mapper 给登录服务也拷一份（找回密码和两步验证的邮件由登录服务自己发）；`oauth.OAuthService`、`OAuth2Exception` 和 OAuth 应用的实体、Mapper 给 system 也拷一份（删租户时清掉这个租户的应用和令牌） |
 
 日志服务为了让六个接口类在新服务里能编译，下面这些类进了公共层：
 
 | 进公共层的类 | 谁要用 |
 | --- | --- |
-| `log.mapper` 里的 `SysDataAuditMapper`、`SysLoginLogMapper`、`SysUsualLogMapper`，连带它们的实体 | 日志服务查，system 写 |
+| `log.mapper` 里的 `SysDataAuditMapper`、`SysLoginLogMapper`、`SysUsualLogMapper`，连带它们的实体 | 日志服务查；产生日志的服务写（登录日志由登录服务写） |
 | `monitor.ErrorLogRecorder`，连带 `ErrorLogService`、`SysErrorLog` 和它的 Mapper | 日志服务查；每个服务出错时自己记。进公共层以前只有 system 出错会记 |
 | `monitor.OperatorNameLookup`，连带 `system.service.UserService` | 日志服务把操作人的编号换成名字 |
-| `auth.LoginLockService`、`auth.lock` 包 | 登录日志页上显示账号锁没锁、解锁账号；system 登录时用 |
+| `auth.LoginLockService`、`auth.lock` 包 | 登录日志页上显示账号锁没锁、解锁账号；登录服务登录时用 |
 
 日志不经过日志服务写入：各服务连的是同一个主库，产生日志的服务自己写，日志服务只读。
 
@@ -275,7 +276,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 1. 给新服务写 pom、启动类和 `application.yml`，照 `mugsun-cloud-gis` 的写。`application.yml` 里配置中心的那几段导入（第一段的两份和最后按环境分的三段）整个照抄，把名字里的 `mugsun-gis` 换成新服务的服务名。漏了或者名字没换，`ConfigCenterImportsTest` 不通过。
 2. 在网关的路由里把它的路径写在 `mugsun-system` 前面。
 3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
-4. 在公共层的 `com.mugsun.cloud.module` 包里写一个模块状态类，照 `CloudGisModuleStatus` 的写。要知道这个服务有没有部署的服务（现在是 system）靠它决定菜单显不显示、登录信息里怎么说；这些服务的启动类要扫描这个包，漏了的话 `ModuleStatusScanTest` 会报错。
+4. 在公共层的 `com.mugsun.cloud.module` 包里写一个模块状态类，照 `CloudGisModuleStatus` 的写。要知道这个服务有没有部署的服务（现在是 system 和登录服务）靠它决定菜单显不显示、登录信息里怎么说；这些服务的启动类要扫描这个包，漏了的话 `ModuleStatusScanTest` 会报错。
 5. 逐个检查留在 system 的过滤器、拦截器和配置类。新服务带了它们保护或配置的功能，就让新服务也带上它们：各服务都能带的加进 `commonClasses`，只有个别服务能带的写进 `extras`。track 带文件存储，所以有两处：
    - `system.file.LocalFileAccessFilter` 进了公共层。不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。
    - `system.file.FileStorageTikaConfig` 单独拷给了 track。它管文件类型怎么识别，不带的话 track 用的是组件的默认识别方式，和单体版不是同一份配置。

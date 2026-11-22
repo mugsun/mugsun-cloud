@@ -34,6 +34,7 @@
 		<module>mugsun-cloud-service-api</module>
 		<module>mugsun-cloud-ops-api</module>
 		<module>mugsun-cloud-gateway</module>
+		<module>mugsun-cloud-auth</module>
 		<module>mugsun-cloud-service</module>
 		<module>mugsun-cloud-ops</module>
 	</modules>

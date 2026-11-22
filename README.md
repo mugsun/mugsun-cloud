@@ -13,6 +13,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | 模块 | 端口 | 作用 |
 | --- | --- | --- |
 | `mugsun-cloud-gateway` | 8080 | 网关，对外唯一的入口，基于 Spring Cloud Gateway |
+| `mugsun-cloud-auth` | 8100 | 登录服务：登录、注册、找回密码、验证码、第三方账号登录、开放授权（OAuth2）、在线用户，手机端的登录，从 system 里分出来的，接口路径不变。对应 BladeX 最外层的 `blade-auth` |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务：账号权限、租户、工作流等，对应单体版的 `mugsun-boot-core` |
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务：`/system/gis/**` 下的全部接口，对应单体版的 `mugsun-boot-gis`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
@@ -98,13 +99,19 @@ deploy/dev/nacos.sh up
 openssl rand -hex 32
 ```
 
-然后开五个终端，依次启动 system、gis、track、ai 和网关。system 要最先启动并等它启动完成：主库的库表由它来建，加密数据用的那几把密钥也由它首次生成。
+然后各开一个终端，依次启动 system、登录服务、gis、track、ai 和网关。system 要最先启动并等它启动完成：主库的库表由它来建，加密数据用的那几把密钥也由它首次生成。登录服务不启动就登录不了；可选的 gis、track、ai 可以不启动。
 
 ```bash
 export MUGSUN_SERVICE_IP=127.0.0.1
 export MUGSUN_INNER_SECRET='<上面生成的值>'
 export MUGSUN_INIT_PASSWORD='<admin 的初始口令>'
 java -jar mugsun-cloud-service/mugsun-cloud-system/target/mugsun-cloud-system.jar --spring.profiles.active=dev
+```
+
+```bash
+export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
+java -jar mugsun-cloud-auth/target/mugsun-cloud-auth.jar --spring.profiles.active=dev
 ```
 
 ```bash
@@ -240,12 +247,12 @@ gis、track 和 ai 三个服务可以不部署。
 | track | 管理后台显示埋点分析菜单，`/track/**` 和 `/system/track/**` 由网关转给它 | 菜单里没有埋点分析，登录信息里 `trackEnabled` 为 `false`，这两类路径返回 503 |
 | ai | 管理后台显示 AI 菜单，`/system/ai/**` 和 `/v1/**` 由网关转给它 | 菜单里没有 AI，登录信息里 `aiEnabled` 为 `false`，这两类路径返回 503 |
 
-system 按注册中心里有没有对应服务的实例来判断。服务启动后几秒内菜单出现；停掉后过一分钟菜单才消失，这样重启服务时菜单不会闪。
+system（管菜单）和登录服务（管登录信息）按注册中心里有没有对应服务的实例来判断。服务启动后几秒内菜单出现；停掉后过一分钟菜单才消失，这样重启服务时菜单不会闪。
 
 单体版的开关照样可用：
 
 - 系统参数 `gis.module.enabled`、`ai.module.enabled` 设成 `false`，运行时关掉 GIS 或 AI，不用停服务。埋点没有对应的系统参数。
-- 给 system 设置 `MUGSUN_GIS_ENABLED=false`、`MUGSUN_TRACK_ENABLED=false` 或 `MUGSUN_AI_ENABLED=false`，system 就当这个模块不存在，菜单隐藏。
+- 给 system 和登录服务都设置 `MUGSUN_GIS_ENABLED=false`、`MUGSUN_TRACK_ENABLED=false` 或 `MUGSUN_AI_ENABLED=false`，两边就当这个模块不存在：菜单隐藏，登录信息里对应的开关为 `false`。只设一边的话两处会对不上。
 - gis、track 和 ai 服务自己不接受这几个值，带着 `false` 会拒绝启动：不需要某个模块就不要部署它的服务。
 
 ## 服务之间的调用

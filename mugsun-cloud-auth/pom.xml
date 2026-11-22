@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-auth</artifactId>
+	<name>mugsun-cloud-auth</name>
+	<description>登录服务：登录、注册、找回密码、验证码、第三方账号登录、开放授权（OAuth2）、在线用户，手机端的登录（从 mugsun-boot-core 里分出来的类）</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-common</artifactId>
+		</dependency>
+		<!-- 短信在文件和短信服务里。短信登录和两步验证要发短信、验短信验证码，依赖它的 api 模块就能调过去 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-resource-api</artifactId>
+		</dependency>
+		<!-- 以下与 mugsun-boot-core 的依赖一致，是公共层用不到、登录要用的那些。第三方账号登录用 JustAuth -->
+		<dependency>
+			<groupId>me.zhyd.oauth</groupId>
+			<artifactId>JustAuth</artifactId>
+		</dependency>
+		<!-- 找回密码和两步验证的邮件由这个服务自己发（理由见启动类的说明） -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-mail</artifactId>
+		</dependency>
+		<!-- 登录时用 hutool-http 从 User-Agent 解析浏览器和操作系统（AuthLoginService）。单体版里它由短信组件 sms4j 间接带入，
+		     sms4j 在文件和短信服务里，这里单独引入，版本和单体版包里的一样。排除它自带的 hutool-core，理由和 track 的 pom 里写的一样 -->
+		<dependency>
+			<groupId>cn.hutool</groupId>
+			<artifactId>hutool-http</artifactId>
+			<version>${hutool-http.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>cn.hutool</groupId>
+					<artifactId>hutool-core</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>mugsun-cloud-auth</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<skip>false</skip>
+					<mainClass>com.mugsun.cloud.auth.AuthApplication</mainClass>
+					<!-- 和 java -jar 一致：以仓库根目录为工作目录，读 ./config/application-local.yml -->
+					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+					<profiles>
+						<profile>dev</profile>
+					</profiles>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

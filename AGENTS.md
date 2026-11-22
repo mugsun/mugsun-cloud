@@ -16,6 +16,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-ops-api/mugsun-cloud-resource-api` | 无 | 文件和短信服务给别的服务调用的那一层：依赖了它的服务，发短信、验短信验证码就转给文件和短信服务 |
 | `mugsun-cloud-ops-api/mugsun-cloud-flow-api` | 无 | 审批流服务给别的服务调用的那一层：依赖了它的服务，取一个用户的待办就转给审批流服务 |
 | `mugsun-cloud-gateway` | 8080 | 网关，WebFlux 栈，不依赖公共层 |
+| `mugsun-cloud-auth` | 8100 | 登录服务：登录、验证码、第三方账号登录、开放授权（OAuth2）、在线用户、手机端的登录，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层和 `mugsun-cloud-resource-api`。改这里等于改鉴权，属于敏感改动 |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务，对应 `mugsun-boot-core` |
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务，对应 `mugsun-boot-gis`，可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务，对应 `mugsun-boot-track`，可以不部署 |
@@ -117,7 +118,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 主库的迁移和初始数据只由 system 执行。其它服务的 `spring.flyway.enabled` 是 `false`；只该执行一次的启动任务写进 `sync-rules.json` 的 `systemClasses`，留在 system。埋点库是另一个库，由 track 自己迁移。
 - 有些状态以库里的为准，各进程又在内存里各存一份，只由 system 的管理接口修改：数据权限规则、接口权限规则、租户数据源，还有缓存的租户和套餐。每个服务的每个实例（包括 system）都跑公共层的 `SharedStateSyncTask`：保存的那个实例由 `SharedStateChangeAspect` 把 Redis 里的版本换成新值，各实例每秒读一次，变了就从库里重新加载，另有每 30 秒一次的加载兜底。租户和套餐不是重新加载，是把缓存清掉，由 `TenantCacheSync` 记着本实例缓存过哪些；mugsun-boot 给 `TenantValidator` 加了公开方法时 `TenantCacheSyncTest` 会失败，提醒看新方法会不会往缓存里放东西。新增这类状态时两处都要补：在 `SharedStateSyncTask` 里加上重新加载，在 `SharedStateChangeAspect` 的切点里加上保存时调用的那个方法。
 - system 可以部署多个实例，写 system 的代码时按多实例考虑：状态放库里或 Redis 里，只放在内存里的要有办法让别的实例跟上。启动时「先查有没有，没有就改表或插入」的代码，要在公共层的 `StartupLock` 持锁期间执行：写成 `CommandLineRunner`、`ApplicationRunner`，或者监听 `ApplicationReadyEvent`，不要写在 `@PostConstruct` 里，那时还没有占到锁。主库的迁移在占这把锁之前执行，由公共层的 `MigrationLock` 用数据库里的锁另外排队。
-- 可选模块的服务可以不部署。system 用公共层 `com.mugsun.cloud.module` 包里的 `CloudGisModuleStatus`、`CloudTrackModuleStatus`、`CloudAiModuleStatus` 这样的类查注册中心，决定菜单显不显示；这个包不在默认扫描的范围里，代码里用到模块状态的服务要在启动类里写上扫描它（`ModuleStatusScanTest` 会查）；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`、`TrackModuleRequired`、`AiModuleRequired`。
+- 可选模块的服务可以不部署。system 和登录服务用公共层 `com.mugsun.cloud.module` 包里的 `CloudGisModuleStatus`、`CloudTrackModuleStatus`、`CloudAiModuleStatus` 这样的类查注册中心，决定菜单显不显示、登录信息里这几个模块的开关怎么说；这个包不在默认扫描的范围里，代码里用到模块状态的服务要在启动类里写上扫描它（`ModuleStatusScanTest` 会查）；可选服务自己要在模块没装配上时拒绝启动，参考 `GisModuleRequired`、`TrackModuleRequired`、`AiModuleRequired`。
 - mugsun-boot 的可选模块里有些类要和 core 的代码在同一个进程里才起作用，拆成服务后要在用到它的那个服务里补上对应的东西。现有两处：
   - 删租户时清凭据的 `TenantCredentialPurger`。AI 模块的实现在 ai 服务里，system 用 `CloudAiSecretPurger` 顶上。各可选服务的 `TenantPurgerGuardTest` 会在 mugsun-boot 新增这类实现时失败，提醒在 system 里补上。
   - 审批流的 AI 预审节点。它的监听器在 ai 服务里，而审批流在审批流服务（`mugsun-flow`）里跑，这种节点目前用不了，审批流服务用 `AiApprovalNodeGate` 拦下要走到它的操作。
@@ -126,7 +127,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器、拦截器和配置类：新服务带了它们保护或配置的功能，就让新服务也带上。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
 - 进不了公共层的类（它依赖的组件不是每个服务都带），用 `sync-rules.json` 的 `extras` 单独拷给需要的服务，不要在 `src/main` 里照着重写一份。例子：文件存储的配置类 `FileStorageTikaConfig` 单独拷给了 track。
 - PowerJob 执行器只在定时任务服务（`mugsun-job`）上启动：同一个应用名下的执行器，调度中心派任务时不加区分，所以处理器和执行器要在同一个服务里。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
-- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`、定时任务服务 `mugsun-job`、文件和短信服务 `mugsun-resource`、审批流服务 `mugsun-flow`、工作台服务 `mugsun-desk`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
+- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`、定时任务服务 `mugsun-job`、文件和短信服务 `mugsun-resource`、审批流服务 `mugsun-flow`、工作台服务 `mugsun-desk`、登录服务 `mugsun-auth`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 服务之间的调用

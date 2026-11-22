@@ -70,7 +70,12 @@
       "app.AppNoticeReader",
       "app.dto.AppNoticeSummaryVO",
       "app.dto.AppNoticeItemVO",
-      "app.dto.AppPageVO"
+      "app.dto.AppPageVO",
+      "client.entity.SysClient",
+      "client.mapper.SysClientMapper",
+      "log.UsualLogService",
+      "captcha.CaptchaType",
+      "app.AppUserReader"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -173,6 +178,26 @@
           "app.AppNoticeService",
           "app.dto.AppNoticeDetailVO"
         ]
+      },
+      {
+        "target": "mugsun-cloud-auth",
+        "classes": [
+          "auth.**",
+          "captcha.**",
+          "oauth.**",
+          "social.**",
+          "app.AppAuthController",
+          "app.AppCaptchaController",
+          "app.AppSliderCaptchaService",
+          "app.dto.AppLoginDTO",
+          "app.dto.AppSlider*",
+          "app.dto.AppTicketVO",
+          "system.service.SocialService",
+          "system.entity.SysUserOauth",
+          "system.mapper.SysUserOauthMapper",
+          "log.LoginLogService",
+          "client.ClientService"
+        ]
       }
     ],
     "resources": [
@@ -182,6 +207,7 @@
       { "match": "META-INF/spring.factories", "to": "split" },
       { "match": "generator/*", "to": "mugsun-cloud-ops/mugsun-cloud-develop" },
       { "match": "flow/*.json", "to": "mugsun-cloud-ops/mugsun-cloud-flow" },
+      { "match": "captcha/*", "to": "mugsun-cloud-auth" },
       { "match": "*", "to": "system" }
     ]
   },
@@ -191,6 +217,16 @@
     {
       "module": "mugsun-boot-ai",
       "classes": ["ai.entity.AiSecret", "ai.mapper.AiSecretMapper", "ai.support.AiDateTimeDeserializer"],
+      "to": "mugsun-cloud-service/mugsun-cloud-system"
+    },
+    {
+      "module": "mugsun-boot-core",
+      "classes": ["mail.MailService", "mail.entity.SysMailTemplate", "mail.mapper.SysMailTemplateMapper"],
+      "to": "mugsun-cloud-auth"
+    },
+    {
+      "module": "mugsun-boot-core",
+      "classes": ["oauth.OAuthService", "oauth.OAuth2Exception", "oauth.entity.SysOauthClient", "oauth.mapper.SysOauthClientMapper"],
       "to": "mugsun-cloud-service/mugsun-cloud-system"
     }
   ],

@@ -39,6 +39,8 @@ class GatewayRoutesTest {
 
 	private static final DisposableServer AI = backend("mugsun-ai");
 
+	private static final DisposableServer AUTH = backend("mugsun-auth");
+
 	@LocalServerPort
 	int gatewayPort;
 
@@ -52,6 +54,7 @@ class GatewayRoutesTest {
 		registry.add(prefix + "mugsun-gis[0].uri", () -> "http://127.0.0.1:" + GIS.port());
 		registry.add(prefix + "mugsun-track[0].uri", () -> "http://127.0.0.1:" + TRACK.port());
 		registry.add(prefix + "mugsun-ai[0].uri", () -> "http://127.0.0.1:" + AI.port());
+		registry.add(prefix + "mugsun-auth[0].uri", () -> "http://127.0.0.1:" + AUTH.port());
 	}
 
 	@ParameterizedTest
@@ -83,7 +86,21 @@ class GatewayRoutesTest {
 		"/ai/model, mugsun-system",
 		"/system/user/page, mugsun-system",
 		"/gis/layer, mugsun-system",
-		"/auth/login, mugsun-system",
+		"/auth, mugsun-auth",
+		"/auth/login, mugsun-auth",
+		"/auth/info, mugsun-auth",
+		"/auth/captcha/image, mugsun-auth",
+		"/system/online/list, mugsun-auth",
+		"/oauth2/token, mugsun-auth",
+		"/system/oauth-client/page?pageNum=1&pageSize=10, mugsun-auth",
+		"/system/oauth-log/page?pageNum=1&pageSize=10, mugsun-auth",
+		"/open/userinfo, mugsun-auth",
+		"/app/auth/login, mugsun-auth",
+		"/app/captcha/slider, mugsun-auth",
+		"/authx/login, mugsun-system",
+		"/system/onlinex/list, mugsun-system",
+		"/oauth2x/token, mugsun-system",
+		"/app/authx/login, mugsun-system",
 		"/actuator/health, mugsun-system",
 		"/, mugsun-system"
 	})

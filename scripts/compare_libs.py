@@ -23,7 +23,7 @@ import zipfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_BOOT_JAR = os.path.join(REPO_ROOT, "..", "mugsun-boot", "mugsun-boot-server", "target", "mugsun-boot.jar")
-SERVICE_JARS = ("mugsun-cloud-gateway/target/*.jar", "mugsun-cloud-service/*/target/*.jar")
+SERVICE_JARS = ("mugsun-cloud-gateway/target/*.jar", "mugsun-cloud-auth/target/*.jar", "mugsun-cloud-service/*/target/*.jar")
 LIB_DIR = "BOOT-INF/lib/"
 # 文件名是「库名-版本.jar」，版本从第一个以数字开头的段算起
 NAME_RE = re.compile(r"^(.+?)-(\d[\w.+-]*)$")
