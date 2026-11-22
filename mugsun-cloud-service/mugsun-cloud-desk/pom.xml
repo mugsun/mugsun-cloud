@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.mugsun</groupId>
+		<artifactId>mugsun-cloud-service</artifactId>
+		<version>0.2.0-SNAPSHOT</version>
+	</parent>
+	<artifactId>mugsun-cloud-desk</artifactId>
+	<name>mugsun-cloud-desk</name>
+	<description>工作台服务：通知公告（管理、我的通知、手机端的公告）和登录后首页的工作台（概览、快捷入口）（从 mugsun-boot-core 里分出来的类）</description>
+
+	<dependencies>
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-common</artifactId>
+		</dependency>
+		<!-- 两个内部接口（首页要的公告、按标题找公告）两端约好的字段名在这个模块里。它带的转发类在这个服务里不注册：这里有本地的实现 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-desk-api</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<finalName>mugsun-cloud-desk</finalName>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+			</plugin>
+			<plugin>
+				<groupId>org.springframework.boot</groupId>
+				<artifactId>spring-boot-maven-plugin</artifactId>
+				<configuration>
+					<skip>false</skip>
+					<mainClass>com.mugsun.cloud.desk.DeskApplication</mainClass>
+					<!-- 和 java -jar 一致：以仓库根目录为工作目录，读 ./config/application-local.yml -->
+					<workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+					<profiles>
+						<profile>dev</profile>
+					</profiles>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

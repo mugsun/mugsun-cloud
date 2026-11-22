@@ -127,6 +127,7 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
 | 定时任务服务 `mugsun-job` | `job` 包（三个任务处理器），定时任务和调度中心的接口类 `JobController`、`SysJobServerController`，连带 `JobServerRegistry`、`SysJobServer` 和它的 Mapper，还有按保留期清理日志的 `monitor.LogCleanJob`（清日志的处理器直接调它） | 没有 |
 | 文件和短信服务 `mugsun-resource` | `system.file` 包（上传规则、清理没传完的文件、文件类型识别的配置），文件、存储配置、短信配置、富文本图片、头像、反馈附件六个接口类，连带 `OssService`、`SmsService`、`AttachFileRecorder`、`AvatarUploadService`、`RichTextImageService`、`FileAccessService`，和存储配置、短信配置、短信验证码、分片上传四张表的实体和 Mapper | 附件表和反馈表的实体和 Mapper、`AttachService`、`AvatarBinder`、`UserAvatarWriter`（system 里改头像、查附件也要用）；短信的接口 `common.sms.SmsGateway` 本来就在公共层的包里 |
 | 审批流服务 `mugsun-flow` | 审批流的接口类 `FlowController` 和它的异常处理 `FlowExceptionAdvice`，连带 `FlowService`、`FlowGraphService`、`MugsunFlowListener`、`MugsunPermissionHandler`；手机端待办的 `AppTodoController`、`AppTodoService` 和只有它们用的三个返回对象；`flow/` 下的流程定义文件 | `system.service.UserSelectOptions`（system 的用户接口也用它选人）、`app.AppTodoReader` 和 `app.dto.AppTodoItemVO`（system 里的手机端首页经它们取待办） |
+| 工作台服务 `mugsun-desk` | 通知公告的接口类 `SysNoticeController`，连带 `NoticeReadService` 和公告、公告已读、公告范围三张表的实体和 Mapper；`workbench` 包（首页工作台的接口类、快捷入口的实体和 Mapper）；手机端公告的 `AppNoticeController`、`AppNoticeService` 和只有它们用的一个返回对象 | `system.service.NoticeViewer`、`system.service.NoticeTitleFinder`、`app.AppNoticeReader` 和返回对象 `AppNoticeSummaryVO`、`AppNoticeItemVO`（system 里的手机端首页和全局搜索经它们取公告），`app.dto.AppPageVO`（system 里手机端的站内信列表也用它） |
 
 日志服务为了让六个接口类在新服务里能编译，下面这些类进了公共层：
 
@@ -204,6 +205,7 @@ python3 scripts/compare_libs.py                  # 第三方库的版本和单�
 | 模块之间互相调用的接口 `ModuleInsightPort`、`TrackAskLlmGateway`、`GenAiDraftEnhancer`，和它们在单体版里的实现 | 调用方的 `RemoteInsightPort`、`RemoteTrackAskLlmGateway`、`RemoteGenAiDraftEnhancer`，和被调用方的 `LocalInsightEndpoint`、`TrackAskIntentEndpoint`、`GenDraftEndpoint` |
 | 流程的全局监听器 `MugsunFlowListener`，AI 预审节点监听器的类名 `FlowConstants.AI_APPROVAL_LISTENER` | 审批流服务的 `AiApprovalNodeGate` 和 `AiApprovalNodeGuard` |
 | 手机端取待办的接口 `AppTodoReader`，和返回对象 `AppTodoItemVO` 的字段 | `mugsun-cloud-flow-api` 的 `RemoteAppTodoReader`、`FlowApi`，和审批流服务的 `AppTodoEndpoint` |
+| 取公告的两个接口 `AppNoticeReader`、`NoticeTitleFinder`，「谁在看」`NoticeViewer` 的字段，和返回对象 `AppNoticeSummaryVO`、`AppNoticeItemVO` 的字段 | `mugsun-cloud-desk-api` 的 `RemoteAppNoticeReader`、`RemoteNoticeTitleFinder`、`DeskApi`，和工作台服务的 `AppNoticeSummaryEndpoint`、`NoticeTitlesEndpoint`、`DeskRequests` |
 | 分给别的服务的类（`core.services` 里写的）里，接口类增减了，或者改了类上的路径 | `sync-rules.json` 的 `core.services`，和网关 `application.yml` 里那个服务的路由（`mugsun-log`、`mugsun-report` 这些）。两边对不上时那个服务的路由测试（如 `LogRoutesTest`）不通过 |
 | Spring Boot 版本 | 父 pom 的 `spring-boot-starter-parent`，同时确认 Spring Cloud 的版本配套 |
 | `docker/full/boot.Dockerfile` 里钉的 mugsun-core 提交号 `MUGSUN_CORE_REF` 和基础镜像的摘要 | `deploy/docker/Dockerfile` 里同名的参数和基础镜像 |

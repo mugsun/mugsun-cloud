@@ -64,7 +64,13 @@
       "feedback.mapper.SysFeedbackMapper",
       "system.service.UserSelectOptions",
       "app.AppTodoReader",
-      "app.dto.AppTodoItemVO"
+      "app.dto.AppTodoItemVO",
+      "system.service.NoticeViewer",
+      "system.service.NoticeTitleFinder",
+      "app.AppNoticeReader",
+      "app.dto.AppNoticeSummaryVO",
+      "app.dto.AppNoticeItemVO",
+      "app.dto.AppPageVO"
     ],
     "commonControllers": [
       "controller.PingController"
@@ -149,6 +155,23 @@
           "app.dto.AppTodoDetailVO",
           "app.dto.AppFieldVO",
           "app.dto.AppHandleDTO"
+        ]
+      },
+      {
+        "target": "mugsun-cloud-service/mugsun-cloud-desk",
+        "classes": [
+          "system.controller.SysNoticeController",
+          "system.service.NoticeReadService",
+          "system.entity.SysNotice",
+          "system.entity.SysNoticeRead",
+          "system.entity.SysNoticeScope",
+          "system.mapper.SysNoticeMapper",
+          "system.mapper.SysNoticeReadMapper",
+          "system.mapper.SysNoticeScopeMapper",
+          "workbench.**",
+          "app.AppNoticeController",
+          "app.AppNoticeService",
+          "app.dto.AppNoticeDetailVO"
         ]
       }
     ],

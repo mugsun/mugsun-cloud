@@ -31,6 +31,7 @@
 	<modules>
 		<module>mugsun-cloud-config</module>
 		<module>mugsun-cloud-common</module>
+		<module>mugsun-cloud-service-api</module>
 		<module>mugsun-cloud-ops-api</module>
 		<module>mugsun-cloud-gateway</module>
 		<module>mugsun-cloud-service</module>
@@ -132,6 +133,11 @@
 			<dependency>
 				<groupId>com.mugsun</groupId>
 				<artifactId>mugsun-cloud-flow-api</artifactId>
+				<version>${project.version}</version>
+			</dependency>
+			<dependency>
+				<groupId>com.mugsun</groupId>
+				<artifactId>mugsun-cloud-desk-api</artifactId>
 				<version>${project.version}</version>
 			</dependency>
 			<dependency>

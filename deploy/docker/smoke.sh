@@ -32,7 +32,7 @@ export MUGSUN_GATEWAY_RATE_LIMIT="" MUGSUN_GATEWAY_RATE_LIMIT_PATHS="/smoke-limi
 export MUGSUN_GATEWAY_RATE_LIMIT_EXEMPT_IPS=""
 DC=(docker compose -f docker-compose.yml)
 # 拆出新服务时：在 APP_SERVICES 里补上名字，并在下面的 serving 里加一条它的接口
-APP_SERVICES="system gis track ai log report develop job resource flow"
+APP_SERVICES="system gis track ai log report develop job resource flow desk"
 JAVA_SERVICES="gateway ${APP_SERVICES}"
 PYTHON_IMAGE="python:3.12-alpine@sha256:1b668429b3511ab407d8e00648891631b0b1a4d7e15e3ca70f38ab5b91ad4ab4"
 URL="http://127.0.0.1:${MUGSUN_HTTP_PORT}"
@@ -103,7 +103,7 @@ wait_registered() {
 http_code() {
 	curl -s -o /dev/null -m 10 -w '%{http_code}' "${URL}${1}"
 }
-# 经管理后台和网关，各服务是不是都在应答。没登录时地图、埋点、AI、日志、报表、代码生成、定时任务、文件和短信、审批流的接口返回 401，说明请求到了对应的服务；
+# 经管理后台和网关，各服务是不是都在应答。没登录时地图、埋点、AI、日志、报表、代码生成、定时任务、文件和短信、审批流、工作台的接口返回 401，说明请求到了对应的服务；
 # 网关找不到实例时是 503，管理后台连不上网关时是 502
 serving() {
 	[ "$(http_code /api/ping)" = 200 ] && [ "$(http_code /api/system/gis/layer/page)" = 401 ] \
@@ -113,7 +113,8 @@ serving() {
 		&& [ "$(http_code /api/system/gen/list)" = 401 ] \
 		&& [ "$(http_code /api/system/job/list)" = 401 ] \
 		&& [ "$(http_code /api/system/oss/page)" = 401 ] \
-		&& [ "$(http_code /api/system/flow/definitions)" = 401 ]
+		&& [ "$(http_code /api/system/flow/definitions)" = 401 ] \
+		&& [ "$(http_code /api/system/workbench/overview)" = 401 ]
 }
 # 用法：wait_serving <最多等几秒> <什么时候>
 wait_serving() {
@@ -411,7 +412,7 @@ echo ">> 自检带的请求编号在网关、地图、埋点三处的日志里�
 tz=$("${DC[@]}" exec -T system printenv TZ || true)
 [ -n "${tz}" ] || fail "system 容器没有设置 TZ"
 offset=$("${DC[@]}" exec -T system date +%z)
-for svc in postgres redis gateway gis track ai log report develop job resource flow pc; do
+for svc in postgres redis gateway gis track ai log report develop job resource flow desk pc; do
 	got=$("${DC[@]}" exec -T "${svc}" date +%z)
 	[ "${got}" = "${offset}" ] || fail "${svc} 容器的时区偏移是 ${got}，system 是 ${offset}（${tz}）"
 done

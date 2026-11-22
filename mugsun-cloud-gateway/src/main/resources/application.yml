@@ -134,6 +134,12 @@ spring:
               uri: lb://mugsun-flow
               predicates:
                 - Path=/system/flow/**,/app/todos/**
+            # 工作台服务：通知公告（/system/notice）、登录后首页的工作台（/system/workbench）和手机端消息中心里的公告（/app/inbox/notices），
+            # 路径要写在 mugsun-system 前面；手机端的站内信（/app/inbox 下其它路径）还在 system。两边对不对得上，由工作台服务的 DeskRoutesTest 检查
+            - id: mugsun-desk
+              uri: lb://mugsun-desk
+              predicates:
+                - Path=/system/notice/**,/system/workbench/**,/app/inbox/notices/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

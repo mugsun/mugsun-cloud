@@ -365,6 +365,22 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  desk:
+    # 工作台服务：通知公告和登录后首页的工作台。
+    # 它停了：登录后的首页和公告页面打不开，手机端首页提示公告暂时取不到，顶栏搜索提示公告暂时搜不到
+    build:
+      <<: *build
+      target: desk
+    image: mugsun-cloud-desk:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   gateway:
     build:
       <<: *build
@@ -496,6 +512,8 @@ services:
       resource:
         condition: service_healthy
       flow:
+        condition: service_healthy
+      desk:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}

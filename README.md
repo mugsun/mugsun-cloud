@@ -17,6 +17,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-gis` | 8102 | gis 服务：`/system/gis/**` 下的全部接口，对应单体版的 `mugsun-boot-gis`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
+| `mugsun-cloud-service/mugsun-cloud-desk` | 8111 | 工作台服务：通知公告和登录后首页的工作台（概览、快捷入口），手机端消息中心里的公告，从 system 里分出来的，接口路径不变 |
 | `mugsun-cloud-ops/mugsun-cloud-log` | 8105 | 日志服务：操作、登录、通用、数据变更、访问、错误六类日志的查询和处理接口，从 system 里分出来的，接口路径不变 |
 | `mugsun-cloud-ops/mugsun-cloud-report` | 8106 | 报表服务：报表的定义和预览接口，从 system 里分出来的，接口路径不变 |
 | `mugsun-cloud-ops/mugsun-cloud-develop` | 8107 | 代码生成服务：代码生成、数据建模和在线表单，从 system 里分出来的，接口路径不变 |
@@ -122,6 +123,12 @@ java -jar mugsun-cloud-service/mugsun-cloud-track/target/mugsun-cloud-track.jar 
 export MUGSUN_SERVICE_IP=127.0.0.1
 export MUGSUN_INNER_SECRET='<上面生成的值>'
 java -jar mugsun-cloud-service/mugsun-cloud-ai/target/mugsun-cloud-ai.jar --spring.profiles.active=dev
+```
+
+```bash
+export MUGSUN_SERVICE_IP=127.0.0.1
+export MUGSUN_INNER_SECRET='<上面生成的值>'
+java -jar mugsun-cloud-service/mugsun-cloud-desk/target/mugsun-cloud-desk.jar --spring.profiles.active=dev
 ```
 
 ```bash

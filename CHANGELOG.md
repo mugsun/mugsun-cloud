@@ -177,6 +177,15 @@
   - 它没在运行时审批相关的页面用不了，手机端首页提示待办暂时取不到
   - AI 预审节点仍然不能用，拦它的两个类跟着流程引擎搬到这个服务
   - 只编译过，审批流服务还没有实际启动过
+- 工作台服务 `mugsun-cloud-service/mugsun-cloud-desk`：端口 8111，对应 BladeX 的
+  blade-desk
+  - 通知公告、首页工作台和手机端公告的接口从 system 搬到这里，路径不变
+  - 公告的实体和 Mapper 跟着搬过来，system 不再带
+  - 新增 `mugsun-cloud-service-api/mugsun-cloud-desk-api`，对应
+    blade-desk-api：手机端首页和全局搜索留在 system，经它到这个服务取公告
+  - 它没在运行时首页工作台和公告页面打不开，手机端首页提示公告暂时取不到
+  - BladeX 的 desk 里的请假示例不搬：这边请假是审批流服务里的一个流程定义
+  - 只编译过，工作台服务还没有实际启动过
 
 ### 修复
 

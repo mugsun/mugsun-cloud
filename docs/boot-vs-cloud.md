@@ -8,12 +8,12 @@
 
 | | 是什么 | 现在有多少 |
 | --- | --- | --- |
-| 一 | 同一件事，两边各有一个实现 | 9 处 |
+| 一 | 同一件事，两边各有一个实现 | 11 处 |
 | 二 | 业务上两边做法不同 | 2 处 |
 | 三 | 单体版有、这边不带的类 | 1 个 |
-| 四 | 只有微服务版才有的类 | 97 个 |
+| 四 | 只有微服务版才有的类 | 102 个 |
 
-微服务版手写的类一共 120 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
+微服务版手写的类一共 129 个，每一个都在这一页的某一节里。类名的写法：单体版的类省略开头的 `com.mugsun.boot.`，微服务版手写的类省略 `com.mugsun.cloud.`。
 
 ## 这一页怎么保持是对的
 
@@ -41,7 +41,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 2. 第一节、第二节的每一处都有测试，名字列在各自下面。
 3. 同一组请求分别发给单体版和微服务版，逐个对比返回的结果：**还没有做**，排在各模块拆完以后。
 
-## 一、同一件事，两边各有一个实现（9 处）
+## 一、同一件事，两边各有一个实现（11 处）
 
 单体版里各模块在同一个进程里，互相直接调用。微服务版里它们在不同的服务里，所以同一个接口这边另写了一个实现。接口本身在同步来的代码里，两边用的是同一个。做法有两种：
 
@@ -91,7 +91,29 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：system 把当前登录用户的编号发给审批流服务的内部接口，那边执行的仍然是单体版的那个待办服务类，查的是同一个租户，结果和手机端待办列表一致。单体版没有的情况只有一种：审批流服务没在运行或者没调成。这时首页报「待办暂时取不到」，不显示成 0 条待办。
 - 测试：`RemoteAppTodoReaderTest`、`AppTodoEndpointTest`
 
-### 5. 代码生成的「规则建模」请大模型出草稿
+### 5. 手机端首页取公告
+
+- 接口：`app.AppNoticeReader`（同步在 mugsun-cloud-common）
+- 单体版的实现：`app.AppNoticeService`（同步在 mugsun-cloud-desk）
+- 微服务版的实现：`api.desk.RemoteAppNoticeReader`（mugsun-cloud-desk-api）
+- 一起用到的手写类：`desk.AppNoticeSummaryEndpoint`（mugsun-cloud-desk）
+- 为什么另写：单体版里手机端首页直接调同一个进程里的公告服务类，显示公告未读条数和最近几条公告。微服务版里公告在工作台服务，手机端首页还在 system。
+- 做法：转给对方服务
+- 怎么保证一样：system 把当前登录用户的编号和他有没有公告管理权限发给工作台服务的内部接口，那边执行的仍然是单体版的那个公告服务类，查的是同一个租户，结果和手机端公告列表一致。权限在 system 查，用的是单体版同一句判断。单体版没有的情况只有一种：工作台服务没在运行或者没调成。这时首页报「公告暂时取不到」，不显示成 0 条未读。
+- 测试：`RemoteAppNoticeReaderTest`、`AppNoticeSummaryEndpointTest`
+
+### 6. 全局搜索按标题找公告
+
+- 接口：`system.service.NoticeTitleFinder`（同步在 mugsun-cloud-common）
+- 单体版的实现：`system.service.NoticeReadService`（同步在 mugsun-cloud-desk）
+- 微服务版的实现：`api.desk.RemoteNoticeTitleFinder`（mugsun-cloud-desk-api）
+- 一起用到的手写类：`desk.NoticeTitlesEndpoint`（mugsun-cloud-desk）
+- 为什么另写：单体版里顶栏的全局搜索直接调同一个进程里的公告读取类，按标题找当前用户看得到的公告。微服务版里公告在工作台服务，全局搜索还在 system。
+- 做法：转给对方服务
+- 怎么保证一样：system 把搜索词、当前登录用户的编号和他有没有公告管理权限发给工作台服务的内部接口，那边执行的仍然是单体版的那个公告读取类，查的是同一个租户，找到的标题和顺序一样；搜索词是空的直接算没找到，不发起调用。单体版没有的情况只有一种：工作台服务没在运行或者没调成。这时这次搜索报「公告暂时搜不到」，不当成没找到；菜单、部门、角色这几类结果也跟着出不来，和单体版里查公告出错时整次搜索报错是一样的。
+- 测试：`RemoteNoticeTitleFinderTest`、`NoticeTitlesEndpointTest`
+
+### 7. 代码生成的「规则建模」请大模型出草稿
 
 - 接口：`gen.GenAiDraftEnhancer`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.GenAiDraftEnhancerImpl`（同步在 mugsun-cloud-ai）
@@ -102,7 +124,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：代码生成服务把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。
 - 测试：`RemoteGenAiDraftEnhancerTest`、`GenDraftEndpointTest`
 
-### 6. AI 模块在不在、开没开
+### 8. AI 模块在不在、开没开
 
 - 接口：`common.module.AiModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.AiModuleService`（同步在 mugsun-cloud-ai）
@@ -113,7 +135,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
 
-### 7. 地图模块在不在、开没开
+### 9. 地图模块在不在、开没开
 
 - 接口：`common.module.GisModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`gis.GisModuleService`（同步在 mugsun-cloud-gis）
@@ -124,7 +146,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。
 - 测试：`ModuleStatusTest`
 
-### 8. 埋点模块在不在、开没开
+### 10. 埋点模块在不在、开没开
 
 - 接口：`common.module.TrackModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`track.TrackModuleService`（同步在 mugsun-cloud-track）
@@ -135,7 +157,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 - 怎么保证一样：「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。
 - 测试：`ModuleStatusTest`
 
-### 9. 埋点「问数据」请大模型理解提问
+### 11. 埋点「问数据」请大模型理解提问
 
 - 接口：`common.module.TrackAskLlmGateway`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.weave.TrackAskLlmGatewayImpl`（同步在 mugsun-cloud-ai）
@@ -176,7 +198,7 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 另外有两样也不同步：单体版的打包模块 `mugsun-boot-server`（只有 pom 和测试），和各模块的测试代码。业务测试在 mugsun-boot 里跑。
 
-## 四、只有微服务版才有的类（97 个）
+## 四、只有微服务版才有的类（102 个）
 
 单体版是一个进程，用不着这些。每个类后面的话是它类注释的第一句。
 
@@ -320,6 +342,14 @@ ai 服务的启动入口，和启动时的检查。
   - `AiApplication`：ai 服务启动入口。
   - `AiModuleRequired`：ai 服务启动时确认 AI 模块确实装配上了。
 
+### mugsun-cloud-desk（2 个）
+
+工作台服务：通知公告（管理、我的通知、手机端的公告）和登录后首页的工作台（概览、快捷入口）。业务类是同步来的，手写的有启动入口、接收两个内部调用（首页要的公告、按标题找公告）的一端。
+
+- `desk`
+  - `DeskApplication`：工作台服务启动入口。
+  - `DeskRequests`：读内部接口的请求里约好的几项：谁在看、他有没有公告管理权限、最多要几条、搜索词。
+
 ### mugsun-cloud-admin（2 个）
 
 监控中心：一个页面看网关和各服务的每个实例在不在线。
@@ -386,3 +416,12 @@ ai 服务的启动入口，和启动时的检查。
 - `api.flow`
   - `FlowApi`：审批流内部接口里两端约好的名字：请求和响应的字段。
   - `FlowApiAutoConfiguration`：依赖了这个模块的服务自动得到的 Bean：服务自己没有取待办的实现时，用转给审批流服务的那一个。
+
+### mugsun-cloud-desk-api（3 个）
+
+工作台服务给别的服务调用的那一层：把取首页要的公告、按标题找公告转给工作台服务的类，和两端约好的字段名。
+
+- `api.desk`
+  - `DeskApi`：工作台内部接口里两端约好的东西：请求和响应的字段名，和数字怎么读。
+  - `DeskApiAutoConfiguration`：依赖了这个模块的服务自动得到的 Bean：服务自己没有取公告的实现时，用转给工作台服务的那两个。
+  - `DeskCaller`：对工作台服务发内部调用时，两个转发类共用的部分：认服务名、在请求里写上是谁在看、把没调成变成给用户看的话。

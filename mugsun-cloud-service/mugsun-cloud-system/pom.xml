@@ -27,6 +27,11 @@
 			<groupId>com.mugsun</groupId>
 			<artifactId>mugsun-cloud-flow-api</artifactId>
 		</dependency>
+		<!-- 公告在工作台服务里。手机端首页和全局搜索还在这里，要显示公告、按标题找公告，依赖工作台的 api 模块就能取到 -->
+		<dependency>
+			<groupId>com.mugsun</groupId>
+			<artifactId>mugsun-cloud-desk-api</artifactId>
+		</dependency>
 		<!-- 以下与 mugsun-boot-core 的依赖一致，是公共层用不到、只有 system 用的那些 -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

@@ -27,6 +27,12 @@ public final class InnerPaths {
 	/** 审批流服务提供：一个用户的待办列表，给 system 里的手机端首页用 */
 	public static final String FLOW_APP_TODOS = "/inner/flow/app/todos";
 
+	/** 工作台服务提供：一个用户的公告未读条数和最近几条公告，给 system 里的手机端首页用 */
+	public static final String DESK_APP_NOTICE_SUMMARY = "/inner/desk/app/notices/summary";
+
+	/** 工作台服务提供：按标题找一个用户看得到的公告，给 system 里的全局搜索用 */
+	public static final String DESK_NOTICE_TITLES = "/inner/desk/notice/titles";
+
 	private InnerPaths() {
 	}
 }

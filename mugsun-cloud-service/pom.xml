@@ -18,5 +18,6 @@
 		<module>mugsun-cloud-gis</module>
 		<module>mugsun-cloud-track</module>
 		<module>mugsun-cloud-ai</module>
+		<module>mugsun-cloud-desk</module>
 	</modules>
 </project>
