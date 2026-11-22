@@ -11,6 +11,7 @@
 - 内部接口经网关访问不到；绕过网关直接访问服务，没有签名会被拒绝；
 - Nacos 不接受没带账号的请求；
 - 接口文档默认不提供：经管理后台取不到，直连每个服务也取不到；
+- 带着 Accept-Language: en 请求时提示语是英文：工作台服务读到了公共层带的那份翻译文件，地图服务读到了它自己的；
 - system 有两个实例时：登录态在两个实例上都有效；在一个实例上保存、删除的数据权限规则，另一个实例几秒内跟上；
 - 建一个没有任何角色的账号并登录，登录令牌留给 smoke.sh 的最后一步：那一步看它进得去哪些接口。
 
@@ -44,10 +45,10 @@ def fail(msg):
     sys.exit(1)
 
 
-def fetch(method, url, body=None, token=None, trace=None):
+def fetch(method, url, body=None, token=None, trace=None, language=None):
     """返回 (状态码, 响应体解析出的对象)。响应体不是 JSON 时对象为 None，连不上时状态码为 0。
 
-    trace 是这次请求自带的请求编号；不给的话由网关定一个。
+    trace 是这次请求自带的请求编号；不给的话由网关定一个。language 是请求头 Accept-Language 的值，不给就不带。
     """
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -56,6 +57,8 @@ def fetch(method, url, body=None, token=None, trace=None):
         req.add_header("Authorization", token)
     if trace:
         req.add_header("X-Trace-Id", trace)
+    if language:
+        req.add_header("Accept-Language", language)
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             status, text = resp.status, resp.read()
@@ -150,6 +153,33 @@ for title, url in (
     if status != 404:
         fail("%s：默认不提供，应该返回 404，实际是 %s" % (title, status))
 print("OK 接口文档默认不提供")
+
+
+# 7a. 多语言：带着 Accept-Language: en 请求时提示语是英文，不带时是中文。查一个不存在的编号，看报回来的那句话。两个接口各管一处：
+#     公告详情在工作台服务上，它的句子在公共层带的那份翻译文件里（core 的类分在十几个服务里，这份文件每个服务都要读到）；
+#     图层详情在地图服务上，句子在地图服务自己的翻译文件里。
+#     只看是中文还是英文，不写死英文的原话：那句话在 mugsun-boot 里维护，改了用词这里不该跟着失败
+def refusal(path, language):
+    """带登录态请求一个会报「不存在」的接口，返回报回来的那句话。"""
+    status, res = fetch("GET", BASE + path, None, TOKEN, language=language)
+    msg = res.get("msg") if isinstance(res, dict) else None
+    if not isinstance(msg, str) or not msg or res.get("code") == 200:
+        fail("GET %s 应该报「不存在」，实际是 HTTP %s，%s" % (path, status, res))
+    return msg
+
+
+def has_chinese(text):
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+for title, path in (("工作台服务", "/api/system/notice/detail?id=987654321098765"),
+                    ("地图服务", "/api/system/gis/layer/detail/987654321098765")):
+    plain, english = refusal(path, None), refusal(path, "en")
+    if not has_chinese(plain):
+        fail("%s：没带语言时提示语应该是中文，实际是：%s" % (title, plain))
+    if has_chinese(english):
+        fail("%s：带着 Accept-Language: en 时提示语应该是英文，实际是：%s" % (title, english))
+print("OK 带着 Accept-Language: en 请求时，工作台服务和地图服务的提示语是英文，不带时是中文")
 
 # 8. 两个 system 实例。smoke.sh 把各实例的地址放在 SYSTEM_ADDRS 里，只有一个实例时跳过。
 #    这里绕过网关直接访问指定的实例：经网关的话请求落在哪个实例上说不准
