@@ -17,6 +17,11 @@ server:
 spring:
   application:
     name: mugsun-track
+mybatis-flex:
+  datasource:
+    track:
+      # 埋点库的连接池和主库的一样，平时只留 2 个连接，理由见 mugsun-cloud-defaults.yml 里主库的那一项
+      minimum-idle: 2
 ---
 # 分环境的 Nacos 配置：带着对应的 profile 启动时才读，盖过第一段里不分环境的两份。三段的写法一样，只是名字里的环境不同
 spring:

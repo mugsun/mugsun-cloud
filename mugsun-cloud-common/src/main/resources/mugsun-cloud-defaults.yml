@@ -17,6 +17,10 @@ management:
         # 谁能访问由 MonitorAccessFilter 管：内网里直接连服务端口的全部能看、不用登录；
         # 经网关来的和以前一样，只有 health、info、metrics、prometheus，后两个要登录和监控权限
         include: "*"
+        # LiteFlow 2.16.3 的 Spring Boot 4 版新带了一个监控接口 liteflow，它的包编译时没有保留参数名（没带 -parameters），
+        # Spring Boot 读不出这个接口的路径参数，只要它在打开的范围里，服务就启动失败（Failed to extract parameter names）。
+        # 所以把它排除。单体版只打开 health、info、metrics、prometheus 四个，碰不到。LiteFlow 修好以后可以去掉这一行
+        exclude: liteflow
   endpoint:
     health:
       # 健康检查的明细（数据库、Redis、磁盘各自怎么样）只给直接连上来的监控中心看：只有它的请求带身份（MonitorAccessFilter 给的）。
@@ -163,6 +167,16 @@ mugsun:
     # 由 system 投递给在线用户。boot 的默认值就是 redis，这里再写一遍是防止 config/application-local.yml 把它改成 local：
     # local 只认本进程里的连接，system 以外的服务没有连接可发，启动时就会因为找不到发送器而失败
     sender-type: redis
+
+mybatis-flex:
+  datasource:
+    primary:
+      # 连接池平时只留 2 个连接，忙的时候再加，最多 10 个（Hikari 的默认上限），闲下来十分钟后退回 2 个。
+      # 不设的话每个服务一启动就把连接建满 10 个：12 个业务服务连同一个 PostgreSQL，空着的连接就有 120 个，
+      # 超过 PostgreSQL 默认的上限（max_connections=100），后启动的服务连不上库、启动失败。
+      # 某个服务要常备更多连接，在 Nacos 里它自己的那一份配置上改这一项；上限是同一级的 maximum-pool-size。
+      # 生产环境按「各服务的实例数 × 上限」算一下总数，把 PostgreSQL 的 max_connections 调到比它大
+      minimum-idle: 2
 
 logging:
   file:
