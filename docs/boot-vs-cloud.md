@@ -128,8 +128,8 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 - 接口：`common.module.AiModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`ai.AiModuleService`（同步在 mugsun-cloud-ai）
-- 微服务版的实现：`system.module.CloudAiModuleStatus`（mugsun-cloud-system）
-- 一起用到的手写类：`system.module.ServicePresence`（mugsun-cloud-system）
+- 微服务版的实现：`module.CloudAiModuleStatus`（mugsun-cloud-common）
+- 一起用到的手写类：`module.ServicePresence`（mugsun-cloud-common）
 - 为什么另写：菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，system 里没有那个实现。
 - 做法：这边重写
 - 怎么保证一样：「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。
@@ -139,8 +139,8 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 - 接口：`common.module.GisModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`gis.GisModuleService`（同步在 mugsun-cloud-gis）
-- 微服务版的实现：`system.module.CloudGisModuleStatus`（mugsun-cloud-system）
-- 一起用到的手写类：`system.module.ServicePresence`（mugsun-cloud-system）
+- 微服务版的实现：`module.CloudGisModuleStatus`（mugsun-cloud-common）
+- 一起用到的手写类：`module.ServicePresence`（mugsun-cloud-common）
 - 为什么另写：菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，system 里没有那个实现。
 - 做法：这边重写
 - 怎么保证一样：「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。
@@ -150,8 +150,8 @@ python3 scripts/boot_cloud_diff.py --check   # 只检查，推送前要通过
 
 - 接口：`common.module.TrackModuleStatus`（同步在 mugsun-cloud-common）
 - 单体版的实现：`track.TrackModuleService`（同步在 mugsun-cloud-track）
-- 微服务版的实现：`system.module.CloudTrackModuleStatus`（mugsun-cloud-system）
-- 一起用到的手写类：`system.module.ServicePresence`（mugsun-cloud-system）
+- 微服务版的实现：`module.CloudTrackModuleStatus`（mugsun-cloud-common）
+- 一起用到的手写类：`module.ServicePresence`（mugsun-cloud-common）
 - 为什么另写：菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，system 里没有那个实现。
 - 做法：这边重写
 - 怎么保证一样：「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。

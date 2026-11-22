@@ -1,4 +1,4 @@
-package com.mugsun.cloud.system.module;
+package com.mugsun.cloud.module;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

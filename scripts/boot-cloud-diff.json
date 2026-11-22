@@ -60,26 +60,26 @@
       "same": "代码生成服务把描述发给 ai 服务的内部接口，出草稿的仍然是单体版的那个实现。ai 服务没部署、调不通、返回的内容读不出来，都当作没有结果，改用规则解析，和单体版没装 AI 模块或者大模型没给出结果时一样。",
       "tests": ["RemoteGenAiDraftEnhancerTest", "GenDraftEndpointTest"]
     },
-    "com.mugsun.cloud.system.module.CloudAiModuleStatus": {
+    "com.mugsun.cloud.module.CloudAiModuleStatus": {
       "title": "AI 模块在不在、开没开",
       "how": "rewrite",
-      "related": ["com.mugsun.cloud.system.module.ServicePresence"],
+      "related": ["com.mugsun.cloud.module.ServicePresence"],
       "why": "菜单里显不显示 AI、登录信息里 AI 的开关都问这个接口。单体版里它由 AI 模块自己实现，「在不在」看模块的包有没有打进来。微服务版里 AI 是另一个服务，system 里没有那个实现。",
       "same": "「在不在」改成看注册中心里有没有 ai 服务的实例（结果缓存几秒，实例没了以后过一段宽限期才算不在）。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.ai.enabled` 不设按开，只认 true/false；系统参数 `ai.module.enabled` 可以在运行时关掉。",
       "tests": ["ModuleStatusTest"]
     },
-    "com.mugsun.cloud.system.module.CloudGisModuleStatus": {
+    "com.mugsun.cloud.module.CloudGisModuleStatus": {
       "title": "地图模块在不在、开没开",
       "how": "rewrite",
-      "related": ["com.mugsun.cloud.system.module.ServicePresence"],
+      "related": ["com.mugsun.cloud.module.ServicePresence"],
       "why": "菜单里显不显示地图、登录信息里地图的开关都问这个接口。单体版里它由地图模块自己实现，「在不在」看模块的包有没有打进来。微服务版里地图是另一个服务，system 里没有那个实现。",
       "same": "「在不在」改成看注册中心里有没有 gis 服务的实例。另外两个开关和单体版是同一个、规则也一样：配置项 `mugsun.gis.enabled` 不设按开，只认 true/false；系统参数 `gis.module.enabled` 可以在运行时关掉。",
       "tests": ["ModuleStatusTest"]
     },
-    "com.mugsun.cloud.system.module.CloudTrackModuleStatus": {
+    "com.mugsun.cloud.module.CloudTrackModuleStatus": {
       "title": "埋点模块在不在、开没开",
       "how": "rewrite",
-      "related": ["com.mugsun.cloud.system.module.ServicePresence"],
+      "related": ["com.mugsun.cloud.module.ServicePresence"],
       "why": "菜单里显不显示埋点分析、登录信息里埋点的开关都问这个接口。单体版里它由埋点模块自己实现，「在不在」看模块的包有没有打进来。微服务版里埋点是另一个服务，system 里没有那个实现。",
       "same": "「在不在」改成看注册中心里有没有 track 服务的实例。配置项 `mugsun.track.enabled` 的规则和单体版一样。",
       "tests": ["ModuleStatusTest"]

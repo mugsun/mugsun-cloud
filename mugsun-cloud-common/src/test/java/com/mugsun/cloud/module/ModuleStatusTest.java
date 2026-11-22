@@ -1,4 +1,4 @@
-package com.mugsun.cloud.system.module;
+package com.mugsun.cloud.module;
 
 import com.mugsun.boot.common.module.InvalidModuleSwitchException;
 import com.mugsun.boot.common.module.ModuleSwitch;
@@ -20,7 +20,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * system 服务怎么判断 GIS、埋点、AI 这些可选模块在不在、开没开：注册中心用一个假的代替，时间用手动拨的钟。
+ * 不带这些模块的服务怎么判断 GIS、埋点、AI 这些可选模块在不在、开没开：注册中心用一个假的代替，时间用手动拨的钟。
  */
 class ModuleStatusTest {
 

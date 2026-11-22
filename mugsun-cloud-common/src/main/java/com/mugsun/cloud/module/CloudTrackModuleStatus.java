@@ -1,4 +1,4 @@
-package com.mugsun.cloud.system.module;
+package com.mugsun.cloud.module;
 
 import com.mugsun.boot.common.module.InvalidModuleSwitchException;
 import com.mugsun.boot.common.module.ModuleSwitch;
@@ -8,7 +8,7 @@ import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
 /**
- * system 服务看到的埋点模块状态：菜单里显不显示埋点分析、登录信息里的 {@code trackEnabled} 都问它。
+ * 不带埋点模块的服务看到的埋点模块状态（哪些服务用它，见这个包的说明）：菜单里显不显示埋点分析、登录信息里的 {@code trackEnabled} 都问它。
  *
  * <p>单体版里这个接口由埋点模块自己实现，「在不在」看模块的 jar 有没有打进包里。微服务版里埋点是另一个服务，
  * 改成看注册中心里有没有 track 服务的实例。配置项 {@code mugsun.track.enabled}（环境变量 {@code MUGSUN_TRACK_ENABLED}）
