@@ -7,6 +7,7 @@ import com.mugsun.boot.ai.entity.AiModel;
 import com.mugsun.boot.ai.mapper.AiModelMapper;
 import com.mugsun.boot.ai.support.AiLlmClient;
 import com.mugsun.boot.tenant.TenantContext;
+import com.mugsun.core.i18n.message.I18n;
 import com.mugsun.core.tool.exception.ServiceException;
 import com.mybatisflex.core.paginate.Page;
 import com.mybatisflex.core.query.QueryWrapper;
@@ -265,7 +266,7 @@ public class AiModelBizService {
 			q.ne("id", excludeId);
 		}
 		if (modelMapper.selectCountByQuery(q) > 0) {
-			throw new ServiceException("已经有叫「" + name + "」的模型。请换一个名称，或打开原来那个");
+			throw new ServiceException(I18n.get("已经有叫「{0}」的模型。请换一个名称，或打开原来那个", name));
 		}
 	}
 
@@ -307,6 +308,36 @@ public class AiModelBizService {
 		}
 		if (m == null) {
 			throw new ServiceException("请先配置并激活默认向量模型");
+		}
+		return m;
+	}
+
+	/**
+	 * 内部按名称取已激活的模型（含密钥）。先按「模型名称」找；没有再按「模型标识」找，标识可能有几条，
+	 * 这时取默认的那条，都不是默认就取最后配的那条。
+	 */
+	public AiModel requireActiveByName(String modelType, String name) {
+		moduleService.requireEnabled();
+		String key = name == null ? "" : name.trim();
+		AiModel m = null;
+		if (!key.isEmpty()) {
+			m = modelMapper.selectOneByQuery(QueryWrapper.create()
+				.eq("model_type", modelType)
+				.eq("activate_flag", AiConstants.FLAG_YES)
+				.eq("model_name", key)
+				.limit(1));
+			if (m == null) {
+				m = modelMapper.selectOneByQuery(QueryWrapper.create()
+					.eq("model_type", modelType)
+					.eq("activate_flag", AiConstants.FLAG_YES)
+					.eq("model_code", key)
+					.orderBy("default_flag", false)
+					.orderBy("id", false)
+					.limit(1));
+			}
+		}
+		if (m == null) {
+			throw new ServiceException(I18n.get("没有找到已激活的模型「{0}」。请在大模型配置里核对名称", key));
 		}
 		return m;
 	}
