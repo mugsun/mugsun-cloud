@@ -213,3 +213,7 @@
   - 此前 Nacos 停掉时，它的客户端会把访问令牌整个打进日志
   - 认四种写法：`accessToken=`、地址里的 `token=`、`password=`、JWT
   - 只有单元测试，自检还没有查这一项；详见 `docs/deployment.md` 第 11 节
+- 构建镜像时带上 `mugsun-cloud-service-api` 目录
+  - 此前放行清单里漏了它，镜像构建到拷这个目录那一步会报找不到
+  - 新增测试：根 pom 的模块、Dockerfile 拷的目录、放行清单三处要一致
+  - 还没有实际构建过镜像来证实
