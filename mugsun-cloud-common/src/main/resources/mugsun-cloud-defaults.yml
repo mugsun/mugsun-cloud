@@ -16,6 +16,22 @@ spring:
     enabled: false
   cloud:
     nacos:
+      config:
+        # 配置中心：各服务启动时到 Nacos 读配置，里面的配置项盖过包里各个文件的同名项。
+        # 命令行参数、名字和配置项对得上的环境变量（如 SERVER_PORT 对 server.port，变量是空的也算）仍然比 Nacos 优先；
+        # 包里的配置文件用占位符引用、名字对不上的环境变量（如 JDBC_URL）会被 Nacos 里的同一项盖过。
+        # 读哪几份写在各服务自己的 application.yml 里（必须写在那里，原因见 system 服务的那一份），这里只放连 Nacos 用的设置。
+        # 写 false 关掉配置中心：不到 Nacos 读配置。留空等于没配，按默认值（开）。怎么用见 docs/deployment.md「配置中心」
+        enabled: ${MUGSUN_CONFIG_CENTER:true}
+        # 保持 remote：Nacos 里的配置排在 application-<profile>.yml 和各服务 application.yml 的第二段前面。
+        # 去掉以后，那些地方写了的项（生产配置里的数据库连接等），Nacos 的值盖不住
+        preference: remote
+        # 地址、账号、命名空间和分组，与下面服务注册用的是同一套
+        server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
+        username: ${MUGSUN_NACOS_USERNAME:}
+        password: ${MUGSUN_NACOS_PASSWORD:}
+        namespace: ${MUGSUN_NACOS_NAMESPACE:}
+        group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
       discovery:
         server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
         username: ${MUGSUN_NACOS_USERNAME:}
@@ -107,6 +123,14 @@ mugsun:
     # 由 system 投递给在线用户。boot 的默认值就是 redis，这里再写一遍是防止 config/application-local.yml 把它改成 local：
     # local 只认本进程里的连接，system 以外的服务没有连接可发，启动时就会因为找不到发送器而失败
     sender-type: redis
+
+management:
+  health:
+    refresh:
+      # 关掉「配置刷新出过错」这一项健康检查。开着的话，Nacos 里一个值写错了（类型不对，或者被程序拒绝），
+      # 读到它的实例会同时变成不健康，网关和编排工具跟着把它们全部摘掉；其实各实例都还照原来的配置正常运行。
+      # 写错的值在日志里有 ERROR
+      enabled: false
 
 logging:
   file:

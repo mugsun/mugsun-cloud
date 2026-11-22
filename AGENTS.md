@@ -10,7 +10,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 | 模块 | 端口 | 作用 |
 | --- | --- | --- |
-| `mugsun-cloud-config` | 无 | 从 Nacos 读配置的公用代码，不带网页栈，网关和公共层都可以依赖 |
+| `mugsun-cloud-config` | 无 | 配置中心：带进 Nacos Config 组件，另有读整份配置的 `NacosConfigSource`。不带网页栈，网关和公共层都可以依赖 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层，Servlet 栈 |
 | `mugsun-cloud-gateway` | 8080 | 网关，WebFlux 栈，不依赖公共层 |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务，对应 `mugsun-boot-core` |
@@ -37,6 +37,19 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 同步的用法和划分规则见 [docs/sync-from-boot.md](./docs/sync-from-boot.md)。那里列了几处脚本管不到、要手工跟着 mugsun-boot 改的地方。
 
+## 配置中心的约定
+
+网关和各服务启动时用 Nacos Config 从 Nacos 读配置项，运行中跟着改动刷新。怎么用、实测过什么，见 [docs/deployment.md](./docs/deployment.md) 第 17 节。
+
+- 读哪几份写在每个应用自己的 `application.yml` 里：第一段导入 `mugsun.yaml` 和 `<服务名>.yaml`，最后三段按 `dev`、`test`、`prod` 各导入 `mugsun-<环境>.yaml` 和 `<服务名>-<环境>.yaml`，都带 `optional:`。新加服务时照抄、换掉服务名，`ConfigCenterImportsTest` 会查每个应用都写齐了。
+- 这几段导入不能挪进共用的 `mugsun-cloud-defaults.yml`：挪过去以后，服务自己的第二段和 `application-<profile>.yml` 里写了的项，Nacos 的值盖不住。
+- 连 Nacos 用的设置（地址、账号、命名空间、分组、开关 `MUGSUN_CONFIG_CENTER`），各服务的在 `mugsun-cloud-defaults.yml`，网关的在它自己的 `application.yml`，两处要一致。`preference` 保持 `remote`，`management.health.refresh.enabled` 保持 `false`，原因写在那两个文件的注释里。
+- 不起 Nacos 的 `@SpringBootTest` 要同时写 `spring.cloud.nacos.discovery.enabled=false` 和 `spring.cloud.nacos.config.enabled=false`。只关前一个，测试启动时会去连本机的 8848 端口读配置：本机正好开着 Nacos 的话，读到什么就用什么。
+- 谁盖过谁（实测）：命令行参数、名字和配置项对得上的环境变量比 Nacos 优先，变量传进了进程、值是空的也算；配置文件里用 `${变量}` 引用、名字对不上的环境变量（如 `JDBC_URL`）会被 Nacos 里的同一项盖过。给配置项起环境变量名、往编排里传变量之前，先想清楚要不要让配置中心改得了它。
+- 整份的配置（动态路由、灰度规则）不走这里，仍然只由 `NacosConfigSource` 读，见下面「网关的约定」。
+- 「改了以后什么时候生效」以第 17 节的表为准，表里每一行都是实测过的。让一个配置项改成马上生效时，先在真的 Nacos 上测过，再改那张表。
+- 接入 Nacos 的账号只能读配置，不能改。能改这几份配置的人等于能改每个服务的任何配置项，包括连哪个数据库：给这个账号加权限、改 `deploy/docker/nacos-init.py` 里的权限，属于敏感改动。
+
 ## 网关的约定
 
 代码在 `mugsun-cloud-gateway/src/main/java/com/mugsun/cloud/gateway`。
@@ -57,7 +70,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 按路径拦请求时，用 `RequestPaths.of(exchange)` 把客户端发来的路径和路由改写以后的路径都查一遍，比较用 `PathGuard` 或 `PathPrefixes`。不要自己拿 `startsWith` 比：把路径编码、改大小写、加分号参数就绕过去了。这类过滤器的顺序要排在 `RouteToRequestUrlFilter` 后面。
 - 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
 - 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。
-- 读 Nacos 里的配置（动态路由、灰度规则）只由 `NacosConfigSource` 做（在 `mugsun-cloud-config` 模块里），几份配置共用一条到 Nacos 的连接，改动靠监听送来。再要读一份时加一个 `NacosConfigSource.Watch` 的 Bean，不要另开连接。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由和规则清掉。
+- 读 Nacos 里整份的配置（动态路由、灰度规则）只由 `NacosConfigSource` 做（在 `mugsun-cloud-config` 模块里），几份配置共用一条到 Nacos 的连接，改动靠监听送来。再要读一份时加一个 `NacosConfigSource.Watch` 的 Bean，不要另开连接。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由和规则清掉。
 - 接收这些配置的一方（`DynamicRouteLoader.load`、`LaneRuleBook.load`），每收到一份和上一次不一样的全文都要记一行日志，以 `Watch.what()` 开头：换上了、清空了、不合格没有用，或者算出来和现在的一样不用换。运维靠日志里有没有新的这一行判断改动送到没有，少记一种他就会去查权限。同一份全文接连送来两次（启动时读一次，监听又送一次）只记一次。
 - 灰度发布的代码在 `lane` 包。请求的灰度标记只由 `LaneFilter` 按 `LaneRuleBook` 里的规则定，放在 exchange 的属性 `LaneNames.LANE_ATTR` 里；传给服务的 `X-Mugsun-Lane` 只由 `LaneHeaderFilter` 写，客户端带来的一律删掉。挑实例只在 `LaneInstanceSupplier` 一处做：没有标记的请求只给正式实例；有标记的先给同标记的实例，没有就给正式实例。这两条一直生效，开关 `mugsun.gateway.lanes` 只管读不读 Nacos 里的规则。改这几处等于改网关的转发头和转发去向，属于敏感改动。
 - 灰度规则只经 `LaneRuleBook.load` 换上：整份检查，有一处不合格就保留原来的。报错和日志里只写标记的名字和是第几条，不带配置里的地址和域名。写法有疑问的一律算错，不悄悄忽略，也不猜：不认识的配置项、没加引号被 YAML 读成数字或真假值的名字（`0105` 会读成 69）都拒收。悄悄忽略的结果是该进灰度的请求没进，而且没有任何提示。
@@ -76,7 +89,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 ## 服务的约定
 
 - 启动类上的注解和 mugsun-boot 的 `MugsunApplication` 保持一致，只多扫描 `com.mugsun.cloud` 下自己的包。有意不一样的地方写在启动类的注释里。
-- `application.yml` 分两段：第一段只写 `spring.config.import`，先引入 `mugsun-boot-defaults.yml` 再引入 `mugsun-cloud-defaults.yml`；第二段写端口和服务名。各服务都一样的配置写进 `mugsun-cloud-defaults.yml`。
+- `application.yml` 分几段：第一段只写 `spring.config.import`，先引入 `mugsun-boot-defaults.yml` 再引入 `mugsun-cloud-defaults.yml`，最后是配置中心的两份；第二段写端口和服务名；最后三段是分环境的配置中心导入，见上面「配置中心的约定」。各服务都一样的配置写进 `mugsun-cloud-defaults.yml`。
 - 从 boot 同步来的 `application-prod.yml` 等 profile 文件，优先级比各服务的 `application.yml` 和 `mugsun-cloud-defaults.yml` 都高。要把一个配置项固定住，先查 profile 文件里有没有设它：设了的话写配置固定不住，要用代码。
 - `/inner` 开头的路径留给服务之间调用的内部接口，网关不对外转发。对外的接口不要用这个前缀。写法见下面的「服务之间的调用」。
 - 服务之间要传消息时，先看能不能走共用的主库和 Redis，不行再加内部接口。track 发告警站内信就是写主库的消息表，实时推送发到 Redis，由 system 投递给在线用户。所以 `mugsun.websocket.sender-type` 固定为 `redis`。删租户时清它的 AI 密钥也是 system 直接删主库里的表（`CloudAiSecretPurger`），不调 ai 服务。

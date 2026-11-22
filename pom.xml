@@ -93,6 +93,19 @@
 				<version>${spring-cloud-alibaba.version}</version>
 			</dependency>
 			<dependency>
+				<groupId>com.alibaba.cloud</groupId>
+				<artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+				<version>${spring-cloud-alibaba.version}</version>
+				<exclusions>
+					<!-- 这个组件把 Druid 连接池的启动包写成了必带的依赖，只有它「让 Druid 连接池从 Nacos 的一份配置里读自己的参数」
+					     那个功能用得到，那个功能没有启用。不排除的话 Druid 会进到每个服务和网关的包里；连接池用的是 HikariCP -->
+					<exclusion>
+						<groupId>com.alibaba</groupId>
+						<artifactId>druid-spring-boot-starter</artifactId>
+					</exclusion>
+				</exclusions>
+			</dependency>
+			<dependency>
 				<groupId>com.mugsun</groupId>
 				<artifactId>mugsun-cloud-config</artifactId>
 				<version>${project.version}</version>

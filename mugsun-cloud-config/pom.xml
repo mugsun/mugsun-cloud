@@ -10,7 +10,7 @@
 	</parent>
 	<artifactId>mugsun-cloud-config</artifactId>
 	<name>mugsun-cloud-config</name>
-	<description>从 Nacos 读运行中要改的配置：网关和各服务共用的一小块，不带网页栈（网关是 WebFlux，服务是 Servlet，两边都能依赖）</description>
+	<description>配置中心：带进 Nacos Config 组件（启动时从 Nacos 读配置项），另有一个读单份配置并跟着改动刷新的小工具（路由、灰度规则用）。网关和各服务共用，不带网页栈（网关是 WebFlux，服务是 Servlet，两边都能依赖）</description>
 
 	<dependencies>
 		<dependency>
@@ -21,6 +21,11 @@
 		<dependency>
 			<groupId>com.alibaba.cloud</groupId>
 			<artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+		</dependency>
+		<!-- 配置中心用的标准组件：启动时从 Nacos 读配置项，运行中跟着改动刷新。读哪几份写在网关和各服务自己的 application.yml 里 -->
+		<dependency>
+			<groupId>com.alibaba.cloud</groupId>
+			<artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

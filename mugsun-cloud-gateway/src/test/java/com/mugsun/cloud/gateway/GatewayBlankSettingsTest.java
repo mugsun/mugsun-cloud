@@ -31,6 +31,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 	"spring.cloud.nacos.discovery.enabled=false",
+	"spring.cloud.nacos.config.enabled=false",
 	"spring.cloud.service-registry.auto-registration.enabled=false"})
 @ContextConfiguration(initializers = GatewayBlankSettingsTest.BlankSwitches.class)
 @ExtendWith(OutputCaptureExtension.class)

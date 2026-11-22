@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 	"spring.cloud.nacos.discovery.enabled=false",
+	"spring.cloud.nacos.config.enabled=false",
 	"spring.cloud.service-registry.auto-registration.enabled=false",
 	"mugsun.gateway.trusted-proxies=127.0.0.1/32"})
 class GatewayBehindProxyTest extends GatewayTestBase {

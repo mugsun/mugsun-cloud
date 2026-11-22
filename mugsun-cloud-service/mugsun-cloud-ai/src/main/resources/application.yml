@@ -1,5 +1,6 @@
-# ai 服务的配置。分两段，写法和理由见 system 服务的 application.yml：
-# 第一段只负责导入 mugsun-boot 的默认配置和微服务版共用的改动，第二段是这个服务自己的配置。
+# ai 服务的配置。分成几段，写法和理由见 system 服务的 application.yml：
+# 第一段只负责导入 mugsun-boot 的默认配置、微服务版共用的改动和 Nacos 配置中心里的两份，第二段是这个服务自己的配置，
+# 最后三段是分环境的 Nacos 配置。
 # AI 模块自己的配置（mugsun.ai.*）在 mugsun-module-ai.yml 里，由 boot 的默认配置导入，变量名和单体版相同。
 # AI 的表都在主库里，由 system 迁移，这个服务不迁移。
 spring:
@@ -7,6 +8,8 @@ spring:
     import:
       - classpath:mugsun-boot-defaults.yml
       - classpath:mugsun-cloud-defaults.yml
+      - optional:nacos:mugsun.yaml
+      - optional:nacos:mugsun-ai.yaml
 ---
 server:
   port: 8104
@@ -21,3 +24,28 @@ mugsun:
       # 定得比平时用得到的大得多：定小了，同时用的人一多就有人被回「忙」。
       # 其中同一个租户最多占 48 个（max-concurrent-per-tenant 没配，自动留出四分之一给别的租户）
       max-concurrent: 64
+---
+# 分环境的 Nacos 配置：带着对应的 profile 启动时才读，盖过第一段里不分环境的两份。三段的写法一样，只是名字里的环境不同
+spring:
+  config:
+    activate:
+      on-profile: dev
+    import:
+      - optional:nacos:mugsun-dev.yaml
+      - optional:nacos:mugsun-ai-dev.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:mugsun-test.yaml
+      - optional:nacos:mugsun-ai-test.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:mugsun-prod.yaml
+      - optional:nacos:mugsun-ai-prod.yaml

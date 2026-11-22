@@ -215,7 +215,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 
 另外还要做这几件事：
 
-1. 给新服务写 pom、启动类和 `application.yml`，照 `mugsun-cloud-gis` 的写。
+1. 给新服务写 pom、启动类和 `application.yml`，照 `mugsun-cloud-gis` 的写。`application.yml` 里配置中心的那几段导入（第一段的两份和最后按环境分的三段）整个照抄，把名字里的 `mugsun-gis` 换成新服务的服务名。漏了或者名字没换，`ConfigCenterImportsTest` 不通过。
 2. 在网关的路由里把它的路径写在 `mugsun-system` 前面。
 3. 在 `deploy/dev/nacos.sh` 的 `SERVICES` 里补上服务名。
 4. 在 system 里写一个模块状态类，照 `CloudGisModuleStatus` 的写。system 靠它知道这个服务有没有部署，决定菜单显不显示。

@@ -18,9 +18,9 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源、服务之间的调用等 |
-| `mugsun-cloud-config` | 无 | 从 Nacos 读配置的公用代码，网关和公共层都可以依赖 |
+| `mugsun-cloud-config` | 无 | 配置中心：启动时从 Nacos 读配置的组件，和读路由、灰度规则这类单份配置的公用代码。网关和公共层都依赖它 |
 
-服务注册和发现用 Nacos。数据库（PostgreSQL）和 Redis 的用法与单体版相同，主库和埋点库的库表也是同一套。
+服务注册和发现、配置中心都用 Nacos。数据库（PostgreSQL）和 Redis 的用法与单体版相同，主库和埋点库的库表也是同一套。
 
 版本：JDK 21、Spring Boot 3.5.13、Spring Cloud 2025.0.3、Spring Cloud Alibaba 2025.0.0.0。
 
@@ -152,6 +152,7 @@ system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。其它
 | `MUGSUN_NACOS_USERNAME` `MUGSUN_NACOS_PASSWORD` | Nacos 开了鉴权时的账号 | 空 |
 | `MUGSUN_NACOS_NAMESPACE` | Nacos 命名空间 | 空，即 public |
 | `MUGSUN_NACOS_GROUP` | Nacos 分组 | `DEFAULT_GROUP` |
+| `MUGSUN_CONFIG_CENTER` | 写 `false` 关掉配置中心：网关和各服务启动时不到 Nacos 读配置 | 空，即开着 |
 | `MUGSUN_SERVICE_IP` | 服务注册到 Nacos 的地址 | 自动取网卡地址 |
 | `MUGSUN_OPENAPI_TRUSTED_PROXIES` | 网关前面的反向代理的地址段。配给网关，不再配给后端服务 | 空，即网关直接面向客户端 |
 | `MUGSUN_INNER_SECRET` | 服务之间互相调用用的密钥，至少 32 个字符。各业务服务配成同一个值，网关不用配 | 空，即不开通服务之间的调用 |
@@ -167,6 +168,8 @@ system 的接口文档在 <http://localhost:8080/swagger-ui/index.html>。其它
 | `MUGSUN_GATEWAY_DYNAMIC_ROUTES` | 写 `true` 让网关另外从 Nacos 的配置 `mugsun-gateway-routes.yaml` 里读路由，改了不用重启网关 | `false` |
 | `MUGSUN_GATEWAY_LANES` | 写 `true` 让网关从 Nacos 的配置 `mugsun-gateway-lanes.yaml` 里读灰度规则：哪些请求发给灰度实例。改了不用重启网关 | `false` |
 | `MUGSUN_LANE` | 配给一个服务的某个实例，值是灰度标记，例如 `canary`。配了的是灰度实例，只接带着这个标记的请求 | 空，即正式实例 |
+
+配置项也可以放在 Nacos 里（配置中心）：网关和各服务启动时到 Nacos 读 `mugsun.yaml`（大家共用）和 `<服务名>.yaml`（比如 `mugsun-system.yaml`），带着 `dev`、`test`、`prod` 启动时再读 `mugsun-<环境>.yaml` 和 `<服务名>-<环境>.yaml`。这几份都可以不建。里面的配置项盖过包里的配置文件；命令行参数、名字和配置项对得上的环境变量（比如上面网关的那些开关）又盖过它们。包里的配置文件用 `${变量}` 引用、名字对不上的环境变量（比如 `JDBC_URL`）会被 Nacos 里的同一项盖过。谁盖过谁的细节、改了以后什么时候生效、写错了会怎样、Nacos 的账号要什么权限，见[部署注意事项](./docs/deployment.md)第 17 节。
 
 上线前先看[部署注意事项](./docs/deployment.md)，里面是微服务版和单体版不一样、配错会出安全问题的地方。
 
@@ -240,7 +243,7 @@ system 按注册中心里有没有对应服务的实例来判断。服务启动�
 - system 可以部署多个实例，要注意的事项在同一节。gis、track 和 ai 部署多个实例没有验证过。
 - 灰度发布只能按客户端地址、访问的域名和比例分，不能按租户或用户分：网关不解析登录令牌。前端页面不在灰度的范围里。灰度实例是这个服务多出来的一个实例，上一条对它一样适用。
 - mugsun-boot 的测试没有同步过来，这里只有微服务版自己那部分代码的测试。业务逻辑的测试在 mugsun-boot 里跑。
-- 配置在各服务的包里和环境变量里，没有接 Nacos 配置中心。
+- 配置中心里改的配置，运行中的实例都收得到，但马上生效的只有日志级别这一类。网关的开关和数据库连接要重启才生效，其它配置项没有逐项测过，按要重启对待。存进去的配置没有校验：值写错了运行中看不出来，重启时服务起不来。启动时 Nacos 连不上、本地又没有缓存时，服务会用包里的配置起来，不报错。见[部署注意事项](./docs/deployment.md)第 17 节。
 - Docker 编排是单机的：每个服务默认一个实例（system 可以用 `MUGSUN_SYSTEM_REPLICAS` 起多个），Nacos 是单机模式，数据库和 Redis 没有主备。
 - 镜像没有发布到镜像仓库，要用就从源码构建。没有 CI。
 

@@ -1,13 +1,24 @@
-# system 服务的配置。分两段：
-# 第一段只负责导入——先是 mugsun-boot 的默认配置（从 boot 同步来，不要改），再是微服务版共用的改动；
-# 第二段是这个服务自己的配置。同一个配置项，后面的覆盖前面的：
-#   boot 默认 < config/application-local.yml < 微服务版共用 < 本文件第二段 < application-<profile>.yml < 环境变量和命令行参数
-# 必须分成两段：写在同一段里的话，被导入的文件会反过来覆盖这里的端口和服务名。
+# system 服务的配置。分成几段：
+# 第一段只负责导入——先是 mugsun-boot 的默认配置（从 boot 同步来，不要改），再是微服务版共用的改动，
+# 最后是 Nacos 配置中心里的两份：所有服务共用的 mugsun.yaml 和这个服务自己的 mugsun-system.yaml（都可以不建）；
+# 第二段是这个服务自己的配置；
+# 最后三段是分环境的 Nacos 配置，带着 dev、test、prod 启动时才读。
+# 同一个配置项，后面的覆盖前面的：
+#   boot 默认 < config/application-local.yml < 微服务版共用 < 本文件第二段 < application-<profile>.yml
+#   < Nacos（mugsun.yaml < mugsun-system.yaml < mugsun-<profile>.yaml < mugsun-system-<profile>.yaml）
+#   < 名字和配置项对得上的环境变量、命令行参数
+# 配置文件里用占位符引用、名字对不上的环境变量（如 JDBC_URL）不在最后一级：它只是那个文件里的值，会被 Nacos 盖过。
+# 必须分段：写在同一段里的话，被导入的文件会反过来覆盖这里的端口和服务名。
+# Nacos 的导入必须写在这个文件里，不能挪进共用的 mugsun-cloud-defaults.yml：挪过去以后，本文件第二段和
+# application-<profile>.yml 里写了的项（生产配置里的数据库连接等），Nacos 就盖不住了。
+# 配置中心怎么用、怎么关，见 docs/deployment.md「配置中心」
 spring:
   config:
     import:
       - classpath:mugsun-boot-defaults.yml
       - classpath:mugsun-cloud-defaults.yml
+      - optional:nacos:mugsun.yaml
+      - optional:nacos:mugsun-system.yaml
 ---
 server:
   port: 8101
@@ -45,3 +56,28 @@ mugsun:
         # AI 服务在注册中心里的名字。没部署这个服务时，菜单里不显示 AI，登录信息里 aiEnabled 为 false。
         # 和单体版一样，MUGSUN_AI_ENABLED=false 或系统参数 ai.module.enabled=false 也会把 AI 关掉
         service-id: mugsun-ai
+---
+# 分环境的 Nacos 配置：带着对应的 profile 启动时才读，盖过第一段里不分环境的两份。三段的写法一样，只是名字里的环境不同
+spring:
+  config:
+    activate:
+      on-profile: dev
+    import:
+      - optional:nacos:mugsun-dev.yaml
+      - optional:nacos:mugsun-system-dev.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:mugsun-test.yaml
+      - optional:nacos:mugsun-system-test.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:mugsun-prod.yaml
+      - optional:nacos:mugsun-system-prod.yaml

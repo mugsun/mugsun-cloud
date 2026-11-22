@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 	"spring.cloud.nacos.discovery.enabled=false",
+	"spring.cloud.nacos.config.enabled=false",
 	"spring.cloud.service-registry.auto-registration.enabled=false"})
 class GatewayNextInstanceTest {
 

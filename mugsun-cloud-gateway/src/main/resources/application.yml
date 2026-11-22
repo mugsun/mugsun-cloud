@@ -14,8 +14,31 @@ server:
 spring:
   application:
     name: mugsun-gateway
+  config:
+    # 配置中心：启动时到 Nacos 读这两份配置，里面的配置项盖过这个文件里的同名项。
+    # 命令行参数、名字和配置项对得上的环境变量仍然比 Nacos 优先，变量是空的也算：下面 mugsun.gateway 的开关都是这一类，
+    # 变量传进了进程（哪怕没有值），Nacos 里的同一项就不起作用。只在这个文件里用占位符引用、名字对不上的变量
+    # （如 MUGSUN_OPENAPI_TRUSTED_PROXIES）会被 Nacos 里的同一项盖过。
+    # mugsun.yaml 是网关和所有服务共用的，mugsun-gateway.yaml 只给网关；两份都可以不建。
+    # 带着 dev、test、prod 启动时还会读分环境的两份，写在这个文件最后的三段里。
+    # 谁盖过谁、哪些改了马上生效、哪些要重启，见 docs/deployment.md「配置中心」
+    import:
+      - optional:nacos:mugsun.yaml
+      - optional:nacos:mugsun-gateway.yaml
   cloud:
     nacos:
+      config:
+        # 写 false 关掉配置中心：不到 Nacos 读配置，只用这个文件和环境变量。留空等于没配，按默认值（开）
+        enabled: ${MUGSUN_CONFIG_CENTER:true}
+        # 保持 remote：Nacos 里的配置排在 application-<profile>.yml 这类分环境的文件前面。
+        # 去掉以后，那些文件里写了的项，Nacos 的值盖不住
+        preference: remote
+        # 地址、账号、命名空间和分组，与服务注册用的是同一套
+        server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
+        username: ${MUGSUN_NACOS_USERNAME:}
+        password: ${MUGSUN_NACOS_PASSWORD:}
+        namespace: ${MUGSUN_NACOS_NAMESPACE:}
+        group: ${MUGSUN_NACOS_GROUP:DEFAULT_GROUP}
       discovery:
         server-addr: ${MUGSUN_NACOS_ADDR:127.0.0.1:8848}
         username: ${MUGSUN_NACOS_USERNAME:}
@@ -82,6 +105,12 @@ management:
       base-path: /_gateway
       exposure:
         include: health
+  health:
+    refresh:
+      # 关掉「配置刷新出过错」这一项健康检查。开着的话，Nacos 里一个值写错了（类型不对，或者被程序拒绝），
+      # 读到它的实例会同时变成不健康，前面的负载均衡跟着把它们全部摘掉；其实各实例都还照原来的配置正常运行。
+      # 写错的值在日志里有 ERROR
+      enabled: false
 
 mugsun:
   gateway:
@@ -133,3 +162,29 @@ mugsun:
     # 放灰度规则的那份配置的 Data ID 和分组；分组留空表示和服务注册用同一个（MUGSUN_NACOS_GROUP）
     lanes-data-id: mugsun-gateway-lanes.yaml
     lanes-group:
+
+---
+# 分环境的 Nacos 配置：带着对应的 profile 启动时才读，盖过上面不分环境的两份。三段的写法一样，只是名字里的环境不同
+spring:
+  config:
+    activate:
+      on-profile: dev
+    import:
+      - optional:nacos:mugsun-dev.yaml
+      - optional:nacos:mugsun-gateway-dev.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: test
+    import:
+      - optional:nacos:mugsun-test.yaml
+      - optional:nacos:mugsun-gateway-test.yaml
+---
+spring:
+  config:
+    activate:
+      on-profile: prod
+    import:
+      - optional:nacos:mugsun-prod.yaml
+      - optional:nacos:mugsun-gateway-prod.yaml

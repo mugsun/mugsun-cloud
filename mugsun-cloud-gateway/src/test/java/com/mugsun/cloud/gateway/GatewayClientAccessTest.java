@@ -22,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
 	"spring.cloud.nacos.discovery.enabled=false",
+	"spring.cloud.nacos.config.enabled=false",
 	"spring.cloud.service-registry.auto-registration.enabled=false",
 	"mugsun.gateway.trusted-proxies=127.0.0.1/32",
 	"mugsun.gateway.deny-ips=203.0.113.0/24",

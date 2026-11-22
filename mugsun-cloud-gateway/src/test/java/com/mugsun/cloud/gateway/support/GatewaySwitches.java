@@ -39,9 +39,11 @@ public final class GatewaySwitches {
 		return settingOfVariable;
 	}
 
+	/** 文件用 --- 分成了几段，开关都在第一段；后面几段只写分环境要读的 Nacos 配置 */
+	@SuppressWarnings("unchecked")
 	private static Map<String, Object> load() {
 		try (InputStream in = GatewaySwitches.class.getResourceAsStream("/application.yml")) {
-			return new Yaml().load(in);
+			return (Map<String, Object>) new Yaml().loadAll(in).iterator().next();
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
