@@ -270,7 +270,7 @@ system 可以部署多个实例，网关在它们之间轮流转发。要注意�
 - 密钥靠共用 `mugsun.home` 目录自动生成的部署（第 3 节的第二种做法），第一次启动仍然只起一个 system 实例：生成密钥不在这两段排队里，没有锁保护。
 - 正常停掉一个实例不丢请求：它先从 Nacos 注销，照常应答 8 秒，然后才开始停。实例被强杀、机器断电时请求会怎样，也在第 10 节。
 - 绝大多数表的主键由程序生成，里面带着一个机器号。每个实例启动时领一个和别的实例不同的号，见下面的「每个实例领一个机器号」。
-- PowerJob 执行器在每个 system 实例上都启动，登记在同一个应用名下。这种部署没有实测。
+- PowerJob 执行器在定时任务服务（`mugsun-job`）的每个实例上都启动，登记在同一个应用名下。这种部署没有实测。
 
 用两个 system 实例实测过的：
 
@@ -840,19 +840,19 @@ mugsun-gis 在注册中心里的 1 个实例都是灰度实例，没有灰度标
 - 打开本地存储直出后，带文件存储的服务会在自己的端口上应答 `/file/**`。各服务都带着校验签名的过滤器：公开前缀下的文件可以直接取，其余的没有有效签名一律 404。经网关访问的 `/file/**` 只转给 system。
 - 用环境变量或启动参数改 `dromara.x-file-storage.local-plus[0]` 的某一项时，要把这个列表元素的全部字段一起写上。Spring Boot 对列表是整项替换，只写一个字段会把其它字段丢掉。
 
-## 13. PowerJob 执行器只在 system 上启动
+## 13. PowerJob 执行器只在定时任务服务上启动
 
-`POWERJOB_ENABLED`、`POWERJOB_SERVER`、`POWERJOB_APP_NAME` 这组变量只对 system 起作用。track 服务不启动执行器，给它设 `POWERJOB_ENABLED=true` 也一样。
+`POWERJOB_ENABLED`、`POWERJOB_SERVER`、`POWERJOB_APP_NAME` 这组变量只对定时任务服务（`mugsun-job`，见第 20 节）起作用：只有它带着 PowerJob 的执行器和平台自带的三个处理器（清日志、清缓存、示例）。system 从分出定时任务服务起不再带 PowerJob，给它设这组变量不起作用。track 服务带着 PowerJob 的依赖但不启动执行器，给它设 `POWERJOB_ENABLED=true` 也一样。
 
-原因：同一个应用名下的执行器，调度中心派任务时不加区分。track 也接入的话，system 的任务会被派到 track 上，而 track 没有对应的处理器。
+原因：同一个应用名下的执行器，调度中心派任务时不加区分。track 也接入的话，定时任务服务的任务会被派到 track 上，而 track 没有对应的处理器。
 
 和单体版的差别：
 
-- 管理后台的定时任务页只能选 system 里的处理器。
+- 管理后台的定时任务页只能选定时任务服务里的处理器。
 - 埋点的三个处理器 `TrackStatsProcessor`、`TrackMaintainProcessor`、`TrackUvBackfillProcessor` 不能再由 PowerJob 触发。
 - 聚合、会话结算、清理和分区维护本来就由 track 服务内的定时任务执行，不受影响。
 - 历史 UV 回填改用启动开关：给 track 设 `MUGSUN_TRACK_UV_BACKFILL_ON_STARTUP=true` 启动一次，回填在后台执行，跑完后去掉这个变量。细节见 mugsun-boot 的 `docs/upgrade/track-uv-backfill.md`。
-- 从单体版迁过来时，调度中心里指向这三个处理器的任务要先停用或删除。留着的话会被派给 system，执行失败。
+- 从单体版迁过来时，调度中心里指向这三个处理器的任务要先停用或删除。留着的话会被派给定时任务服务，执行失败。
 
 ## 14. 站内信推送固定走 Redis
 
@@ -1113,7 +1113,7 @@ docker compose -f deploy/docker/docker-compose.yml build pc
 
 ### 只用镜像
 
-每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`admin`：
+每个镜像都可以单独构建，拿到别的环境里用。构建目标是 `gateway`、`system`、`gis`、`track`、`ai`、`log`、`report`、`develop`、`job`、`admin`：
 
 ```bash
 docker build -f deploy/docker/Dockerfile --target system -t mugsun-cloud-system .
@@ -1410,8 +1410,10 @@ docker compose -f deploy/docker/docker-compose.yml run --rm -T nacos-init config
 | --- | --- | --- | --- | --- | --- |
 | 报表服务 | `blade-ops/blade-report` | `mugsun-cloud-ops/mugsun-cloud-report`，`mugsun-report`，8106 | 报表的定义和预览：`/system/report/**` | 这组路径经网关返回 503，管理后台的报表页面打不开，别的功能不受影响 | 只编译过，`ReportRoutesTest` 核对了网关的路由；没有实际启动过 |
 | 代码生成服务 | `blade-ops/blade-develop` | `mugsun-cloud-ops/mugsun-cloud-develop`，`mugsun-develop`，8107 | 代码生成、数据建模、代码生成用的数据源和方案、在线表单：`/system/gen/**`、`/system/gen-datasource/**`、`/system/gen-scheme/**`、`/system/online-form/**` | 这几组路径经网关返回 503，管理后台的代码生成、在线表单页面打不开，别的功能不受影响 | 只编译过，`DevelopRoutesTest` 核对了网关的路由；没有实际启动过 |
+| 定时任务服务 | `blade-ops/blade-job` | `mugsun-cloud-ops/mugsun-cloud-job`，`mugsun-job`，8108 | 定时任务和调度中心的管理接口：`/system/job/**`、`/system/job-server/**`；PowerJob 执行器和三个处理器；按保留期清理日志 | 这两组路径经网关返回 503，定时任务、调度中心两个页面打不开；调度中心派的任务没有执行器接；到期的日志不会被清理，直到它再启动 | 只编译过，`JobRoutesTest` 核对了网关的路由；没有实际启动过，也没有接过真的调度中心 |
 
 和 BladeX 不一样的地方：
 
 - 报表：BladeX 的报表服务装的是 UReport2 报表设计器。这边的报表是单体版自己写的那一套（内置数据集加图表配置），拆出来的是同一份代码，没有换成 UReport2。
 - 代码生成：BladeX 的 blade-develop 里是它自己的代码生成器（模型、模型字段、生成配置、数据源）。这边拆出来的是单体版的代码生成、数据建模和在线表单，代码没有改，生成代码用的模板也跟着搬到了这个服务。BladeX 还给别的服务留了一个查数据源的接口（`IDatasourceClient`），它自己没有地方调，这边也还没有服务要用，先不建。
+- 定时任务：BladeX 的 blade-job 是任务和调度中心的管理接口加一个示例处理器，这边也是这样分的，另外多带了清日志、清缓存两个处理器和按保留期清理日志的定时任务（清日志的处理器要直接调它，所以跟着过来）。PowerJob 执行器原来只在 system 上启动，现在只在这个服务上启动，见第 13 节。

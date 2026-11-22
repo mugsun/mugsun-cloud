@@ -20,6 +20,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-ops/mugsun-cloud-log` | 8105 | 日志服务：六类日志的查询和处理接口，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-report` | 8106 | 报表服务：报表的定义和预览接口，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-develop` | 8107 | 代码生成服务：代码生成、数据建模和在线表单，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
+| `mugsun-cloud-ops/mugsun-cloud-job` | 8108 | 定时任务服务：定时任务和调度中心的管理接口、PowerJob 执行器和处理器、按保留期清理日志，从 `mugsun-boot-core` 里分出来的，Servlet 栈，依赖公共层 |
 | `mugsun-cloud-ops/mugsun-cloud-admin` | 8200 | 监控中心，Spring Boot Admin，WebFlux 栈，不依赖公共层，可以不部署 |
 
 服务名是 `mugsun-<名字>`，如 `mugsun-system`。
@@ -116,8 +117,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 流程引擎的操作不在事务里。要拦一次流程操作，得在它写库之前拦；等任务建出来再抛异常，数据已经留在库里。这类改动只有单元测试不够，要起服务实际走一遍流程，再查库里留下了什么。
 - 每个服务都要有的防护放公共层。拆新服务时，逐个看留在 system 的过滤器、拦截器和配置类：新服务带了它们保护或配置的功能，就让新服务也带上。例子：带文件存储的服务会在自己的端口上开放 `/file/**`，所以校验签名的 `LocalFileAccessFilter` 在公共层。
 - 进不了公共层的类（它依赖的组件不是每个服务都带），用 `sync-rules.json` 的 `extras` 单独拷给需要的服务，不要在 `src/main` 里照着重写一份。例子：文件存储的配置类 `FileStorageTikaConfig` 单独拷给了 track。
-- PowerJob 执行器只在 system 上启动：同一个应用名下的执行器，调度中心派任务时不加区分。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
-- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
+- PowerJob 执行器只在定时任务服务（`mugsun-job`）上启动：同一个应用名下的执行器，调度中心派任务时不加区分，所以处理器和执行器要在同一个服务里。带了 PowerJob 依赖的其它服务在启动类上排除 `PowerJobAutoConfiguration`，参考 `TrackApplication`。
+- 从 core 里分出来的服务（现在有日志服务 `mugsun-log`、报表服务 `mugsun-report`、代码生成服务 `mugsun-develop`、定时任务服务 `mugsun-job`）：哪些类归它，写在 `sync-rules.json` 的 `core.services` 里：可以只分接口类（日志服务），也可以连服务类、实体、Mapper 整个包一起分（代码生成服务，写 `包.**`）；只有它用的资源文件（比如代码模板）在 `core.resources` 里写给它，漏了编译不报错，运行时才找不到。这些接口的路径在网关里本来归兜底的 `mugsun-system`，要在网关的路由里逐个写在它前面；日志服务的 `LogRoutesTest` 查路由和接口类对得上，再分服务时照着写一个。日志不经过日志服务写入：产生日志的服务自己写主库。所以新加一类日志时，写库的类放公共层（或者留在产生它的那个服务里），查询的接口类分给日志服务。
 - 加新服务的步骤见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「拆出新服务时」。
 
 ## 服务之间的调用

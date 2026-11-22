@@ -117,13 +117,14 @@ python3 scripts/sync_from_boot.py --report                     # 两边各用到
   - 是一次业务调用：先在 mugsun-boot 里把它抽成接口，再按 [AGENTS.md](../AGENTS.md) 的「服务之间的调用」接上。
 - `extras` 也可以往这样的服务里单独拷类，它能引用的是公共层的类和分给这个服务的类。
 
-现在这样分出去的有三个服务：
+现在这样分出去的有这几个服务：
 
 | 服务 | 分过去的 | 为了能编译进了公共层的类 |
 | --- | --- | --- |
 | 日志服务 `mugsun-log` | 操作、登录、通用、数据变更、访问、错误六类日志的查询和处理接口 | 见下表 |
 | 报表服务 `mugsun-report` | 报表的接口类、实体和 Mapper | 没有 |
 | 代码生成服务 `mugsun-develop` | `gen`、`online` 两个包（代码生成、数据建模、在线表单），和 `generator/` 下的代码模板 | `gen.RuntimeSql`（system 里好几处也用它拼 SQL）、`system.service.MenuService`（代码生成的方案要查上级菜单在不在） |
+| 定时任务服务 `mugsun-job` | `job` 包（三个任务处理器），定时任务和调度中心的接口类 `JobController`、`SysJobServerController`，连带 `JobServerRegistry`、`SysJobServer` 和它的 Mapper，还有按保留期清理日志的 `monitor.LogCleanJob`（清日志的处理器直接调它） | 没有 |
 
 日志服务为了让六个接口类在新服务里能编译，下面这些类进了公共层：
 
@@ -271,7 +272,7 @@ mugsun-boot 的可选模块整个对应一个服务。在 `modules` 里加一项
 5. 逐个检查留在 system 的过滤器、拦截器和配置类。新服务带了它们保护或配置的功能，就让新服务也带上它们：各服务都能带的加进 `commonClasses`，只有个别服务能带的写进 `extras`。track 带文件存储，所以有两处：
    - `system.file.LocalFileAccessFilter` 进了公共层。不这样做，track 的端口上 `/file/**` 能匿名读到存储目录。
    - `system.file.FileStorageTikaConfig` 单独拷给了 track。它管文件类型怎么识别，不带的话 track 用的是组件的默认识别方式，和单体版不是同一份配置。
-6. 新服务带了 PowerJob 依赖的话，在启动类上排除 `PowerJobAutoConfiguration`，照 `TrackApplication` 的写。执行器只在 system 上启动。
+6. 新服务带了 PowerJob 依赖的话，在启动类上排除 `PowerJobAutoConfiguration`，照 `TrackApplication` 的写。执行器只在定时任务服务上启动。
 7. 打包后跑 `python3 scripts/compare_libs.py`，新服务包里第三方库的版本要和单体版一致。不一致时的处理见上面的「第三方库的版本」。
 8. 找出模块之间靠接口互相调用的地方：单体版里一个模块提供实现，另一个模块或 core 注入使用。拆开后使用方的进程里没有那个实现，要在使用方写一个走内部接口的实现，在提供方写对应的 `InnerEndpoint`。AI 问图层和埋点「问数据」就是这样接上的。对方没部署、调不通时的表现，要和单体版没装那个模块时一样。
 9. 找出模块替 system 做的事：模块里实现了 core 的扩展接口、由 system 的代码来调用的类，拆出去以后 system 里就没有了，而且不会报错。删租户时清 AI 密钥的 `TenantCredentialPurger` 是一例，要在 system 里补一个。

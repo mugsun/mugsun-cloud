@@ -115,6 +115,12 @@ spring:
               uri: lb://mugsun-develop
               predicates:
                 - Path=/system/gen/**,/system/gen-datasource/**,/system/gen-scheme/**,/system/online-form/**
+            # 定时任务服务：定时任务和调度中心两个页面的接口。路径要写在 mugsun-system 前面；
+            # 两边对不对得上，由定时任务服务的 JobRoutesTest 检查
+            - id: mugsun-job
+              uri: lb://mugsun-job
+              predicates:
+                - Path=/system/job/**,/system/job-server/**
             - id: mugsun-system
               uri: lb://mugsun-system
               predicates:

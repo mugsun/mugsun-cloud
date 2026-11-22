@@ -1,17 +1,18 @@
 {
   "source": "https://github.com/mugsun/mugsun-boot",
   "commit": "69ace3832637e6369facce2a636efcb1807ad738",
-  "digest": "4cbc36ecb33224769d567a73bc1ee9a55f2d566b30adf044d2561d32120bfb48",
+  "digest": "80ca10ffa05fbaa1807bff2be67799c4679f4ded7d31219ccbb49e8f78106dda",
   "files": {
     "deploy/docker/boot": 6,
     "mugsun-cloud-common": 249,
     "mugsun-cloud-gateway": 1,
     "mugsun-cloud-ops/mugsun-cloud-develop": 29,
+    "mugsun-cloud-ops/mugsun-cloud-job": 9,
     "mugsun-cloud-ops/mugsun-cloud-log": 6,
     "mugsun-cloud-ops/mugsun-cloud-report": 3,
     "mugsun-cloud-service/mugsun-cloud-ai": 114,
     "mugsun-cloud-service/mugsun-cloud-gis": 66,
-    "mugsun-cloud-service/mugsun-cloud-system": 393,
+    "mugsun-cloud-service/mugsun-cloud-system": 384,
     "mugsun-cloud-service/mugsun-cloud-track": 114
   }
 }

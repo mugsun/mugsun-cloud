@@ -37,7 +37,7 @@ import urllib.error
 import urllib.request
 
 # 拆出新服务时在这里补上名字和端口。忘了补会报错：第一步拿它和 smoke.sh 传进来的服务名单对照
-SERVICES = {"system": 8101, "gis": 8102, "track": 8103, "ai": 8104, "log": 8105, "report": 8106, "develop": 8107}
+SERVICES = {"system": 8101, "gis": 8102, "track": 8103, "ai": 8104, "log": 8105, "report": 8106, "develop": 8107, "job": 8108}
 ENTRY_HOST, ENTRY_PORT, ENTRY_PREFIX = "pc", 8080, "/api"
 PUBLIC_PATHS_FILE = "/LoginPublicPaths.java"
 PINNED_FILE = "/public-endpoints.txt"

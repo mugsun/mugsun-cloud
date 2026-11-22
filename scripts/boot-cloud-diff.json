@@ -95,6 +95,7 @@
     "mugsun-cloud-ops/mugsun-cloud-admin": "监控中心：一个页面看网关和各服务的每个实例在不在线。",
     "mugsun-cloud-ops/mugsun-cloud-log": "日志服务：六类日志的查询和处理。接口类是同步来的，手写的只有启动入口。",
     "mugsun-cloud-ops/mugsun-cloud-report": "报表服务：报表的定义和预览。接口类、实体和 Mapper 是同步来的，手写的只有启动入口。",
-    "mugsun-cloud-ops/mugsun-cloud-develop": "代码生成服务：代码生成、数据建模和在线表单。业务类和代码模板是同步来的，手写的是启动入口和请 ai 服务出建模草稿的转发。"
+    "mugsun-cloud-ops/mugsun-cloud-develop": "代码生成服务：代码生成、数据建模和在线表单。业务类和代码模板是同步来的，手写的是启动入口和请 ai 服务出建模草稿的转发。",
+    "mugsun-cloud-ops/mugsun-cloud-job": "定时任务服务：定时任务和调度中心的管理接口、平台自带的任务处理器、按保留期清理日志。业务类是同步来的，手写的只有启动入口。"
   }
 }

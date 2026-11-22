@@ -316,6 +316,22 @@ services:
     stop_grace_period: 40s
     restart: unless-stopped
 
+  job:
+    # 定时任务服务：定时任务和调度中心的管理接口，按保留期清理日志也在这个服务里。
+    # 它停了：这两个页面打不开，到期的日志不会被清理，直到它再启动
+    build:
+      <<: *build
+      target: job
+    image: mugsun-cloud-job:local
+    environment: *service-env
+    volumes:
+      - secrets-service:/secrets:ro
+    depends_on:
+      system:
+        condition: service_healthy
+    stop_grace_period: 40s
+    restart: unless-stopped
+
   gateway:
     build:
       <<: *build
@@ -441,6 +457,8 @@ services:
       report:
         condition: service_healthy
       develop:
+        condition: service_healthy
+      job:
         condition: service_healthy
     environment:
       MUGSUN_HTTP_PORT: ${MUGSUN_HTTP_PORT:-8188}
