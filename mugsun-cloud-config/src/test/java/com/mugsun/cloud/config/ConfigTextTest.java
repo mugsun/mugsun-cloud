@@ -1,4 +1,4 @@
-package com.mugsun.cloud.gateway.support;
+package com.mugsun.cloud.config;
 
 import org.junit.jupiter.api.Test;
 

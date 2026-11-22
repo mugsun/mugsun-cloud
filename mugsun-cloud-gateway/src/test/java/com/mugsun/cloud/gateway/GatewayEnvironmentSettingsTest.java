@@ -1,11 +1,11 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.config.NacosConfigSource;
 import com.mugsun.cloud.gateway.lane.LaneConfiguration;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
 import com.mugsun.cloud.gateway.route.DynamicRouteConfiguration;
 import com.mugsun.cloud.gateway.support.FakeEnvironment;
 import com.mugsun.cloud.gateway.support.GatewaySwitches;
-import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;

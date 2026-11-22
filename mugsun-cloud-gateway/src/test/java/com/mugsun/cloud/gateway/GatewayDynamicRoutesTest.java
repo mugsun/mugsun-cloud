@@ -1,9 +1,9 @@
 package com.mugsun.cloud.gateway;
 
+import com.mugsun.cloud.config.NacosConfigSource;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader.Outcome;
 import com.mugsun.cloud.gateway.route.DynamicRouteLoader.Status;
-import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

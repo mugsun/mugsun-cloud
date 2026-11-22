@@ -1,4 +1,4 @@
-package com.mugsun.cloud.gateway.support;
+package com.mugsun.cloud.config;
 
 import org.springframework.beans.factory.config.YamlPropertiesFactoryBean;
 import org.springframework.boot.context.properties.bind.BindException;

@@ -1,4 +1,4 @@
-package com.mugsun.cloud.gateway.support;
+package com.mugsun.cloud.config;
 
 import com.alibaba.nacos.api.config.ConfigService;
 import com.alibaba.nacos.api.config.listener.Listener;

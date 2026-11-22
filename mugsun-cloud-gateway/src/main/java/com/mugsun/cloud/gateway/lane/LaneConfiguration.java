@@ -2,8 +2,8 @@ package com.mugsun.cloud.gateway.lane;
 
 import com.alibaba.cloud.nacos.ConditionalOnNacosDiscoveryEnabled;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
+import com.mugsun.cloud.config.NacosConfigSource;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBooleanProperty;
 import org.springframework.cloud.loadbalancer.annotation.LoadBalancerClients;
 import org.springframework.context.annotation.Bean;

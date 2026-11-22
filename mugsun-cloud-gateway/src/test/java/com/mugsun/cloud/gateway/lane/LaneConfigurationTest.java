@@ -1,8 +1,8 @@
 package com.mugsun.cloud.gateway.lane;
 
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
+import com.mugsun.cloud.config.NacosConfigSource;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;

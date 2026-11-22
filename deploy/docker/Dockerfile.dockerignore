@@ -1,6 +1,7 @@
 # 构建上下文是仓库根目录。先全部排除，再只放行构建要用的文件，路径相对仓库根目录。
 *
 !pom.xml
+!mugsun-cloud-config/
 !mugsun-cloud-common/
 !mugsun-cloud-gateway/
 !mugsun-cloud-service/

@@ -23,6 +23,7 @@ RUN --mount=type=cache,target=/root/.m2 \
     mvn -B -q install -DskipTests && mkdir -p /core-m2/com && cp -R /root/.m2/repository/com/mugsun /core-m2/com/
 WORKDIR /build
 COPY pom.xml ./
+COPY mugsun-cloud-config/ mugsun-cloud-config/
 COPY mugsun-cloud-common/ mugsun-cloud-common/
 COPY mugsun-cloud-gateway/ mugsun-cloud-gateway/
 COPY mugsun-cloud-service/ mugsun-cloud-service/

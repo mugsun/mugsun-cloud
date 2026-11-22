@@ -18,6 +18,7 @@ mugsun 后端的微服务版。业务代码和单体版 [mugsun-boot](https://gi
 | `mugsun-cloud-service/mugsun-cloud-track` | 8103 | track 服务：埋点上报的 `/track/**` 和管理后台的 `/system/track/**`，对应单体版的 `mugsun-boot-track`。可以不部署 |
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务：管理后台的 `/system/ai/**` 和 OpenAI 兼容接口 `/v1/**`，对应单体版的 `mugsun-boot-ai`。可以不部署 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层：登录态、租户、数据权限、缓存、数据源、服务之间的调用等 |
+| `mugsun-cloud-config` | 无 | 从 Nacos 读配置的公用代码，网关和公共层都可以依赖 |
 
 服务注册和发现用 Nacos。数据库（PostgreSQL）和 Redis 的用法与单体版相同，主库和埋点库的库表也是同一套。
 

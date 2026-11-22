@@ -10,6 +10,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 
 | 模块 | 端口 | 作用 |
 | --- | --- | --- |
+| `mugsun-cloud-config` | 无 | 从 Nacos 读配置的公用代码，不带网页栈，网关和公共层都可以依赖 |
 | `mugsun-cloud-common` | 无 | 各服务都带的公共层，Servlet 栈 |
 | `mugsun-cloud-gateway` | 8080 | 网关，WebFlux 栈，不依赖公共层 |
 | `mugsun-cloud-service/mugsun-cloud-system` | 8101 | system 服务，对应 `mugsun-boot-core` |
@@ -18,6 +19,8 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 | `mugsun-cloud-service/mugsun-cloud-ai` | 8104 | ai 服务，对应 `mugsun-boot-ai`，可以不部署 |
 
 服务名是 `mugsun-<名字>`，如 `mugsun-system`。
+
+`mugsun-cloud-config` 里不要加 Servlet 或 WebFlux 的依赖，也不放业务代码。它的包 `com.mugsun.cloud.config` 不在网关和各服务扫描的范围里，要生效的配置类登记在它的 `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 里。加了新的模块目录，`deploy/docker/Dockerfile` 和 `Dockerfile.dockerignore` 里要各补一行，不然镜像构建找不到它。
 
 ## 两类代码
 
@@ -54,7 +57,7 @@ mugsun 后端的微服务版。业务代码来自 [mugsun-boot](https://github.c
 - 按路径拦请求时，用 `RequestPaths.of(exchange)` 把客户端发来的路径和路由改写以后的路径都查一遍，比较用 `PathGuard` 或 `PathPrefixes`。不要自己拿 `startsWith` 比：把路径编码、改大小写、加分号参数就绕过去了。这类过滤器的顺序要排在 `RouteToRequestUrlFilter` 后面。
 - 动态路由（从 Nacos 读、不重启就能改的那一份）只经 `DynamicRouteLoader.load` 换上：整份检查，全部合格才一次换掉，有一条不合格就保留原来的。报错会进日志，只写路由的 id 和配置项的名字，不带配置的值。
 - 动态路由能用的断言和过滤器是 `DynamicRouteLoader` 里两张固定的表，不做成配置项。往表里加东西之前确认三件事：它改不了 `ClientViewResolver` 要看的请求头；改写以后的路径仍然会被内部接口拦截和地址名单查到；它不靠路由刷新的事件登记状态。改这两张表等于改网关对外放行什么，属于敏感改动。
-- 读 Nacos 里的配置（动态路由、灰度规则）只由 `NacosConfigSource` 做，几份配置共用一条到 Nacos 的连接，改动靠监听送来。再要读一份时加一个 `NacosConfigSource.Watch` 的 Bean，不要另开连接。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由和规则清掉。
+- 读 Nacos 里的配置（动态路由、灰度规则）只由 `NacosConfigSource` 做（在 `mugsun-cloud-config` 模块里），几份配置共用一条到 Nacos 的连接，改动靠监听送来。再要读一份时加一个 `NacosConfigSource.Watch` 的 Bean，不要另开连接。不要加定时重读：Nacos 连不上又没有本地快照时，`getConfig` 也返回 null，和配置被删掉分不出来，定时重读会在 Nacos 出故障时把路由和规则清掉。
 - 接收这些配置的一方（`DynamicRouteLoader.load`、`LaneRuleBook.load`），每收到一份和上一次不一样的全文都要记一行日志，以 `Watch.what()` 开头：换上了、清空了、不合格没有用，或者算出来和现在的一样不用换。运维靠日志里有没有新的这一行判断改动送到没有，少记一种他就会去查权限。同一份全文接连送来两次（启动时读一次，监听又送一次）只记一次。
 - 灰度发布的代码在 `lane` 包。请求的灰度标记只由 `LaneFilter` 按 `LaneRuleBook` 里的规则定，放在 exchange 的属性 `LaneNames.LANE_ATTR` 里；传给服务的 `X-Mugsun-Lane` 只由 `LaneHeaderFilter` 写，客户端带来的一律删掉。挑实例只在 `LaneInstanceSupplier` 一处做：没有标记的请求只给正式实例；有标记的先给同标记的实例，没有就给正式实例。这两条一直生效，开关 `mugsun.gateway.lanes` 只管读不读 Nacos 里的规则。改这几处等于改网关的转发头和转发去向，属于敏感改动。
 - 灰度规则只经 `LaneRuleBook.load` 换上：整份检查，有一处不合格就保留原来的。报错和日志里只写标记的名字和是第几条，不带配置里的地址和域名。写法有疑问的一律算错，不悄悄忽略，也不猜：不认识的配置项、没加引号被 YAML 读成数字或真假值的名字（`0105` 会读成 69）都拒收。悄悄忽略的结果是该进灰度的请求没进，而且没有任何提示。
@@ -141,6 +144,7 @@ python3 scripts/compare_libs.py                      # 第三方库的版本和�
 deploy/docker/smoke.sh                               # 从零起整套容器逐项检查，改了 deploy/docker、网关的路由或同步进新接口之后跑
 ```
 
+- 只构建或只测一个模块时带 `-am`，把它依赖的本仓模块一起构建，比如 `./mvnw -B -pl mugsun-cloud-gateway -am test`；只跑个别测试类时再加 `-Dsurefire.failIfNoSpecifiedTests=false`。不带 `-am` 时 Maven 到本机仓库去找 `mugsun-cloud-config`、`mugsun-cloud-common` 的包，找不到就报错。
 - 这里没有业务测试，业务改动在 mugsun-boot 里测。
 - 业务代码用到的第三方库，版本以单体版打出的包为准，用 `scripts/compare_libs.py` 检查。不要引入会改这些库版本的版本清单（BOM）：`spring-cloud-alibaba-dependencies` 会改 guava 等库，所以父 pom 没有引入它，只单独写了 Nacos 组件的版本。版本不一致时的处理见 [docs/sync-from-boot.md](./docs/sync-from-boot.md) 的「第三方库的版本」。
 - 本地联调的启动步骤见 [README](./README.md)。`java -jar` 启动服务时要显式传 `--spring.profiles.active=...`，没配 profile 按生产处理。
@@ -157,7 +161,7 @@ deploy/docker/smoke.sh                               # 从零起整套容器逐�
 
 - Conventional Commits，主题中文，不超过 50 字，不用 emoji。一个提交只做一件事。
 - 直接在 `main` 上提交和推送，不另建分支。推之前 `./mvnw -B verify` 和 `sync_from_boot.py --locked --check` 都要通过。
-- scope 用模块名：`gateway`、`common`、`system`、`gis`、`track`、`ai`、`sync`、`deploy`、`build`。
+- scope 用模块名：`gateway`、`common`、`config`、`system`、`gis`、`track`、`ai`、`sync`、`deploy`、`build`。
 - 同步 mugsun-boot 代码单独做一个提交，类型用 `chore(sync)`，正文写 mugsun-boot 的提交号。
 - `CHANGELOG.md` 写在 `## [Unreleased]` 下，每行不超过 80 字。
 - 提交身份和 mugsun-boot 用同一个，只在仓库级配置里设，不改全局配置。

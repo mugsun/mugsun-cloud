@@ -1,4 +1,4 @@
-package com.mugsun.cloud.gateway.support;
+package com.mugsun.cloud.config;
 
 import java.util.regex.Pattern;
 

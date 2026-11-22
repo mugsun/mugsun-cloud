@@ -1,6 +1,6 @@
 package com.mugsun.cloud.gateway.route;
 
-import com.mugsun.cloud.gateway.support.ConfigText;
+import com.mugsun.cloud.config.ConfigText;
 
 /**
  * 一份路由配置不合格。消息是给运维看的，会写进日志：只说哪里不对，不带配置里的值。

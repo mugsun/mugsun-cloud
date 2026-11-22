@@ -1,6 +1,6 @@
 package com.mugsun.cloud.gateway.route;
 
-import com.mugsun.cloud.gateway.support.ConfigYaml;
+import com.mugsun.cloud.config.ConfigYaml;
 import org.springframework.boot.context.properties.bind.BindException;
 import org.springframework.boot.context.properties.bind.BindHandler;
 import org.springframework.boot.context.properties.bind.Bindable;

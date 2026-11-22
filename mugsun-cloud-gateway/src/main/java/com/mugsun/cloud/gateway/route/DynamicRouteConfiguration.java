@@ -2,8 +2,8 @@ package com.mugsun.cloud.gateway.route;
 
 import com.alibaba.cloud.nacos.ConditionalOnNacosDiscoveryEnabled;
 import com.alibaba.cloud.nacos.NacosDiscoveryProperties;
+import com.mugsun.cloud.config.NacosConfigSource;
 import com.mugsun.cloud.gateway.props.GatewayGuardProperties;
-import com.mugsun.cloud.gateway.support.NacosConfigSource;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
